@@ -350,6 +350,14 @@ authorization_url_path = "/oauth/consent"
 # Allow dynamic client registration
 allow_dynamic_registration = false
 
+# bw-sync é acionada só por pg_cron (net.http_post), nunca pelo frontend —
+# sem isto, verify_jwt=true (default) exigiria um JWT de usuário autenticado
+# em toda invocação, o que pg_cron não tem como fornecer sem configuração
+# extra. Ver Princípio técnico 5 (_index.md) — ressalva de funções só-cron,
+# sem CORS nem verify_jwt.
+[functions.bw-sync]
+verify_jwt = false
+
 [edge_runtime]
 enabled = true
 # Supported request policies: `oneshot`, `per_worker`.
