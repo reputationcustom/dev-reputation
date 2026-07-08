@@ -88,9 +88,19 @@ sampling abaixo).
   `sentiment_positive/neutral/negative`, `synced_at`). Isso existe
   especificamente por causa do sampling descrito abaixo — ver nota de
   sampling na subseção `narratives`. A mesma lógica se aplica ao Share of
-  Voice de Query Group (`data/volume/queryGroups/weeks`) — grão exato
-  (tabela própria vs. reuso de `bw_query_metrics_daily` com `query_group_id`)
-  fica para `data-model.md`.
+  Voice de Query Group (`data/volume/queryGroups/weeks`).
+  ✅ **Decisão fechada (2026-07-07)**: tabela própria,
+  `bw_query_group_metrics_weekly` (`project_id`, `query_group_id`, `query_id`,
+  `metric_week`, `total_mentions`, `synced_at`) — uma linha por Query
+  **dentro** do grupo, não um agregado único por `query_group_id`, para
+  permitir comparar candidato × concorrentes direto em SQL. Ver
+  `data-model.md` §5 e `sync-brandwatch.md` (passo 6.2).
+  Mesmo padrão de tabela própria (em vez de reuso de `bw_query_metrics_daily`)
+  vale para o grão semanal/mensal por Query/Category:
+  `bw_query_metrics_weekly`/`bw_query_metrics_monthly`, populadas por
+  `data/volume/sentiment/weeks`/`.../months` — decisão tomada junto com a de
+  Query Group, já que ambas eram a mesma pergunta em aberto (grão de tempo
+  além do diário).
 
 ### `narratives` — comportamento esperado
 

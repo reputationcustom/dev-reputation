@@ -107,42 +107,69 @@ duplicating `organization_id`.
 
 ### Brandwatch sync model
 
-- The Brandwatch API rate limit (30 calls/10min per Client) is enforced by
-  `pg_cron` invoking the `bw-sync` Edge Function every ~20-30s in
-  round-robin over `(project_id, query_id)` pairs tracked in
-  `sync_cursors`/`sync_log` — there is no in-memory queue between
-  invocations (the function is stateless between runs).
-- **Brandwatch auth (MVP, corrected 2026-07-07)**: no long-lived pre-generated
-  token yet, so `bw-sync` mints one at runtime via `grant_type=api-password`
-  against `POST https://api.brandwatch.com/oauth/token` (see
-  `mintBrandwatchAccessToken()` in `supabase/functions/bw-sync/index.ts`).
-  Credentials are **Edge Function secrets** — `BRANDWATCH_USERNAME`,
-  `BRANDWATCH_PASSWORD`, `BRANDWATCH_PLATFORM_CLIENT_ID` — not per-org DB
-  columns, since the MVP assumes a single Brandwatch Client. The minted token
-  is meant to be cached in `brandwatch_credentials.access_token_secret_ref`
-  (Vault) + `token_expires_at` so `bw-sync` doesn't burn the 30-calls/10min
-  budget re-minting a token every ~20-30s cron tick — **that caching/Vault
-  write-back is not implemented yet** (still a TODO in the function; today it
-  mints a fresh token on every invocation, which is fine for testing the
-  OAuth call in isolation but not safe to schedule on a real cron yet).
-- **`sync_cursors` bootstrap seeding (MVP, corrected 2026-07-07)**:
-  `sync_cursors` starts empty and nothing else populates it (the full
-  `projects/summary` auto-discovery bootstrap is still a TODO), so without a
-  seed step the sync would never start. `ensureBootstrapSeed()` in
-  `bw-sync/index.ts` runs first on every invocation and, if
-  `BRANDWATCH_PROJECT_ID`/`BRANDWATCH_QUERY_IDS` (Edge Function secrets,
-  `QUERY_IDS` comma-separated) are set, idempotently upserts placeholder
-  `bw_projects`/`bw_queries` rows plus the matching `sync_cursors` pair(s) —
-  it resolves `organization_id` from the single row in
-  `brandwatch_credentials` (MVP assumes one organization). All five
-  Brandwatch secrets currently configured on the project: `BRANDWATCH_USERNAME`,
-  `BRANDWATCH_PASSWORD`, `BRANDWATCH_PLATFORM_CLIENT_ID`,
-  `BRANDWATCH_PROJECT_ID`, `BRANDWATCH_QUERY_IDS`.
+`bw-sync` (`supabase/functions/bw-sync/index.ts`) is fully implemented as of
+2026-07-07 — not a skeleton. One invocation processes one
+`(project_id, query_id)` pair end-to-end: seed → token → metadata bootstrap
+(conditional) → mentions poll → daily metrics (always) → weekly/monthly
+metrics + Query Group SOV (throttled). `pg_cron` isn't actually scheduled
+yet (no migration sets it up) — for now the function is invoked manually.
+
+- **Rate limit budget (30 calls/10min per Client)**: every Brandwatch call
+  goes through `callBrandwatch()`, which is sequential (never parallel —
+  official best practice) and retries up to 3× on `429` honoring
+  `retry-after`. Per-invocation call count varies: mentions poll (1) +
+  daily metrics (1 + 1 per narrative-linked Category) run *every*
+  invocation; metadata bootstrap (~4 calls) only when
+  `bw_projects.synced_at` is >24h stale; weekly/monthly/SOV only when no
+  "fresh" row exists yet for the current week/month (`isGrainStale()`/
+  `isQueryGroupSovStale()`) — this throttle is what keeps steady-state
+  invocations cheap despite covering 3 time grains.
+- **Brandwatch auth**: no long-lived pre-generated token, so `bw-sync` mints
+  one at runtime via `grant_type=api-password` (`mintBrandwatchAccessToken()`)
+  using Edge Function secrets `BRANDWATCH_USERNAME`/`BRANDWATCH_PASSWORD`/
+  `BRANDWATCH_PLATFORM_CLIENT_ID` — not per-org DB columns (MVP assumes a
+  single Brandwatch Client). **Known gap**: mints a fresh token on *every*
+  invocation — `brandwatch_credentials.access_token_secret_ref`/
+  `token_expires_at` exist to cache it, but the Vault write-back is still a
+  TODO. Must be fixed before scheduling `bw-sync` on a real `pg_cron`
+  cadence (~20-30s), or the mint call alone burns much of the rate budget.
+- **`sync_cursors` seeding**: nothing else populates `sync_cursors`
+  (`projects/summary` auto-discovery was never built — Client is known
+  upfront instead). `ensureBootstrapSeed()` runs first every invocation and,
+  from `BRANDWATCH_PROJECT_ID`/`BRANDWATCH_QUERY_IDS` (comma-separated)
+  secrets, idempotently seeds placeholder `bw_projects`/`bw_queries` +
+  `sync_cursors` rows, resolving `organization_id` from the single row in
+  `brandwatch_credentials` (MVP: one organization). All 5 Brandwatch secrets
+  configured on the project: `BRANDWATCH_USERNAME`, `BRANDWATCH_PASSWORD`,
+  `BRANDWATCH_PLATFORM_CLIENT_ID`, `BRANDWATCH_PROJECT_ID`, `BRANDWATCH_QUERY_IDS`.
+- **Mention field mapping** (`upsertMentions()`): `resourceId→resource_id`,
+  `categories→category_ids`, `tags→tag_names`, `sentiment`, `author`,
+  `reachEstimate→reach_estimate`, `domain`, `snippet`, `added`,
+  `date→mention_date`, full raw object → `raw` jsonb. `full_text` is
+  deliberately left `null` — fetching it means a second call per poll
+  (`/data/mentions/fulltext`); revisit if the product needs full text (e.g.
+  `keyword` narrative signals on unrestricted sources).
+- **`category_id` nullable-uniqueness bug**: `bw_query_metrics_{daily,weekly,monthly}`
+  originally had `unique(..., category_id, ...)` with nullable `category_id`
+  — SQL treats `NULL <> NULL`, so the "whole query" (no category) row would
+  never actually dedupe. Fixed via a generated `category_id_key
+  bigint generated always as (coalesce(category_id, 0)) stored` column and
+  constraining on that instead (migration `20260707030000`). Any new
+  nullable column that's part of a uniqueness/upsert key needs the same
+  treatment.
+- **Data scope is deliberately bounded**: `foundation`/`bw-sync` covers all
+  *pull* data later sprints need (projects, queries, query groups,
+  categories, mentions, daily/weekly/monthly metrics, Query Group SOV).
+  Tags, Custom Alerts, and Author/Site/Location Lists are Brandwatch
+  features explicitly out of scope — the first two have no concrete need
+  yet (Sprint 2/3), and Lists are a *push* mechanism (Lidi → Brandwatch)
+  that depends on `entities`/`entity_tags` (Sprint 2) as a data source,
+  which doesn't exist yet. See `.dev/specs/_index.md` "Fora de escopo do
+  MVP".
 - `bw-sync` logs every step via `console.log`/`console.error` (prefixed
-  `[bw-sync]`, visible in Supabase Dashboard → Edge Functions → Logs) since
-  there's no UI yet and `sync_log` is only written once the polling logic
-  (TODO step 6) exists. Never log `password`/`access_token` values — only
-  metadata like token length/expiry.
+  `[bw-sync]`, visible in Supabase Dashboard → Edge Functions → Logs) —
+  primary observability today since there's no UI. Never log
+  `password`/`access_token` values, only metadata like token length/expiry.
 - Volume/sentiment numbers must never be derived by summing locally synced
   `mentions` — high-volume Queries are sampled by Brandwatch (individual
   mentions), but the aggregate endpoints (`data/volume/sentiment/days`) are

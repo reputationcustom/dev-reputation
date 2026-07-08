@@ -160,6 +160,23 @@ deve ser conferido contra esta lista antes de ser considerado pronto.
 | `decision-center`       | AI Advisors sobre mentions/narrativas, respeitando data-restrictions          | rascunho     | 3      | — |
 | `executive-reports`     | Geração de relatórios periódicos (`reports_generated`: diário/semanal/mensal/executivo/crise) | rascunho | 4 | — |
 
+> **Escopo de dados do `foundation` revisado e confirmado (2026-07-07)**:
+> `foundation` é responsável por **todo** o dado de leitura (pull) da
+> Brandwatch que os módulos dos Sprints seguintes precisam — sem isso, Sprint
+> 2/3 não têm dado para operar. Cobertura confirmada em `bw-sync`:
+> `bw_projects`/`bw_queries`/`bw_query_groups`/`bw_categories` (metadata),
+> `mentions` (polling), `bw_query_metrics_daily`/`weekly`/`monthly`
+> (sentiment/volume por Query/Category), `bw_query_group_metrics_weekly`
+> (Share of Voice). Isso já cobre o que `entities` (Sprint 2, via
+> `mentions.author`), `threshold-engine`/`intelligent-feed` (Sprint 3, via
+> `mentions`/`bw_categories`/métricas) e `propagation-graph` (Sprint 3, via
+> `mentions.raw` — os campos de relacionamento `insightsMentioned`/
+> `twitterReplyTo`/`twitterRetweetOf` não têm coluna tipada ainda, mas já
+> ficam preservados no jsonb bruto de cada mention, promovíveis a coluna
+> quando esse módulo for de fato especificado) vão precisar ler. Três tipos
+> de dado da Brandwatch continuam **fora** do `foundation` por decisão
+> explícita, não por esquecimento — ver seção seguinte.
+
 ## Entidades principais
 
 - `Organization` (multi-tenancy) + `Organization Member` (associação
@@ -176,7 +193,17 @@ deve ser conferido contra esta lista antes de ser considerado pronto.
 
 ## Fora de escopo do MVP (não implementar sem pedido explícito)
 
-- Sincronizar `entity_tags` de volta como Author Lists na Brandwatch.
+- Sincronizar `entity_tags` de volta como Author Lists na Brandwatch —
+  reconfirmado em 2026-07-07 apesar de "trazer todos os dados da Brandwatch"
+  ter sido pedido para `foundation`: Author/Site/Location Lists são um
+  mecanismo de **push** (Lidi → Brandwatch), não pull, e dependem de
+  `entities`/`entity_tags` (Sprint 2) como fonte — não há o que sincronizar
+  ainda. Revisitar quando `entities` existir.
+- Tags (`ruletags`) da Brandwatch — sem necessidade concreta antes do
+  Command Center (Sprint 2, triagem de Casos); `brandwatch-setup.md` §6.
+- Custom Alerts da Brandwatch — `threshold-engine` (Sprint 3) é o motor de
+  risco próprio do produto, não depende de Custom Alerts nativos;
+  `brandwatch-setup.md` §7.
 - Reputation Score composto — usar apenas `risk_level` (low/medium/high/critical).
 
 ## Decisões pendentes globais

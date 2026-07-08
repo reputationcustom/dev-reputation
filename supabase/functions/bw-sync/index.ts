@@ -1,52 +1,40 @@
 // supabase/functions/bw-sync/index.ts
 //
-// Esqueleto autossuficiente (Princípio técnico 5, .dev/specs/_index.md) —
-// sem import relativo de `_shared/` (não suportado em produção pelo Supabase
-// SaaS). Acionada por pg_cron a cada ~20-30s (nunca pelo frontend, por isso
-// sem CORS — ver Princípio técnico 5, ressalva de funções só-cron).
+// Edge Function autossuficiente (Princípio técnico 5, .dev/specs/_index.md)
+// — sem import relativo de `_shared/`. Acionada por pg_cron a cada ~20-30s
+// (nunca pelo frontend, por isso sem CORS — Princípio técnico 5, ressalva de
+// funções só-cron; verify_jwt=false em supabase/config.toml pelo mesmo
+// motivo).
 //
-// Fluxo completo esperado (.dev/specs/foundation/sync-brandwatch.md) — cada
-// TODO abaixo é uma leva futura de implementação, não implementado ainda:
-//   0. Semear sync_cursors na primeira execução — ver ensureBootstrapSeed()
-//      abaixo (implementada). sync_cursors nasce vazia e nada mais a
-//      populava (o passo 3 de bootstrap completo, via projects/summary, é
-//      TODO) — sem isto o sync nunca começa. MVP de Client único: usa
-//      BRANDWATCH_PROJECT_ID/BRANDWATCH_QUERY_IDS (secrets da função) em vez
-//      de descobrir automaticamente todos os projects/queries da conta.
-//   1. Resolver o próximo par (project_id, query_id) pendente em
-//      sync_cursors (round-robin, last_synced_at mais antigo primeiro).
-//   2. Resolver o access token da Brandwatch — ver mintBrandwatchAccessToken()
-//      abaixo (implementada) e a ressalva de cache logo depois (não
-//      implementada ainda).
-//   3. Bootstrap de metadata (primeira sync daquele par ou refresh > 24h):
-//      queries/summary, query-groups, rulecategories, GET /metrics — upsert
-//      em bw_queries/bw_query_groups/bw_categories (bw_projects/bw_queries já
-//      têm uma linha placeholder do passo 0; este passo preenche os campos
-//      reais).
-//   4. Polling de mentions: sinceAdded = sync_cursors.last_added_cursor menos
-//      buffer de 5min, orderBy=added&orderDirection=desc — upsert em
-//      mentions via idx_mentions_natural_key.
-//   5. data/volume/sentiment/days por Category ativa vinculada a alguma
-//      Narrativa — upsert em bw_query_metrics_daily.
-//   6. Atualizar sync_cursors (last_added_cursor, last_synced_at,
-//      status='idle') e inserir linha em sync_log (status='success',
-//      rows_processed).
-//   7. HTTP 429: backoff (retry-after ou janela/limite), até 3 tentativas;
-//      se esgotar, sync_cursors.status='error' + last_error, sync_log
-//      status='error' — sem derrubar a fila inteira (cada par falha isolado).
+// Implementa o fluxo completo de .dev/specs/foundation/sync-brandwatch.md:
+// semeadura de sync_cursors, bootstrap de metadata (project/queries/
+// query-groups/categories), polling de mentions, métricas diárias/semanais/
+// mensais (com throttle) e Share of Voice de Query Group. Cada chamada à
+// Brandwatch é sequencial (nunca paralela — best practice oficial) e passa
+// por callBrandwatch(), que aplica backoff em 429.
 //
-// Referência de client HTTP com fila serial + backoff: skill
-// `brandwatch-api`, scripts/brandwatch-client.ts — adaptar (copiar, não
-// importar) para dentro desta função quando a lógica acima for implementada.
+// ⚠️ Não testado contra a API real (sem credenciais disponíveis neste
+// ambiente) — os nomes de campo de mention foram confirmados contra exemplos
+// documentados (skill brandwatch-api, references/mentions.md e
+// data-restrictions-compliance.md), mas o formato exato de
+// data/volume/queryGroups/weeks foi inferido da descrição da doc, não de um
+// payload capturado. Ver comentário em syncQueryGroupSov() abaixo.
+//
+// Deliberadamente fora desta leva: full_text de mentions (dobraria as
+// chamadas por poll via /data/mentions/fulltext), Tags/Custom Alerts/Author
+// Lists (fora do Sprint 1 por decisão em brandwatch-setup.md), cache do
+// token em Vault (ainda minta um token novo por invocação).
 
 import { createClient } from "npm:@supabase/supabase-js@2";
 import type { SupabaseClient } from "npm:@supabase/supabase-js@2";
 
-// Logs estruturados (prefixo fixo [bw-sync]) para aparecer nos logs da Edge
-// Function no Dashboard do Supabase — único jeito de debugar esta função
-// hoje, já que não há UI/sync_log ainda escrevendo o resultado de cada
-// passo (sync_log só é gravado no TODO passo 6). NUNCA logar
-// password/access_token — só metadados (tamanho, expiração, ids).
+// =========================================================================
+// Logging — prefixo [bw-sync], visível em Dashboard → Edge Functions → Logs.
+// Única observabilidade disponível hoje (sync_log só é gravado ao final de
+// uma invocação bem-sucedida ou com erro tratado). NUNCA logar
+// password/access_token — só metadados.
+// =========================================================================
+
 function log(step: string, data?: Record<string, unknown>) {
   console.log(`[bw-sync] ${step}`, data ? JSON.stringify(data) : "");
 }
@@ -54,23 +42,23 @@ function logError(step: string, err: unknown) {
   console.error(`[bw-sync] ${step}`, err instanceof Error ? err.message : String(err));
 }
 
-// client_id=brandwatch-api-client é um literal fixo da Brandwatch (o mesmo
-// para qualquer integrador, documentado publicamente) — não é segredo, por
-// isso hardcoded aqui em vez de env var.
-const BRANDWATCH_OAUTH_URL = "https://api.brandwatch.com/oauth/token";
+// =========================================================================
+// Autenticação Brandwatch (grant_type=api-password — ver brandwatch-setup.md
+// §1, sem token de longa duração pré-gerado neste MVP)
+// =========================================================================
+
+const BRANDWATCH_BASE_URL = "https://api.brandwatch.com";
+const BRANDWATCH_OAUTH_URL = `${BRANDWATCH_BASE_URL}/oauth/token`;
+// Literal fixo da Brandwatch (o mesmo para qualquer integrador, documentado
+// publicamente) — não é segredo, por isso hardcoded em vez de env var.
 const BRANDWATCH_OAUTH_CLIENT_ID = "brandwatch-api-client";
+const TIMEZONE = "America/Sao_Paulo";
 
 interface BrandwatchToken {
   accessToken: string;
   expiresAt: Date;
 }
 
-// Minta um access token via grant_type=api-password (.dev/specs/foundation/
-// brandwatch-setup.md §1 e sync-brandwatch.md — MVP sem token de longa
-// duração pré-gerado). BRANDWATCH_USERNAME/BRANDWATCH_PASSWORD/
-// BRANDWATCH_PLATFORM_CLIENT_ID são secrets da própria Edge Function
-// (Deno.env.get, nunca no frontend — Princípio técnico 1), não colunas de
-// brandwatch_credentials neste MVP (assume um único Client Brandwatch).
 async function mintBrandwatchAccessToken(): Promise<BrandwatchToken> {
   const username = Deno.env.get("BRANDWATCH_USERNAME");
   const password = Deno.env.get("BRANDWATCH_PASSWORD");
@@ -92,8 +80,7 @@ async function mintBrandwatchAccessToken(): Promise<BrandwatchToken> {
   log("mintBrandwatchAccessToken:start", { username, platformClientId: platformClientId ?? null });
 
   // A senha vai no corpo (x-www-form-urlencoded), nunca na query string —
-  // evita vazar em logs de URL/proxies (mesma prática do header Authorization
-  // vs. query param descrita na skill brandwatch-api, references/authentication.md).
+  // evita vazar em logs de URL/proxies.
   const response = await fetch(`${BRANDWATCH_OAUTH_URL}?${params.toString()}`, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -102,8 +89,6 @@ async function mintBrandwatchAccessToken(): Promise<BrandwatchToken> {
 
   if (!response.ok) {
     const body = await response.text().catch(() => "");
-    // Corpo de erro da Brandwatch não costuma ecoar a senha enviada, só
-    // credenciais inválidas/parâmetros — seguro logar, mas mantido enxuto.
     logError("mintBrandwatchAccessToken:http_error", `${response.status} ${body}`);
     throw new Error(`Brandwatch OAuth error ${response.status}: ${body}`);
   }
@@ -120,25 +105,64 @@ async function mintBrandwatchAccessToken(): Promise<BrandwatchToken> {
   };
 }
 
-// Garante que sync_cursors tenha ao menos o par (BRANDWATCH_PROJECT_ID,
-// BRANDWATCH_QUERY_IDS) configurado via secret — sem isto, sync_cursors
-// nasce vazia e o passo 1 (round-robin) nunca tem o que processar. MVP de
-// Client único: não descobre projects/queries automaticamente (isso seria o
-// bootstrap completo via projects/summary, TODO passo 3) — as IDs vêm de env
-// var porque já são conhecidas manualmente (ver brandwatch-setup.md).
-//
-// bw_projects/bw_queries exigem organization_id/project_id via FK, então
-// este passo também garante linhas placeholder nessas tabelas antes de
-// inserir em sync_cursors — o passo 3 (bootstrap de metadata) sobrescreve
-// `name`/demais campos reais depois, sem tocar nas linhas já existentes aqui
-// além de fazer update.
+// =========================================================================
+// Cliente HTTP serial com backoff (best practice oficial: nunca chamadas
+// paralelas — ver skill brandwatch-api, scripts/brandwatch-client.ts de
+// referência, adaptado inline por não poder importar de `_shared/`).
+// =========================================================================
+
+async function callBrandwatch(path: string, token: string): Promise<any> {
+  const url = `${BRANDWATCH_BASE_URL}${path}`;
+
+  for (let attempt = 0; attempt <= 3; attempt++) {
+    const response = await fetch(url, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    if (response.status === 429) {
+      if (attempt === 3) {
+        throw new Error(`Brandwatch rate limit excedido após 3 tentativas em ${path}`);
+      }
+      const retryAfterHeader = response.headers.get("retry-after");
+      const retryAfterMs = retryAfterHeader ? Number(retryAfterHeader) * 1000 : 20_000;
+      logError("callBrandwatch:429", `${path} — aguardando ${retryAfterMs}ms (tentativa ${attempt + 1}/3)`);
+      await new Promise((resolve) => setTimeout(resolve, retryAfterMs));
+      continue;
+    }
+
+    if (!response.ok) {
+      const body = await response.text().catch(() => "");
+      throw new Error(`Brandwatch API error ${response.status} em ${path}: ${body}`);
+    }
+
+    log("callBrandwatch:ok", { path, rateLimitUsed: response.headers.get("x-rate-limit-used") });
+    return await response.json();
+  }
+
+  throw new Error(`callBrandwatch: loop inesperado em ${path}`);
+}
+
+function formatBrandwatchDate(date: Date): string {
+  // Brandwatch espera "+0000" em vez de "Z" — URLSearchParams cuida do
+  // percent-encoding do "+" (vira %2B) automaticamente.
+  return date.toISOString().replace("Z", "+0000");
+}
+
+function toDateOnly(isoString: string): string {
+  return isoString.slice(0, 10);
+}
+
+// =========================================================================
+// Passo 0 — Semeadura inicial de sync_cursors (ver sync-brandwatch.md,
+// passo 0). MVP de Client único: usa BRANDWATCH_PROJECT_ID/QUERY_IDS em vez
+// de descobrir automaticamente todos os projects/queries da conta.
+// =========================================================================
+
 async function ensureBootstrapSeed(supabase: SupabaseClient): Promise<void> {
   const projectIdRaw = Deno.env.get("BRANDWATCH_PROJECT_ID");
   const queryIdsRaw = Deno.env.get("BRANDWATCH_QUERY_IDS");
 
   if (!projectIdRaw || !queryIdsRaw) {
-    // Sem as duas envs, não há o que semear — segue para o passo 1 normal
-    // (que vai simplesmente não achar nenhum par pendente).
     log("ensureBootstrapSeed:skipped", { reason: "BRANDWATCH_PROJECT_ID/QUERY_IDS não configurados" });
     return;
   }
@@ -155,10 +179,7 @@ async function ensureBootstrapSeed(supabase: SupabaseClient): Promise<void> {
   log("ensureBootstrapSeed:start", { projectId, queryIds });
 
   // MVP de organização única: usa a primeira linha de brandwatch_credentials
-  // como dona do project_id acima. Se o produto passar a ter mais de uma
-  // organização com Brandwatch configurado, este passo precisa de outro
-  // critério para decidir de quem é o project_id (hoje é ambíguo de propósito
-  // — reflete a mesma simplificação já assumida para as credenciais).
+  // como dona do project_id acima.
   const { data: credentials, error: credentialsError } = await supabase
     .from("brandwatch_credentials")
     .select("organization_id")
@@ -178,11 +199,7 @@ async function ensureBootstrapSeed(supabase: SupabaseClient): Promise<void> {
   const { error: projectError } = await supabase
     .from("bw_projects")
     .upsert(
-      {
-        id: projectId,
-        organization_id: credentials.organization_id,
-        name: "(aguardando bootstrap de metadata)",
-      },
+      { id: projectId, organization_id: credentials.organization_id, name: "(aguardando bootstrap de metadata)" },
       { onConflict: "id", ignoreDuplicates: true },
     );
   if (projectError) {
@@ -193,11 +210,7 @@ async function ensureBootstrapSeed(supabase: SupabaseClient): Promise<void> {
   const { error: queriesError } = await supabase
     .from("bw_queries")
     .upsert(
-      queryIds.map((id) => ({
-        id,
-        project_id: projectId,
-        name: "(aguardando bootstrap de metadata)",
-      })),
+      queryIds.map((id) => ({ id, project_id: projectId, name: "(aguardando bootstrap de metadata)" })),
       { onConflict: "id", ignoreDuplicates: true },
     );
   if (queriesError) {
@@ -219,6 +232,408 @@ async function ensureBootstrapSeed(supabase: SupabaseClient): Promise<void> {
   log("ensureBootstrapSeed:done", { projectId, queryIds, organizationId: credentials.organization_id });
 }
 
+// =========================================================================
+// Passo 3 — Bootstrap de metadata (condicional: nome ainda placeholder OU
+// synced_at > 24h). Busca project/queries/query-groups/categories reais.
+// =========================================================================
+
+async function needsMetadataRefresh(supabase: SupabaseClient, projectId: number): Promise<boolean> {
+  const { data, error } = await supabase
+    .from("bw_projects")
+    .select("name, synced_at")
+    .eq("id", projectId)
+    .maybeSingle();
+
+  if (error) throw new Error(`Erro lendo bw_projects: ${error.message}`);
+  if (!data) return true;
+  if (data.name === "(aguardando bootstrap de metadata)") return true;
+
+  const syncedAt = new Date(data.synced_at as string).getTime();
+  return Date.now() - syncedAt > 24 * 60 * 60 * 1000;
+}
+
+async function refreshMetadata(
+  supabase: SupabaseClient,
+  token: string,
+  projectId: number,
+  organizationId: string,
+): Promise<void> {
+  log("refreshMetadata:start", { projectId });
+
+  const project = await callBrandwatch(`/projects/${projectId}`, token);
+  const { error: projectError } = await supabase
+    .from("bw_projects")
+    .upsert({
+      id: projectId,
+      organization_id: organizationId,
+      name: project.name,
+      description: project.description ?? null,
+      timezone: project.timezone ?? null,
+      synced_at: new Date().toISOString(),
+    }, { onConflict: "id" });
+  if (projectError) throw new Error(`Erro atualizando bw_projects: ${projectError.message}`);
+
+  const queriesResponse = await callBrandwatch(`/projects/${projectId}/queries/summary`, token);
+  const queries = (queriesResponse.results ?? []) as any[];
+  if (queries.length > 0) {
+    const { error } = await supabase.from("bw_queries").upsert(
+      queries.map((q) => ({
+        id: q.id,
+        project_id: projectId,
+        name: q.name,
+        boolean_query: q.booleanQuery ?? null,
+        type: q.type ?? "monitor",
+        content_sources: q.contentSources ?? [],
+        languages: q.languages ?? [],
+        start_date: q.startDate ?? null,
+        sampled: q.sampled ?? null,
+        sample_percentage: q.samplePercentage ?? null,
+        synced_at: new Date().toISOString(),
+      })),
+      { onConflict: "id" },
+    );
+    if (error) throw new Error(`Erro atualizando bw_queries: ${error.message}`);
+  }
+
+  const queryGroupsResponse = await callBrandwatch(`/projects/${projectId}/query-groups`, token);
+  const queryGroups = (queryGroupsResponse.results ?? []) as any[];
+  if (queryGroups.length > 0) {
+    const { error } = await supabase.from("bw_query_groups").upsert(
+      queryGroups.map((g) => ({
+        id: g.id,
+        project_id: projectId,
+        name: g.name,
+        query_ids: g.queryIds ?? [],
+        synced_at: new Date().toISOString(),
+      })),
+      { onConflict: "id" },
+    );
+    if (error) throw new Error(`Erro atualizando bw_query_groups: ${error.message}`);
+  }
+
+  const categoriesResponse = await callBrandwatch(`/projects/${projectId}/rulecategories`, token);
+  const categories = (categoriesResponse.results ?? []) as any[];
+  const categoryRows: Record<string, unknown>[] = [];
+  for (const category of categories) {
+    categoryRows.push({
+      id: category.id,
+      project_id: projectId,
+      parent_id: null,
+      name: category.name,
+      matching_type: category.matchingType ?? null,
+      synced_at: new Date().toISOString(),
+    });
+    for (const child of category.children ?? []) {
+      categoryRows.push({
+        id: child.id,
+        project_id: projectId,
+        parent_id: category.id,
+        name: child.name,
+        matching_type: category.matchingType ?? null,
+        synced_at: new Date().toISOString(),
+      });
+    }
+  }
+  if (categoryRows.length > 0) {
+    const { error } = await supabase.from("bw_categories").upsert(categoryRows, { onConflict: "id" });
+    if (error) throw new Error(`Erro atualizando bw_categories: ${error.message}`);
+  }
+
+  log("refreshMetadata:done", {
+    projectId,
+    queriesCount: queries.length,
+    queryGroupsCount: queryGroups.length,
+    categoriesCount: categoryRows.length,
+  });
+}
+
+// =========================================================================
+// Passo 4 — Polling de mentions
+// =========================================================================
+
+async function fetchMentions(
+  projectId: number,
+  queryId: number,
+  token: string,
+  lastAddedCursor: string | null,
+): Promise<any[]> {
+  const params = new URLSearchParams({
+    queryId: String(queryId),
+    pageSize: "100",
+    orderBy: "added",
+    orderDirection: "desc",
+  });
+
+  if (lastAddedCursor) {
+    const bufferedSince = new Date(new Date(lastAddedCursor).getTime() - 5 * 60 * 1000);
+    params.set("sinceAdded", formatBrandwatchDate(bufferedSince));
+    params.set("sourceType", "new");
+  } else {
+    params.set("page", "0");
+  }
+
+  const json = await callBrandwatch(`/projects/${projectId}/data/mentions?${params.toString()}`, token);
+  return json.results ?? [];
+}
+
+async function upsertMentions(
+  supabase: SupabaseClient,
+  organizationId: string,
+  projectId: number,
+  queryId: number,
+  mentions: any[],
+): Promise<{ count: number; maxAdded: string | null }> {
+  if (mentions.length === 0) return { count: 0, maxAdded: null };
+
+  let maxAdded: string | null = null;
+  const rows = mentions.map((m) => {
+    if (!maxAdded || new Date(m.added).getTime() > new Date(maxAdded).getTime()) maxAdded = m.added;
+    return {
+      organization_id: organizationId,
+      project_id: projectId,
+      query_id: queryId,
+      resource_id: String(m.resourceId),
+      category_ids: m.categories ?? [],
+      tag_names: m.tags ?? [],
+      sentiment: m.sentiment ?? null,
+      author: m.author ?? null,
+      // full_text fica null nesta leva — /data/mentions/fulltext dobraria as
+      // chamadas por poll (ver comentário no topo do arquivo).
+      reach_estimate: m.reachEstimate ?? null,
+      domain: m.domain ?? null,
+      snippet: m.snippet ?? null,
+      added: m.added,
+      mention_date: toDateOnly(m.date ?? m.added),
+      raw: m,
+    };
+  });
+
+  const { error } = await supabase
+    .from("mentions")
+    .upsert(rows, { onConflict: "query_id,resource_id,mention_date" });
+
+  if (error) throw new Error(`Erro upsertando mentions: ${error.message}`);
+  return { count: rows.length, maxAdded };
+}
+
+// =========================================================================
+// Passos 5-6 — Métricas diárias/semanais/mensais (sentiment por grão)
+// =========================================================================
+
+interface SentimentChartPoint {
+  date: string;
+  total: number;
+  positive: number;
+  neutral: number;
+  negative: number;
+}
+
+function pivotSentimentChart(json: { results?: { id: string; values?: { id: string; value: number }[] }[] }): SentimentChartPoint[] {
+  const byDate = new Map<string, SentimentChartPoint>();
+  for (const bucket of json.results ?? []) {
+    for (const point of bucket.values ?? []) {
+      const dateKey = toDateOnly(point.id);
+      const entry = byDate.get(dateKey) ?? { date: dateKey, total: 0, positive: 0, neutral: 0, negative: 0 };
+      if (bucket.id === "positive") entry.positive = point.value;
+      else if (bucket.id === "negative") entry.negative = point.value;
+      else if (bucket.id === "neutral") entry.neutral = point.value;
+      entry.total = entry.positive + entry.neutral + entry.negative;
+      byDate.set(dateKey, entry);
+    }
+  }
+  return Array.from(byDate.values());
+}
+
+type MetricGrain = "days" | "weeks" | "months";
+
+const GRAIN_CONFIG: Record<MetricGrain, { table: string; dateColumn: string }> = {
+  days: { table: "bw_query_metrics_daily", dateColumn: "metric_date" },
+  weeks: { table: "bw_query_metrics_weekly", dateColumn: "metric_week" },
+  months: { table: "bw_query_metrics_monthly", dateColumn: "metric_month" },
+};
+
+async function syncSentimentMetrics(
+  supabase: SupabaseClient,
+  token: string,
+  grain: MetricGrain,
+  projectId: number,
+  queryId: number,
+  categoryId: number | null,
+  startDate: Date,
+  endDate: Date,
+): Promise<void> {
+  const config = GRAIN_CONFIG[grain];
+  const params = new URLSearchParams({
+    queryId: String(queryId),
+    startDate: formatBrandwatchDate(startDate),
+    endDate: formatBrandwatchDate(endDate),
+    timezone: TIMEZONE,
+  });
+  if (categoryId) params.set("category", String(categoryId));
+
+  const json = await callBrandwatch(`/projects/${projectId}/data/volume/sentiment/${grain}?${params.toString()}`, token);
+  const points = pivotSentimentChart(json);
+
+  if (points.length === 0) {
+    log("syncSentimentMetrics:empty", { grain, projectId, queryId, categoryId });
+    return;
+  }
+
+  const rows = points.map((p) => ({
+    project_id: projectId,
+    query_id: queryId,
+    category_id: categoryId,
+    [config.dateColumn]: p.date,
+    total_mentions: p.total,
+    sentiment_positive: p.positive,
+    sentiment_neutral: p.neutral,
+    sentiment_negative: p.negative,
+    synced_at: new Date().toISOString(),
+  }));
+
+  const { error } = await supabase
+    .from(config.table)
+    .upsert(rows, { onConflict: `project_id,query_id,category_id_key,${config.dateColumn}` });
+
+  if (error) throw new Error(`Erro upsertando ${config.table}: ${error.message}`);
+  log("syncSentimentMetrics:done", { grain, projectId, queryId, categoryId, rows: rows.length });
+}
+
+// Throttle: só busca semanal/mensal se não existir linha "fresca" ainda —
+// evita gastar rate limit em toda invocação (~20-30s) num dado que muda bem
+// mais devagar.
+async function isGrainStale(
+  supabase: SupabaseClient,
+  grain: "weeks" | "months",
+  projectId: number,
+  queryId: number,
+  categoryId: number | null,
+  maxAgeMs: number,
+): Promise<boolean> {
+  const config = GRAIN_CONFIG[grain];
+  let query = supabase
+    .from(config.table)
+    .select("synced_at")
+    .eq("project_id", projectId)
+    .eq("query_id", queryId)
+    .order("synced_at", { ascending: false })
+    .limit(1);
+
+  query = categoryId ? query.eq("category_id", categoryId) : query.is("category_id", null);
+
+  const { data, error } = await query.maybeSingle();
+  if (error) throw new Error(`Erro checando frescor de ${config.table}: ${error.message}`);
+  if (!data) return true;
+
+  return Date.now() - new Date(data.synced_at as string).getTime() > maxAgeMs;
+}
+
+// Mesma ideia de isGrainStale(), mas para bw_query_group_metrics_weekly —
+// schema diferente (query_group_id + query_id, sem category_id), por isso
+// uma função separada em vez de reusar isGrainStale() com IDs trocados.
+async function isQueryGroupSovStale(
+  supabase: SupabaseClient,
+  queryGroupId: number,
+  maxAgeMs: number,
+): Promise<boolean> {
+  const { data, error } = await supabase
+    .from("bw_query_group_metrics_weekly")
+    .select("synced_at")
+    .eq("query_group_id", queryGroupId)
+    .order("synced_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) throw new Error(`Erro checando frescor de bw_query_group_metrics_weekly: ${error.message}`);
+  if (!data) return true;
+
+  return Date.now() - new Date(data.synced_at as string).getTime() > maxAgeMs;
+}
+
+async function fetchNarrativeCategoryIds(supabase: SupabaseClient, projectId: number): Promise<number[]> {
+  const { data: categories, error: categoriesError } = await supabase
+    .from("bw_categories")
+    .select("id")
+    .eq("project_id", projectId);
+  if (categoriesError) throw new Error(`Erro lendo bw_categories: ${categoriesError.message}`);
+
+  const categoryIds = (categories ?? []).map((c: any) => c.id as number);
+  if (categoryIds.length === 0) return [];
+
+  const { data: narratives, error: narrativesError } = await supabase
+    .from("narratives")
+    .select("bw_category_id")
+    .in("bw_category_id", categoryIds);
+  if (narrativesError) throw new Error(`Erro lendo narratives: ${narrativesError.message}`);
+
+  return Array.from(new Set((narratives ?? []).map((n: any) => n.bw_category_id as number)));
+}
+
+// =========================================================================
+// Passo 6b — Share of Voice de Query Group (mesmo throttle semanal)
+//
+// ⚠️ Formato de `results` inferido da descrição em references/
+// data-retrieval-charts.md ("Um Query Group... gera diretamente o breakdown
+// de share of voice por semana") — não confirmado contra um payload real.
+// Assumido: cada item de `results` representa uma Query dentro do grupo
+// (`id` = queryId), com `values[]` = {id: semana, value: volume}. Revisar
+// se os dados vierem diferentes do esperado (ver logs [bw-sync]).
+// =========================================================================
+
+async function syncQueryGroupSov(
+  supabase: SupabaseClient,
+  token: string,
+  projectId: number,
+  queryGroupId: number,
+  startDate: Date,
+  endDate: Date,
+): Promise<void> {
+  const params = new URLSearchParams({
+    queryGroupId: String(queryGroupId),
+    startDate: formatBrandwatchDate(startDate),
+    endDate: formatBrandwatchDate(endDate),
+    timezone: TIMEZONE,
+  });
+
+  const json = await callBrandwatch(`/projects/${projectId}/data/volume/queryGroups/weeks?${params.toString()}`, token);
+  const results = (json.results ?? []) as { id: string | number; values?: { id: string; value: number }[] }[];
+
+  const rows: Record<string, unknown>[] = [];
+  for (const series of results) {
+    const queryId = Number(series.id);
+    if (!Number.isFinite(queryId)) {
+      logError("syncQueryGroupSov:unexpected_series_id", `queryGroupId=${queryGroupId} id=${series.id}`);
+      continue;
+    }
+    for (const point of series.values ?? []) {
+      rows.push({
+        project_id: projectId,
+        query_group_id: queryGroupId,
+        query_id: queryId,
+        metric_week: toDateOnly(point.id),
+        total_mentions: point.value,
+        synced_at: new Date().toISOString(),
+      });
+    }
+  }
+
+  if (rows.length === 0) {
+    log("syncQueryGroupSov:empty", { projectId, queryGroupId });
+    return;
+  }
+
+  const { error } = await supabase
+    .from("bw_query_group_metrics_weekly")
+    .upsert(rows, { onConflict: "query_group_id,query_id,metric_week" });
+  if (error) throw new Error(`Erro upsertando bw_query_group_metrics_weekly: ${error.message}`);
+
+  log("syncQueryGroupSov:done", { projectId, queryGroupId, rows: rows.length });
+}
+
+// =========================================================================
+// Handler principal
+// =========================================================================
+
 Deno.serve(async (_req: Request) => {
   const invocationStartedAt = Date.now();
   log("invocation:start");
@@ -228,9 +643,7 @@ Deno.serve(async (_req: Request) => {
     Deno.env.get("SUPABASE_SECRET_KEY") ?? Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
   );
 
-  // TODO passo 0: só roda de fato quando BRANDWATCH_PROJECT_ID/QUERY_IDS
-  // estão configurados; idempotente (ignoreDuplicates) — seguro em toda
-  // invocação, não só na primeira.
+  // Passo 0: semeadura (idempotente, roda toda invocação).
   try {
     await ensureBootstrapSeed(supabase);
   } catch (err) {
@@ -241,8 +654,8 @@ Deno.serve(async (_req: Request) => {
     );
   }
 
-  // TODO passo 1: resolver o próximo par (project_id, query_id) pendente.
-  const { data: nextCursor, error: cursorError } = await supabase
+  // Passo 1: resolver o próximo par (project_id, query_id) pendente.
+  const { data: cursor, error: cursorError } = await supabase
     .from("sync_cursors")
     .select("id, project_id, query_id, last_added_cursor, last_synced_at")
     .order("last_synced_at", { ascending: true, nullsFirst: true })
@@ -257,27 +670,19 @@ Deno.serve(async (_req: Request) => {
     });
   }
 
-  if (!nextCursor) {
+  if (!cursor) {
     log("invocation:no_pending_pair");
     return new Response(JSON.stringify({ ok: true, message: "nenhum par pendente" }), {
       headers: { "Content-Type": "application/json" },
     });
   }
 
-  log("invocation:next_pair", {
-    projectId: nextCursor.project_id,
-    queryId: nextCursor.query_id,
-    lastSyncedAt: nextCursor.last_synced_at,
-  });
+  const { project_id: projectId, query_id: queryId } = cursor as { project_id: number; query_id: number };
+  log("invocation:next_pair", { projectId, queryId, lastSyncedAt: cursor.last_synced_at });
 
-  // TODO passo 2 (cache): esta chamada minta um token novo TODA invocação —
-  // aceitável para testar mintBrandwatchAccessToken() isoladamente, mas NÃO
-  // é rate-limit-safe (cada ~20-30s de pg_cron consumiria boa parte dos 30
-  // chamadas/10min só renovando token). Antes de agendar via pg_cron em
-  // produção, isto precisa checar brandwatch_credentials.token_expires_at
-  // (via organization_id de bw_projects.project_id) e só chamar
-  // mintBrandwatchAccessToken() quando o cache estiver ausente/expirado,
-  // gravando o resultado de volta (Vault + token_expires_at).
+  // Passo 2: resolver o access token. TODO (ver CLAUDE.md): ainda minta um
+  // token novo por invocação — cache via Vault/token_expires_at fica para a
+  // próxima leva, antes de agendar via pg_cron de verdade.
   let brandwatchToken: BrandwatchToken;
   try {
     brandwatchToken = await mintBrandwatchAccessToken();
@@ -288,23 +693,115 @@ Deno.serve(async (_req: Request) => {
       { status: 502, headers: { "Content-Type": "application/json" } },
     );
   }
+  const token = brandwatchToken.accessToken;
 
-  // TODO passos 3-7: bootstrap/polling/upsert usando brandwatchToken.accessToken,
-  // atualizar sync_cursors/sync_log. Esqueleto retorna sem processar.
-  log("invocation:done", {
-    durationMs: Date.now() - invocationStartedAt,
-    projectId: nextCursor.project_id,
-    queryId: nextCursor.query_id,
-    tokenExpiresAt: brandwatchToken.expiresAt.toISOString(),
-  });
+  const now = new Date();
+  const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
 
-  return new Response(
-    JSON.stringify({
-      ok: true,
-      message: "esqueleto — token mintado, lógica de sync ainda não implementada",
-      nextCursor,
-      tokenExpiresAt: brandwatchToken.expiresAt.toISOString(),
-    }),
-    { headers: { "Content-Type": "application/json" } },
-  );
+  try {
+    // Resolve organization_id (necessário pro bootstrap de metadata e pro
+    // upsert de mentions) via bw_projects — já existe nesse ponto, criado
+    // pelo passo 0.
+    const { data: projectRow, error: projectRowError } = await supabase
+      .from("bw_projects")
+      .select("organization_id")
+      .eq("id", projectId)
+      .single();
+    if (projectRowError) throw new Error(`Erro lendo organization_id de bw_projects: ${projectRowError.message}`);
+    const organizationId = projectRow.organization_id as string;
+
+    // Passo 3: bootstrap de metadata (condicional).
+    if (await needsMetadataRefresh(supabase, projectId)) {
+      await refreshMetadata(supabase, token, projectId, organizationId);
+    } else {
+      log("invocation:metadata_fresh", { projectId });
+    }
+
+    // Passo 4: polling de mentions.
+    const mentions = await fetchMentions(projectId, queryId, token, cursor.last_added_cursor as string | null);
+    const { count: mentionsCount, maxAdded } = await upsertMentions(supabase, organizationId, projectId, queryId, mentions);
+    log("invocation:mentions_synced", { projectId, queryId, mentionsCount });
+
+    // Passo 5: métricas diárias — sempre roda, query inteira (category=null)
+    // + cada Category vinculada a alguma Narrativa deste projeto.
+    const narrativeCategoryIds = await fetchNarrativeCategoryIds(supabase, projectId);
+    const categoryTargets: (number | null)[] = [null, ...narrativeCategoryIds];
+
+    for (const categoryId of categoryTargets) {
+      await syncSentimentMetrics(supabase, token, "days", projectId, queryId, categoryId, sevenDaysAgo, now);
+    }
+
+    // Passo 6: semanal/mensal — throttle por frescor (evita gastar rate
+    // limit em dado que muda bem mais devagar que a cada 20-30s).
+    for (const categoryId of categoryTargets) {
+      if (await isGrainStale(supabase, "weeks", projectId, queryId, categoryId, 7 * 24 * 60 * 60 * 1000)) {
+        await syncSentimentMetrics(supabase, token, "weeks", projectId, queryId, categoryId, sevenDaysAgo, now);
+      }
+      if (await isGrainStale(supabase, "months", projectId, queryId, categoryId, 30 * 24 * 60 * 60 * 1000)) {
+        await syncSentimentMetrics(supabase, token, "months", projectId, queryId, categoryId, sevenDaysAgo, now);
+      }
+    }
+
+    // Passo 6b: SOV de Query Group, se a query pertence a algum grupo.
+    const { data: queryGroups, error: queryGroupsError } = await supabase
+      .from("bw_query_groups")
+      .select("id")
+      .eq("project_id", projectId)
+      .contains("query_ids", [queryId]);
+    if (queryGroupsError) throw new Error(`Erro lendo bw_query_groups: ${queryGroupsError.message}`);
+
+    for (const group of queryGroups ?? []) {
+      const queryGroupId = (group as { id: number }).id;
+      if (await isQueryGroupSovStale(supabase, queryGroupId, 7 * 24 * 60 * 60 * 1000)) {
+        await syncQueryGroupSov(supabase, token, projectId, queryGroupId, sevenDaysAgo, now);
+      }
+    }
+
+    // Passo 7: fechar o ciclo.
+    const { error: updateCursorError } = await supabase
+      .from("sync_cursors")
+      .update({
+        last_added_cursor: maxAdded ?? cursor.last_added_cursor,
+        last_synced_at: new Date().toISOString(),
+        status: "idle",
+        last_error: null,
+      })
+      .eq("id", cursor.id);
+    if (updateCursorError) throw new Error(`Erro atualizando sync_cursors: ${updateCursorError.message}`);
+
+    await supabase.from("sync_log").insert({
+      project_id: projectId,
+      query_id: queryId,
+      status: "success",
+      rows_processed: mentionsCount,
+    });
+
+    log("invocation:done", { durationMs: Date.now() - invocationStartedAt, projectId, queryId, mentionsCount });
+
+    return new Response(
+      JSON.stringify({ ok: true, projectId, queryId, mentionsCount, tokenExpiresAt: brandwatchToken.expiresAt.toISOString() }),
+      { headers: { "Content-Type": "application/json" } },
+    );
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    logError("invocation:failed", err);
+
+    // Falha isolada por par — marca erro no cursor, mas não derruba a fila
+    // (a próxima invocação pega outro par ou tenta este de novo).
+    await supabase
+      .from("sync_cursors")
+      .update({ status: "error", last_error: message })
+      .eq("id", cursor.id);
+    await supabase.from("sync_log").insert({
+      project_id: projectId,
+      query_id: queryId,
+      status: "error",
+      error_message: message,
+    });
+
+    return new Response(JSON.stringify({ ok: false, error: message }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
 });

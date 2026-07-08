@@ -270,10 +270,67 @@ security` em ambas, **sem nenhuma policy** (deny-all para `anon`/
 | `sentiment_negative`     | `integer`     | sim | default `0` |
 | `synced_at`              | `timestamptz` | sim | `now()` |
 
-**Índices**: unique `(project_id, query_id, category_id, metric_date)`.
+**Índices**: unique `(project_id, query_id, category_id_key, metric_date)`.
+
+> ⚠️ **Correção (2026-07-07)**: a unique constraint original era
+> `(project_id, query_id, category_id, metric_date)` — mas `category_id` é
+> nullable, e SQL trata `NULL <> NULL`, então a linha "agregado da Query
+> inteira" (`category_id null`) nunca deduplicava de verdade (cada sync
+> inseria uma linha nova em vez de fazer upsert). Corrigido com uma coluna
+> gerada `category_id_key bigint generated always as (coalesce(category_id, 0))
+> stored`, e a unique constraint passou a usar essa coluna em vez de
+> `category_id` diretamente (migration `20260707030000`, aditiva — não
+> remove a constraint antiga). O mesmo padrão já nasce correto em
+> `bw_query_metrics_weekly`/`bw_query_metrics_monthly` abaixo.
 
 **Políticas RLS**: `org_isolation_bw_query_metrics_daily` — via `project_id`
 (mesmo padrão de `bw_queries`).
+
+### `bw_query_metrics_weekly` / `bw_query_metrics_monthly`
+
+Mesma estrutura de `bw_query_metrics_daily`, trocando `metric_date` por
+`metric_week`/`metric_month` — populadas por `data/volume/sentiment/weeks`/
+`.../months` (ver `sync-brandwatch.md`, passo 6). Mesmo padrão de
+`category_id_key`/RLS. Existem porque `narrative_metrics.period` já previa
+`weekly`/`monthly` desde o Sprint 1 (ver `narratives.md`), e porque agregados
+nativos da Brandwatch por semana/mês podem diferir ligeiramente de somar as
+linhas diárias (sampling/timezone) — por isso são buscados da API
+diretamente, não calculados como rollup SQL local.
+
+**Throttle de sync** (não é regra de negócio do dado em si, é comportamento
+do `bw-sync`): como semanal/mensal mudam bem mais devagar que o polling de
+mentions (~20-30s), a Edge Function só busca de novo quando não existe linha
+"fresca" (semanal: sem `synced_at` nos últimos 7 dias; mensal: 30 dias) —
+ver `ensureBootstrapSeed`/`isGrainStale` em `bw-sync/index.ts`.
+
+### `bw_query_group_metrics_weekly`
+
+Resolve a ⚠️ DECISÃO PENDENTE de `overview.md` ("SOV de Query Group... grão
+exato fica para data-model.md", nunca fechada até 2026-07-07) — o card de
+Share of Voice do Executive Overview (`executive-overview.md`) depende desta
+tabela.
+
+| Campo             | Tipo          | Obrigatório | Descrição |
+|--------------------|---------------|-------------|-----------|
+| `id`               | `uuid`        | sim | PK |
+| `project_id`       | `bigint`      | sim | FK → `bw_projects(id)` ON DELETE CASCADE |
+| `query_group_id`   | `bigint`      | sim | FK → `bw_query_groups(id)` ON DELETE CASCADE |
+| `query_id`         | `bigint`      | sim | FK → `bw_queries(id)` ON DELETE CASCADE — uma linha por Query **dentro** do grupo, não um agregado do grupo inteiro |
+| `metric_week`      | `date`        | sim | |
+| `total_mentions`   | `integer`     | sim | default `0` |
+| `synced_at`        | `timestamptz` | sim | `now()` |
+
+**Índices**: unique `(query_group_id, query_id, metric_week)` — sem o
+problema de `category_id` nullable acima (`query_id` aqui nunca é null).
+
+**Políticas RLS**: `org_isolation_bw_query_group_metrics_weekly` — via
+`project_id` (mesmo padrão das demais tabelas de cache).
+
+Populada por `data/volume/queryGroups/weeks?queryGroupId=...` — grão de
+comparação entre candidato/concorrentes (ver exemplo de Query Group em
+`brandwatch-setup.md` §4). ⚠️ Formato de resposta inferido da documentação
+(um item de `results` por Query do grupo), não confirmado contra um payload
+real — ver ressalva em `bw-sync/index.ts`, `syncQueryGroupSov()`.
 
 ---
 
@@ -585,6 +642,9 @@ revoke all on schema public from bi_reader;
       `brandwatch_credentials` → `bw_projects` → `bw_queries`/`bw_query_groups`/`bw_categories`
       → `mentions` (+ partições) → `sync_cursors`/`sync_log` →
       `bw_query_metrics_daily` → `narratives` → `narrative_signals`/`narrative_tags`/`narrative_metrics`
+      → `bw_query_metrics_weekly`/`bw_query_metrics_monthly`/`bw_query_group_metrics_weekly`
+      (migration `20260707030000`, também corrige o bug de `category_id`
+      nullable em `bw_query_metrics_daily` — ver seção 5)
 - [ ] Triggers `set_updated_at` em `organizations`, `brandwatch_credentials`, `narratives`
 - [ ] RLS habilitada em **todas** as tabelas deste módulo (inclusive
       `sync_cursors`/`sync_log`, deny-all)
