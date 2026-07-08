@@ -1,8 +1,8 @@
 ---
 tipo: data-model
 módulo: foundation
-status: rascunho
-atualizado: 2026-07-06
+status: pronto
+atualizado: 2026-07-07
 ---
 
 # Modelo de Dados — Foundation

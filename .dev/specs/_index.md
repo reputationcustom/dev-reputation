@@ -1,7 +1,7 @@
 ---
 tipo: index
 projeto: Reputation OS
-atualizado: 2026-07-06
+atualizado: 2026-07-07
 ---
 
 # Reputation OS — Índice de Especificações
@@ -150,7 +150,7 @@ deve ser conferido contra esta lista antes de ser considerado pronto.
 
 | Módulo                 | Descrição curta                                                              | Status geral | Sprint | Specs |
 |-------------------------|-------------------------------------------------------------------------------|--------------|--------|-------|
-| `foundation`            | Sync serial+rate-limited da Brandwatch → Supabase + Executive Overview       | rascunho     | 1      | [foundation/overview.md](foundation/overview.md) |
+| `foundation`            | Sync serial+rate-limited da Brandwatch → Supabase + Executive Overview       | pronto       | 1      | [foundation/overview.md](foundation/overview.md) |
 | `entities`              | Cadastro Nacional de Entidades (EAV via entity_tags) + enriquecimento de mentions | rascunho | 2      | — |
 | `command-center`        | CRUD de Casos (`cases`), checklist, comentários, arquivos, histórico de status | rascunho     | 2      | — |
 | `intelligence-center`   | Exploração de narrativas/mentions com filtros + enriquecimento de entidades  | rascunho     | 2      | — |

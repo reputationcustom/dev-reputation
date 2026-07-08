@@ -2,8 +2,8 @@
 tipo: feature-spec
 módulo: foundation
 funcionalidade: sync-brandwatch
-status: rascunho
-atualizado: 2026-07-06
+status: pronto
+atualizado: 2026-07-07
 ---
 
 # Sync Brandwatch

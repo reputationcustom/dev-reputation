@@ -1,7 +1,7 @@
 ---
 tipo: setup-guide
 módulo: foundation
-status: rascunho
+status: pronto
 atualizado: 2026-07-07
 ---
 
