@@ -48,19 +48,6 @@ begin
 end;
 $$;
 
--- Resolve as organizações do usuário autenticado via organization_members,
--- evitando recursão de RLS (security definer) e permitindo cache por
--- statement (stable).
-create or replace function auth_organization_ids()
-returns setof uuid
-language sql
-security definer
-stable
-set search_path = public
-as $$
-  select organization_id from organization_members where user_id = auth.uid()
-$$;
-
 -- =========================================================================
 -- 1. Multi-tenancy
 -- =========================================================================
@@ -76,14 +63,6 @@ create trigger set_updated_at
   before update on organizations
   for each row execute function set_updated_at();
 
-alter table organizations enable row level security;
-
--- Sem policy de INSERT/UPDATE/DELETE — criação/edição é operação de backend
--- (SUPABASE_SECRET_KEY), sem UI no MVP.
-create policy "org_isolation_organizations_select"
-  on organizations for select
-  using (id in (select auth_organization_ids()));
-
 create table if not exists organization_members (
   id                uuid primary key default gen_random_uuid(),
   organization_id   uuid not null references organizations(id) on delete cascade,
@@ -94,6 +73,30 @@ create table if not exists organization_members (
 
 create index if not exists idx_organization_members_user_id on organization_members(user_id);
 create index if not exists idx_organization_members_organization_id on organization_members(organization_id);
+
+-- Resolve as organizações do usuário autenticado via organization_members,
+-- evitando recursão de RLS (security definer) e permitindo cache por
+-- statement (stable). Definida só agora (não lá em cima, junto de
+-- set_updated_at) porque, ao contrário de plpgsql, uma função `language sql`
+-- tem o corpo validado contra o catálogo já na criação — precisa que
+-- organization_members já exista.
+create or replace function auth_organization_ids()
+returns setof uuid
+language sql
+security definer
+stable
+set search_path = public
+as $$
+  select organization_id from organization_members where user_id = auth.uid()
+$$;
+
+alter table organizations enable row level security;
+
+-- Sem policy de INSERT/UPDATE/DELETE — criação/edição é operação de backend
+-- (SUPABASE_SECRET_KEY), sem UI no MVP.
+create policy "org_isolation_organizations_select"
+  on organizations for select
+  using (id in (select auth_organization_ids()));
 
 alter table organization_members enable row level security;
 
