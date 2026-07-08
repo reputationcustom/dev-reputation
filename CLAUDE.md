@@ -125,6 +125,24 @@ duplicating `organization_id`.
   write-back is not implemented yet** (still a TODO in the function; today it
   mints a fresh token on every invocation, which is fine for testing the
   OAuth call in isolation but not safe to schedule on a real cron yet).
+- **`sync_cursors` bootstrap seeding (MVP, corrected 2026-07-07)**:
+  `sync_cursors` starts empty and nothing else populates it (the full
+  `projects/summary` auto-discovery bootstrap is still a TODO), so without a
+  seed step the sync would never start. `ensureBootstrapSeed()` in
+  `bw-sync/index.ts` runs first on every invocation and, if
+  `BRANDWATCH_PROJECT_ID`/`BRANDWATCH_QUERY_IDS` (Edge Function secrets,
+  `QUERY_IDS` comma-separated) are set, idempotently upserts placeholder
+  `bw_projects`/`bw_queries` rows plus the matching `sync_cursors` pair(s) —
+  it resolves `organization_id` from the single row in
+  `brandwatch_credentials` (MVP assumes one organization). All five
+  Brandwatch secrets currently configured on the project: `BRANDWATCH_USERNAME`,
+  `BRANDWATCH_PASSWORD`, `BRANDWATCH_PLATFORM_CLIENT_ID`,
+  `BRANDWATCH_PROJECT_ID`, `BRANDWATCH_QUERY_IDS`.
+- `bw-sync` logs every step via `console.log`/`console.error` (prefixed
+  `[bw-sync]`, visible in Supabase Dashboard → Edge Functions → Logs) since
+  there's no UI yet and `sync_log` is only written once the polling logic
+  (TODO step 6) exists. Never log `password`/`access_token` values — only
+  metadata like token length/expiry.
 - Volume/sentiment numbers must never be derived by summing locally synced
   `mentions` — high-volume Queries are sampled by Brandwatch (individual
   mentions), but the aggregate endpoints (`data/volume/sentiment/days`) are

@@ -22,6 +22,22 @@ o Executive Overview consomem o resultado (tabelas já sincronizadas).
 
 ## Fluxo principal
 
+0. **Semeadura inicial de `sync_cursors`** (⚠️ correção 2026-07-07 — gap
+   identificado após a primeira versão desta spec): `sync_cursors` nasce
+   vazia e nada mais a populava — o passo 2 (round-robin) não tem o que
+   processar sem isto, então o sync nunca começaria sozinho. Antes do
+   round-robin, a função garante (upsert idempotente, `on conflict do
+   nothing`) que existam linhas placeholder em `bw_projects`/`bw_queries` e o
+   par correspondente em `sync_cursors`, a partir de
+   `BRANDWATCH_PROJECT_ID`/`BRANDWATCH_QUERY_IDS` (secrets da Edge Function,
+   `QUERY_IDS` aceita lista separada por vírgula). MVP de Client único: não
+   descobre automaticamente todos os projects/queries da conta via
+   `projects/summary` (isso seria bootstrap completo, ver passo 4) — as IDs
+   já são conhecidas manualmente (anotadas durante o checklist de
+   `brandwatch-setup.md`), por isso vêm de env var em vez de descoberta
+   dinâmica. `name`/demais campos das linhas placeholder são sobrescritos
+   pelo bootstrap de metadata real do passo 4 (mesmo par, upsert, sem apagar
+   histórico).
 1. `pg_cron` invoca a Edge Function `bw-sync` a cada ~20–30 segundos
    (`select net.http_post(url := '<edge-function-url>/bw-sync', ...)`).
 2. A função resolve, em round-robin, o próximo par `(project_id, query_id)`
@@ -110,10 +126,14 @@ o Executive Overview consomem o resultado (tabelas já sincronizadas).
 
 ## Notificações / Feedback
 
-Não há UI para este job no Sprint 1. Observabilidade via `sync_log`
+Não há UI para este job no Sprint 1. Observabilidade final via `sync_log`
 (consultável por um analista/dev direto no Supabase) — sem alerta
 automático no MVP (thresholds de erro de sync ficam para o
-`threshold-engine`, Sprint 3, se necessário).
+`threshold-engine`, Sprint 3, se necessário). **Enquanto o passo 7
+(gravação em `sync_log`) não está implementado**, a função loga cada etapa
+via `console.log`/`console.error` (prefixo `[bw-sync]`), visível em
+Dashboard → Edge Functions → Logs — nunca loga `password`/`access_token`,
+só metadados (tamanho do token, expiração, ids do par processado).
 
 ## Dependências técnicas
 

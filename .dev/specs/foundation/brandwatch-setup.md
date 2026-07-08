@@ -373,12 +373,20 @@ crie a Category correspondente e promova a narrativa para `bw_aggregate`.
 
 - [ ] Usuário API com permissão Regular/Admin
 - [ ] `bw_client_id` (+ `bw_platform_client_id` se aplicável) anotado
-- [ ] Access token gerado e guardado no Supabase Vault
-- [ ] Linha em `brandwatch_credentials` criada
+- [ ] `BRANDWATCH_USERNAME`/`BRANDWATCH_PASSWORD`/`BRANDWATCH_PLATFORM_CLIENT_ID`
+      cadastrados como secrets da Edge Function `bw-sync` (`supabase secrets
+      set`, nunca no Vault/DB neste MVP — ver ⚠️ correção em §1: token gerado
+      em tempo de execução, não pré-gerado)
+- [ ] Linha em `brandwatch_credentials` criada (só `organization_id`/`bw_client_id`
+      — sem token, preenchido automaticamente no primeiro sync)
 - [ ] Project criado, timezone `America/Sao_Paulo`
 - [ ] ≥ 1 Query criada e validada (`query-validation` rodado antes de criar),
       com `contentSources`/`languages`/`locationFilter` explícitos (não
       default) — ver exemplo "Ricardo Alencar — Geral"
+- [ ] `BRANDWATCH_PROJECT_ID`/`BRANDWATCH_QUERY_IDS` (lista separada por
+      vírgula) cadastrados como secrets da Edge Function `bw-sync` — semeia
+      `sync_cursors` na primeira execução (ver ⚠️ correção em
+      `sync-brandwatch.md`, passo 0)
 - [ ] Queries dos concorrentes criadas com os mesmos parâmetros, se houver
       necessidade de Share of Voice
 - [ ] Query Group criado (ex: "Disputa Governo SP 2026")
