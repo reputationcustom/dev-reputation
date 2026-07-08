@@ -65,17 +65,53 @@ Groups e credenciais.
 - Anotar `bw_client_id` (o Client da Brandwatch — o rate limit de 30
   chamadas/10min é compartilhado por todas as integrações daquele Client) e,
   se a conta usa organization switching, o `bw_platform_client_id`.
-- Gerar o access token (validade padrão ~1 ano) e armazená-lo no **Supabase
-  Vault** — nunca em texto puro, nunca no frontend (Princípio técnico 1,
-  `_index.md`).
-- Criar a linha correspondente em `brandwatch_credentials`:
+
+> ⚠️ **Correção (2026-07-07)**: a primeira versão desta seção assumia um
+> access token de longa duração gerado manualmente uma única vez (via
+> curl/portal) e colado no Supabase Vault. Para este MVP a Lidi ainda não tem
+> acesso a um token desse tipo — o token é gerado **em tempo de execução**
+> pela própria Edge Function `bw-sync`, a cada vez que o cache expira, via
+> `grant_type=api-password`:
+>
+> ```
+> POST https://api.brandwatch.com/oauth/token
+>   ?grant_type=api-password
+>   &client_id=brandwatch-api-client   (literal fixo da Brandwatch, não é segredo)
+>   &platform_client_id=1997437816     (Client da Lidi/organization switching)
+>   &username=<usuário Brandwatch>
+> Body (x-www-form-urlencoded): password=<senha Brandwatch>
+> ```
+>
+> Usuário e senha da conta Brandwatch **não vivem em `brandwatch_credentials`
+> nem no Vault por organização neste MVP** — ficam como **secrets da Edge
+> Function** (`BRANDWATCH_USERNAME`, `BRANDWATCH_PASSWORD`,
+> `BRANDWATCH_PLATFORM_CLIENT_ID`), configurados via
+> `supabase secrets set` (ou Dashboard → Edge Functions → Secrets), nunca
+> commitados (Princípio técnico 1). Isso assume um único Client Brandwatch
+> para o MVP inteiro (adequado ao estágio atual — um cliente/campanha); se o
+> produto precisar de credenciais Brandwatch distintas por organização no
+> futuro, essas três variáveis migram para colunas dedicadas em
+> `brandwatch_credentials` (com a senha em Vault) — não implementado agora
+> por não ser necessário ainda.
+>
+> `brandwatch_credentials.access_token_secret_ref`/`token_expires_at`
+> continuam existindo, mas mudam de papel: deixam de ser preenchidos
+> manualmente e passam a ser o **cache** do token mintado em runtime — a
+> Edge Function checa `token_expires_at` a cada invocação e só chama
+> `/oauth/token` de novo quando o cache está ausente/expirado (evita gastar
+> parte do rate limit de 30 chamadas/10min só renovando token a cada
+> ~20-30s). Ver `sync-brandwatch.md` para o fluxo completo.
+
+- Criar a linha correspondente em `brandwatch_credentials` (só o vínculo com
+  a organização e o Client — sem token ainda, ele é preenchido pela primeira
+  execução do `bw-sync`):
 
   | Campo | Exemplo |
   |---|---|
   | `organization_id` | uuid da organização "Campanha Ricardo Alencar 2026" já criada no Supabase |
   | `bw_client_id` | `127732` |
-  | `access_token_secret_ref` | `vault:bw_access_token/campanha-alencar-2026` |
-  | `token_expires_at` | `2027-06-15` (data real de expiração retornada pelo `/oauth/token`) |
+  | `access_token_secret_ref` | `null` (preenchido automaticamente no primeiro sync) |
+  | `token_expires_at` | `null` (idem) |
 
 ## 2. Project
 

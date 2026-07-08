@@ -9,8 +9,9 @@
 // TODO abaixo é uma leva futura de implementação, não implementado ainda:
 //   1. Resolver o próximo par (project_id, query_id) pendente em
 //      sync_cursors (round-robin, last_synced_at mais antigo primeiro).
-//   2. Resolver o access token da Brandwatch via
-//      brandwatch_credentials.access_token_secret_ref (Supabase Vault).
+//   2. Resolver o access token da Brandwatch — ver mintBrandwatchAccessToken()
+//      abaixo (implementada) e a ressalva de cache logo depois (não
+//      implementada ainda).
 //   3. Bootstrap (primeira sync ou refresh > 24h): projects/summary,
 //      queries/summary, query-groups, rulecategories, GET /metrics — upsert
 //      em bw_projects/bw_queries/bw_query_groups/bw_categories.
@@ -31,6 +32,62 @@
 // importar) para dentro desta função quando a lógica acima for implementada.
 
 import { createClient } from "npm:@supabase/supabase-js@2";
+
+// client_id=brandwatch-api-client é um literal fixo da Brandwatch (o mesmo
+// para qualquer integrador, documentado publicamente) — não é segredo, por
+// isso hardcoded aqui em vez de env var.
+const BRANDWATCH_OAUTH_URL = "https://api.brandwatch.com/oauth/token";
+const BRANDWATCH_OAUTH_CLIENT_ID = "brandwatch-api-client";
+
+interface BrandwatchToken {
+  accessToken: string;
+  expiresAt: Date;
+}
+
+// Minta um access token via grant_type=api-password (.dev/specs/foundation/
+// brandwatch-setup.md §1 e sync-brandwatch.md — MVP sem token de longa
+// duração pré-gerado). BRANDWATCH_USERNAME/BRANDWATCH_PASSWORD/
+// BRANDWATCH_PLATFORM_CLIENT_ID são secrets da própria Edge Function
+// (Deno.env.get, nunca no frontend — Princípio técnico 1), não colunas de
+// brandwatch_credentials neste MVP (assume um único Client Brandwatch).
+async function mintBrandwatchAccessToken(): Promise<BrandwatchToken> {
+  const username = Deno.env.get("BRANDWATCH_USERNAME");
+  const password = Deno.env.get("BRANDWATCH_PASSWORD");
+  const platformClientId = Deno.env.get("BRANDWATCH_PLATFORM_CLIENT_ID");
+
+  if (!username || !password) {
+    throw new Error(
+      "BRANDWATCH_USERNAME/BRANDWATCH_PASSWORD não configurados (secrets da Edge Function).",
+    );
+  }
+
+  const params = new URLSearchParams({
+    grant_type: "api-password",
+    client_id: BRANDWATCH_OAUTH_CLIENT_ID,
+    username,
+  });
+  if (platformClientId) params.set("platform_client_id", platformClientId);
+
+  // A senha vai no corpo (x-www-form-urlencoded), nunca na query string —
+  // evita vazar em logs de URL/proxies (mesma prática do header Authorization
+  // vs. query param descrita na skill brandwatch-api, references/authentication.md).
+  const response = await fetch(`${BRANDWATCH_OAUTH_URL}?${params.toString()}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: `password=${encodeURIComponent(password)}`,
+  });
+
+  if (!response.ok) {
+    const body = await response.text().catch(() => "");
+    throw new Error(`Brandwatch OAuth error ${response.status}: ${body}`);
+  }
+
+  const json = await response.json() as { access_token: string; expires_in: number };
+  return {
+    accessToken: json.access_token,
+    expiresAt: new Date(Date.now() + json.expires_in * 1000),
+  };
+}
 
 Deno.serve(async (_req: Request) => {
   const supabase = createClient(
@@ -59,10 +116,33 @@ Deno.serve(async (_req: Request) => {
     });
   }
 
-  // TODO passos 2-7: resolver credencial, chamar a Brandwatch, fazer upsert,
+  // TODO passo 2 (cache): esta chamada minta um token novo TODA invocação —
+  // aceitável para testar mintBrandwatchAccessToken() isoladamente, mas NÃO
+  // é rate-limit-safe (cada ~20-30s de pg_cron consumiria boa parte dos 30
+  // chamadas/10min só renovando token). Antes de agendar via pg_cron em
+  // produção, isto precisa checar brandwatch_credentials.token_expires_at
+  // (via organization_id de bw_projects.project_id) e só chamar
+  // mintBrandwatchAccessToken() quando o cache estiver ausente/expirado,
+  // gravando o resultado de volta (Vault + token_expires_at).
+  let brandwatchToken: BrandwatchToken;
+  try {
+    brandwatchToken = await mintBrandwatchAccessToken();
+  } catch (err) {
+    return new Response(
+      JSON.stringify({ ok: false, error: err instanceof Error ? err.message : String(err) }),
+      { status: 502, headers: { "Content-Type": "application/json" } },
+    );
+  }
+
+  // TODO passos 3-7: bootstrap/polling/upsert usando brandwatchToken.accessToken,
   // atualizar sync_cursors/sync_log. Esqueleto retorna sem processar.
   return new Response(
-    JSON.stringify({ ok: true, message: "esqueleto — lógica de sync ainda não implementada", nextCursor }),
+    JSON.stringify({
+      ok: true,
+      message: "esqueleto — token mintado, lógica de sync ainda não implementada",
+      nextCursor,
+      tokenExpiresAt: brandwatchToken.expiresAt.toISOString(),
+    }),
     { headers: { "Content-Type": "application/json" } },
   );
 });

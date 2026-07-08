@@ -27,9 +27,30 @@ o Executive Overview consomem o resultado (tabelas já sincronizadas).
 2. A função resolve, em round-robin, o próximo par `(project_id, query_id)`
    com sync pendente, olhando `sync_cursors` (o cursor com `last_synced_at`
    mais antigo primeiro).
-3. Resolve o access token da Brandwatch da organização dona daquele
-   `project_id` via `brandwatch_credentials.access_token_secret_ref`
-   (Supabase Vault).
+3. Resolve o access token da Brandwatch: checa
+   `brandwatch_credentials.token_expires_at` (com margem de segurança, ex:
+   5min antes de expirar) para o `organization_id` dono daquele `project_id`.
+   Se houver cache válido, lê o token de `access_token_secret_ref` (Supabase
+   Vault). Se **não houver cache ou estiver expirado** — o cenário normal no
+   MVP, ver ⚠️ correção em `brandwatch-setup.md` §1 —, minta um novo token
+   via `grant_type=api-password`:
+   ```
+   POST https://api.brandwatch.com/oauth/token
+     ?grant_type=api-password&client_id=brandwatch-api-client
+     &platform_client_id=<BRANDWATCH_PLATFORM_CLIENT_ID>
+     &username=<BRANDWATCH_USERNAME>
+   Body (x-www-form-urlencoded): password=<BRANDWATCH_PASSWORD>
+   ```
+   `BRANDWATCH_USERNAME`/`BRANDWATCH_PASSWORD`/`BRANDWATCH_PLATFORM_CLIENT_ID`
+   são **secrets da própria Edge Function** (`Deno.env.get`, nunca no
+   frontend/Next.js — Princípio técnico 1), não colunas de
+   `brandwatch_credentials` neste MVP (assume um único Client Brandwatch).
+   `client_id=brandwatch-api-client` é um literal fixo da Brandwatch, não é
+   segredo. Depois de mintar, grava o novo token no Vault (atualiza o secret
+   referenciado por `access_token_secret_ref`, criando a referência se for a
+   primeira vez) e atualiza `brandwatch_credentials.token_expires_at` — isso
+   evita gastar parte do rate limit de 30 chamadas/10min renovando o token a
+   cada invocação (~20-30s).
 4. Se for a primeira sincronização daquele Project (sem linha em
    `bw_projects`) ou um refresh periódico (> 24h desde `synced_at`): busca
    `projects/summary`, `queries/summary`, `query-groups`, Categories

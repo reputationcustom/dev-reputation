@@ -112,11 +112,19 @@ duplicating `organization_id`.
   round-robin over `(project_id, query_id)` pairs tracked in
   `sync_cursors`/`sync_log` — there is no in-memory queue between
   invocations (the function is stateless between runs).
-- Brandwatch credentials are **per-organization**, stored in
-  `brandwatch_credentials.access_token_secret_ref` pointing into Supabase
-  Vault — never a single global env var (the repo's `supabase/functions/.env`
-  `BRANDWATCH_*` vars are for local seeding only, see the comment in that
-  file).
+- **Brandwatch auth (MVP, corrected 2026-07-07)**: no long-lived pre-generated
+  token yet, so `bw-sync` mints one at runtime via `grant_type=api-password`
+  against `POST https://api.brandwatch.com/oauth/token` (see
+  `mintBrandwatchAccessToken()` in `supabase/functions/bw-sync/index.ts`).
+  Credentials are **Edge Function secrets** — `BRANDWATCH_USERNAME`,
+  `BRANDWATCH_PASSWORD`, `BRANDWATCH_PLATFORM_CLIENT_ID` — not per-org DB
+  columns, since the MVP assumes a single Brandwatch Client. The minted token
+  is meant to be cached in `brandwatch_credentials.access_token_secret_ref`
+  (Vault) + `token_expires_at` so `bw-sync` doesn't burn the 30-calls/10min
+  budget re-minting a token every ~20-30s cron tick — **that caching/Vault
+  write-back is not implemented yet** (still a TODO in the function; today it
+  mints a fresh token on every invocation, which is fine for testing the
+  OAuth call in isolation but not safe to schedule on a real cron yet).
 - Volume/sentiment numbers must never be derived by summing locally synced
   `mentions` — high-volume Queries are sampled by Brandwatch (individual
   mentions), but the aggregate endpoints (`data/volume/sentiment/days`) are

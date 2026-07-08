@@ -130,10 +130,21 @@ $$;
 | `organization_id`          | `uuid`        | sim | FK → `organizations(id)` ON DELETE CASCADE |
 | `bw_client_id`             | `text`        | não | Client Brandwatch (rate limit é por aqui) |
 | `bw_platform_client_id`    | `text`        | não | organization switching, se aplicável |
-| `access_token_secret_ref`  | `text`        | sim | referência ao secret (Supabase Vault) — nunca o token em texto puro |
+| `access_token_secret_ref`  | `text`        | não | referência ao secret (Supabase Vault) — nunca o token em texto puro |
 | `token_expires_at`         | `timestamptz` | não | |
 | `created_at`               | `timestamptz` | sim | `now()` |
 | `updated_at`                | `timestamptz` | sim | `now()`, mantido por `set_updated_at` |
+
+> ⚠️ **Correção (2026-07-07, ver `brandwatch-setup.md` §1)**: `access_token_secret_ref`
+> e `token_expires_at` passaram de "obrigatório" para "não obrigatório" —
+> deixaram de ser preenchidos manualmente no cadastro da credencial e viraram
+> um **cache** do token que a Edge Function `bw-sync` minta em runtime via
+> `grant_type=api-password`, usando `BRANDWATCH_USERNAME`/`BRANDWATCH_PASSWORD`/
+> `BRANDWATCH_PLATFORM_CLIENT_ID` como **secrets da própria Edge Function**
+> (não colunas desta tabela — MVP assume um único Client Brandwatch). A linha
+> em `brandwatch_credentials` pode existir só com `organization_id` +
+> `bw_client_id`, sem token, até a primeira execução do sync popular o cache.
+> Migration correspondente: `20260707010000_brandwatch_credentials_optional_token.sql`.
 
 **Políticas RLS**: `org_isolation_brandwatch_credentials` — `organization_id in (select auth_organization_ids())`.
 
