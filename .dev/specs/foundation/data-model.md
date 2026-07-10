@@ -276,13 +276,32 @@ create index idx_mentions_domain on mentions (domain);
 
 ---
 
-## 4. Operacional — cursores e log (sem alteração estrutural)
+## 4. Operacional — cursores e log
 
 ### `sync_cursors` / `sync_log`
 
 Campos idênticos ao schema anexo. **Políticas RLS**: `enable row level
 security` em ambas, **sem nenhuma policy** (deny-all para `anon`/
 `authenticated` — só `SUPABASE_SECRET_KEY`, que bypassa RLS, acessa).
+
+> ✅ **Correção (2026-07-10)**: `sync_cursors` ganha
+> `backfill_completed_at timestamptz null` (migration `20260710020000`).
+> Motivo: um bug já corrigido (bootstrap buscava mentions mais recentes
+> primeiro) tinha avançado `last_added_cursor` pra perto de "agora" antes
+> do walk ascendente correto existir — e o `MAX(added)` já persistido em
+> `mentions` tinha exatamente a mesma leva viciada, então nenhum dos dois
+> sinais dava pra distinguir "já varri todo o histórico" de "o cursor
+> pulou o histórico por um bug". Enquanto `backfill_completed_at` for
+> `null`, `bw-sync` confia só em `last_added_cursor` (progresso real do
+> walk ascendente) e nunca cai pro fallback de `MAX(added)` em `mentions`;
+> a migration também reseta `last_added_cursor` pra `null` em todas as
+> linhas existentes, forçando um walk completo desde
+> `BRANDWATCH_MENTIONS_START_DATE` na invocação seguinte (seguro — upsert
+> de mentions é idempotente). `backfill_completed_at` é setado na primeira
+> vez que o walk alcança o presente e nunca mais é limpo depois disso; só
+> a partir daí o fallback por `MAX(added)` volta a ser usado (modo de
+> polling incremental normal). Ver `resolveMentionsSinceAdded()` em
+> `bw-sync/index.ts`.
 
 ---
 

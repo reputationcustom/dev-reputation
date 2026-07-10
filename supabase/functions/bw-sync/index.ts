@@ -261,7 +261,8 @@ async function ensureBootstrapSeed(supabase: SupabaseClient): Promise<void> {
 
 // =========================================================================
 // Passo 3 — Bootstrap de metadata (condicional: nome ainda placeholder OU
-// synced_at > 24h). Busca project/queries/query-groups/categories reais.
+// synced_at > 24h OU zero Categories cacheadas). Busca project/queries/
+// query-groups/categories reais.
 // =========================================================================
 
 async function needsMetadataRefresh(supabase: SupabaseClient, projectId: number): Promise<boolean> {
@@ -274,6 +275,21 @@ async function needsMetadataRefresh(supabase: SupabaseClient, projectId: number)
   if (error) throw new Error(`Erro lendo bw_projects: ${error.message}`);
   if (!data) return true;
   if (data.name === "(aguardando bootstrap de metadata)") return true;
+
+  // Correção 2026-07-10 (relatado pelo usuário: Categories/Tags foram
+  // configuradas na Brandwatch DEPOIS do primeiro refresh de metadata —
+  // como esse primeiro refresh cacheou "zero Categories" e o throttle de
+  // 24h não reconsidera isso, narratives ficaria vazia por até 24h mesmo
+  // com Categories já existindo do lado da Brandwatch). Zero linhas em
+  // bw_categories força um refresh mesmo dentro da janela de 24h — é
+  // autocorretivo: para de forçar assim que categorias existirem de
+  // verdade, sem precisar de intervenção manual/env var.
+  const { count: categoriesCount, error: categoriesError } = await supabase
+    .from("bw_categories")
+    .select("id", { count: "exact", head: true })
+    .eq("project_id", projectId);
+  if (categoriesError) throw new Error(`Erro checando bw_categories: ${categoriesError.message}`);
+  if (!categoriesCount) return true;
 
   const syncedAt = new Date(data.synced_at as string).getTime();
   return Date.now() - syncedAt > 24 * 60 * 60 * 1000;
@@ -449,30 +465,51 @@ async function ensureNarrativesFromCategories(
 // Passo 4 — Polling de mentions
 // =========================================================================
 
-// sync_cursors.last_added_cursor é a fonte primária de "até onde já
-// coletamos", mas se ela estiver vazia (reset manual, linha nova) não
-// podemos simplesmente recomeçar do zero — isso re-varreria/sobrescreveria
-// (via upsert, então não duplica, mas desperdiça orçamento de rate limit)
-// meses já coletados. Correção 2026-07-10 (pedido do usuário: "Importante
-// ler do banco de dados a data do último registro e fazer incremental"):
-// cai pro MAX(added) já persistido em `mentions` para aquele query_id antes
-// de cair pro default de BRANDWATCH_MENTIONS_START_DATE.
-async function resolveMentionsResumePoint(
+// ⚠️ Correção 2026-07-10 (relatado pelo usuário: mentions parou de crescer
+// além de ~100 linhas mesmo depois do fix de paginação): o bug original
+// (bootstrap com orderDirection=desc) já tinha avançado
+// sync_cursors.last_added_cursor pra perto de "agora" antes de este fix
+// existir — e o MAX(added) em `mentions` tem exatamente a mesma leva
+// viciada (são as mentions mais recentes, não as mais antigas). Ou seja,
+// nenhum dos dois sinais (cursor ou dado já persistido) distingue "já
+// varri tudo" de "o cursor pulou o histórico por um bug". Migration
+// `20260710020000` reseta last_added_cursor pra null e adiciona
+// sync_cursors.backfill_completed_at — enquanto backfill_completed_at for
+// null, o walk ascendente confia **só** em last_added_cursor (progresso
+// real dentro do próprio walk corrigido), nunca no MAX(added) de
+// `mentions`. Só depois que um walk completo alcança o presente pela
+// primeira vez (backfill_completed_at passa a ter valor) é que o
+// fallback por MAX(added) volta a ser seguro de usar (modo de polling
+// incremental normal, ver ramo abaixo).
+async function resolveMentionsSinceAdded(
   supabase: SupabaseClient,
   queryId: number,
-  cursorLastAdded: string | null,
-): Promise<string | null> {
-  if (cursorLastAdded) return cursorLastAdded;
+  cursor: { last_added_cursor: string | null; backfill_completed_at: string | null },
+): Promise<{ sinceAdded: Date; useSourceTypeNew: boolean }> {
+  if (!cursor.backfill_completed_at) {
+    return {
+      sinceAdded: cursor.last_added_cursor ? new Date(cursor.last_added_cursor) : getMentionsStartDate(),
+      useSourceTypeNew: false,
+    };
+  }
 
-  const { data, error } = await supabase
-    .from("mentions")
-    .select("added")
-    .eq("query_id", queryId)
-    .order("added", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  if (error) throw new Error(`Erro lendo último "added" de mentions: ${error.message}`);
-  return (data as { added: string } | null)?.added ?? null;
+  let lastAdded = cursor.last_added_cursor;
+  if (!lastAdded) {
+    const { data, error } = await supabase
+      .from("mentions")
+      .select("added")
+      .eq("query_id", queryId)
+      .order("added", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error) throw new Error(`Erro lendo último "added" de mentions: ${error.message}`);
+    lastAdded = (data as { added: string } | null)?.added ?? null;
+  }
+
+  return {
+    sinceAdded: lastAdded ? new Date(new Date(lastAdded).getTime() - 5 * 60 * 1000) : getMentionsStartDate(),
+    useSourceTypeNew: Boolean(lastAdded),
+  };
 }
 
 // Máximo aceito pela Brandwatch em paginação clássica (`pageSize`: 1–5000,
@@ -1128,7 +1165,7 @@ Deno.serve(async (_req: Request) => {
   // Passo 1: resolver o próximo par (project_id, query_id) pendente.
   const { data: cursor, error: cursorError } = await supabase
     .from("sync_cursors")
-    .select("id, project_id, query_id, last_added_cursor, last_synced_at")
+    .select("id, project_id, query_id, last_added_cursor, last_synced_at, backfill_completed_at")
     .order("last_synced_at", { ascending: true, nullsFirst: true })
     .limit(1)
     .maybeSingle();
@@ -1201,19 +1238,21 @@ Deno.serve(async (_req: Request) => {
     // usuário: "a tabela de menções só conta pouco mais de 100 menções, o
     // que não condiz com a realidade" — com invocações manuais/espaçadas,
     // uma página por invocação levaria muito tempo pra cobrir um
-    // trimestre de histórico). `sourceType=new` só entra depois da
-    // primeiríssima leva pra este par (queremos backfill na primeira vez).
-    const rawResumePoint = await resolveMentionsResumePoint(supabase, queryId, cursor.last_added_cursor as string | null);
-    const hadResumePoint = rawResumePoint !== null;
-    let sinceAdded = rawResumePoint
-      ? new Date(new Date(rawResumePoint).getTime() - 5 * 60 * 1000)
-      : getMentionsStartDate();
+    // trimestre de histórico). `sourceType=new` só entra quando o walk já
+    // alcançou o presente pelo menos uma vez antes (ver
+    // resolveMentionsSinceAdded) — antes disso, sempre queremos backfill.
+    const { sinceAdded: initialSinceAdded, useSourceTypeNew } = await resolveMentionsSinceAdded(supabase, queryId, {
+      last_added_cursor: cursor.last_added_cursor as string | null,
+      backfill_completed_at: cursor.backfill_completed_at as string | null,
+    });
+    let sinceAdded = initialSinceAdded;
 
     let mentionsCount = 0;
     let maxAdded: string | null = null;
     let mentionsPagesFetched = 0;
+    let reachedNow = false;
     while (mentionsPagesFetched < MAX_MENTIONS_PAGES_PER_INVOCATION) {
-      const page = await fetchMentions(projectId, queryId, token, sinceAdded, hadResumePoint);
+      const page = await fetchMentions(projectId, queryId, token, sinceAdded, useSourceTypeNew);
       const upserted = await upsertMentions(supabase, organizationId, projectId, queryId, page);
       mentionsCount += upserted.count;
       mentionsPagesFetched++;
@@ -1222,14 +1261,17 @@ Deno.serve(async (_req: Request) => {
         sinceAdded = new Date(upserted.maxAdded);
       }
       log("invocation:mentions_page", { projectId, queryId, page: mentionsPagesFetched, count: upserted.count });
-      if (page.length < MENTIONS_PAGE_SIZE) break; // alcançou o presente
+      if (page.length < MENTIONS_PAGE_SIZE) {
+        reachedNow = true;
+        break; // alcançou o presente
+      }
     }
     log("invocation:mentions_synced", {
       projectId,
       queryId,
       mentionsCount,
       pagesFetched: mentionsPagesFetched,
-      caughtUpToNow: mentionsPagesFetched < MAX_MENTIONS_PAGES_PER_INVOCATION,
+      reachedNow,
     });
 
     // Passo 5: métricas diárias — sempre roda, query inteira (category=null)
@@ -1282,7 +1324,9 @@ Deno.serve(async (_req: Request) => {
       }
     }
 
-    // Passo 7: fechar o ciclo.
+    // Passo 7: fechar o ciclo. backfill_completed_at só é setado na
+    // primeira vez que o walk alcança o presente, e nunca mais é limpo
+    // depois disso (mesmo padrão de "flag que só liga uma vez").
     const { error: updateCursorError } = await supabase
       .from("sync_cursors")
       .update({
@@ -1290,6 +1334,9 @@ Deno.serve(async (_req: Request) => {
         last_synced_at: new Date().toISOString(),
         status: "idle",
         last_error: null,
+        ...(reachedNow && !cursor.backfill_completed_at
+          ? { backfill_completed_at: new Date().toISOString() }
+          : {}),
       })
       .eq("id", cursor.id);
     if (updateCursorError) throw new Error(`Erro atualizando sync_cursors: ${updateCursorError.message}`);

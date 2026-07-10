@@ -195,33 +195,42 @@ yet (no migration sets it up) — for now the function is invoked manually.
   official example shows both params together), but grounded in a real
   documented bug rather than a guess. Verify against real logs after this
   deploys.
-- **Mentions polling walks history forward, resumed from the DB, not just
-  `sync_cursors`** (fixed 2026-07-10 — the original `orderDirection=desc`
-  bootstrap grabbed only the newest 100 mentions and the cursor jumped
-  straight to "now," permanently skipping the Jan–Jun/26 backlog).
-  `fetchMentions()` always uses `orderDirection=asc` from
-  `BRANDWATCH_MENTIONS_START_DATE` forward.
-  `resolveMentionsResumePoint()` picks the resume point: prefer
-  `sync_cursors.last_added_cursor`; if empty, fall back to `MAX(added)`
-  already in `mentions` for that `query_id` (so a lost/reset cursor never
-  re-walks — and doesn't overwrite, upsert is idempotent anyway — months
-  already collected); only true first-ever poll for a pair falls back to
-  `BRANDWATCH_MENTIONS_START_DATE` itself.
+- **Mentions polling walks history forward, tracked via
+  `sync_cursors.backfill_completed_at`** (fixed 2026-07-10, then corrected
+  again same day after user testing). First fix: the original
+  `orderDirection=desc` bootstrap grabbed only the newest 100 mentions and
+  the cursor jumped straight to "now," permanently skipping the
+  Jan–Jun/26 backlog — switched `fetchMentions()` to `orderDirection=asc`
+  from `BRANDWATCH_MENTIONS_START_DATE` forward. **But** that first fix's
+  resume logic (fall back to `MAX(added)` in `mentions` when the cursor is
+  empty) turned out to be a second bug: `last_added_cursor` had *already*
+  been advanced to "now" by the old buggy bootstrap before this fix
+  shipped, and `MAX(added)` in `mentions` carried the exact same
+  contaminated data (the most recent mentions, not the oldest) — so
+  neither signal could tell "fully backfilled" apart from "cursor skipped
+  ahead by the old bug." Real fix: `sync_cursors.backfill_completed_at`
+  (migration `20260710020000`, which also resets `last_added_cursor` to
+  `null` on every row). While `backfill_completed_at` is `null`,
+  `resolveMentionsSinceAdded()` trusts *only* `last_added_cursor` (real
+  progress within the corrected ascending walk) and never falls back to
+  `MAX(added)` in `mentions`. It's set (once, permanently) the first time
+  a page comes back shorter than `pageSize` — genuinely caught up to
+  `now`. Only then does the `MAX(added)` fallback become safe again
+  (normal incremental polling mode: 5-minute buffer + `sourceType=new`).
 - **Mentions pagination: max page size + in-invocation loop** (fixed
   2026-07-10 — user report: "a tabela de menções só conta pouco mais de
-  100 menções, o que não condiz com a realidade"). Two compounding causes:
-  `pageSize` was `100` instead of Brandwatch's documented max of `5000`
-  (`MENTIONS_PAGE_SIZE`), and each invocation only fetched *one page*, so
-  with invocations still triggered manually (no `pg_cron` yet) progress was
-  ~100 mentions per manual click. The handler now loops
+  100 menções, o que não condiz com a realidade"). `pageSize` was `100`
+  instead of Brandwatch's documented max of `5000` (`MENTIONS_PAGE_SIZE`),
+  and each invocation only fetched *one page*, so with invocations still
+  triggered manually (no `pg_cron` yet) progress was ~100 mentions per
+  manual click. The handler now loops
   (`MAX_MENTIONS_PAGES_PER_INVOCATION = 20`, i.e. up to ~100k mentions per
   invocation) advancing `sinceAdded` after each page (no 5-minute buffer
   between in-loop pages — that buffer only matters *between* invocations,
   for Brandwatch's async indexing lag) until either a short page signals
-  "caught up to now" or the page budget runs out, leaving room in the
-  30-calls/10min budget for the metrics calls that follow. `sourceType=new`
-  is only applied once a real resume point exists — the very first poll
-  for a pair intentionally includes backfilled mentions too.
+  "caught up to now" (see `backfill_completed_at` above) or the page
+  budget runs out, leaving room in the 30-calls/10min budget for the
+  metrics calls that follow.
 - **Metrics date range bug** (fixed 2026-07-10 — user report: "as métricas
   não estão sendo trazidas corretamente" / "Data início 01/01/2026 até a
   data de hj"): every `data/volume/...` call (`syncSentimentMetrics` daily/
@@ -253,17 +262,24 @@ yet (no migration sets it up) — for now the function is invoked manually.
   (deactivating a Category as a Narrativa, adding subcategory-level
   Narrativas, editing risk/priority) still works on top. Subcategories are
   *not* auto-seeded, left for manual curation.
-  **If `narratives` is still empty after a successful sync** (user report
-  2026-07-10): check the `refreshMetadata:done` log line's `categoriesCount`
-  — if it's `0` (also logged explicitly as
-  `refreshMetadata:no_categories_found`), the Brandwatch Project genuinely
-  has no Categories configured yet. `bw-sync` only mirrors Categories that
-  already exist in Brandwatch (`GET /rulecategories`) — it can't invent
-  them. Categories have to be created in the Brandwatch UI first (see
-  `brandwatch-setup.md`); also remember metadata only refreshes once per
-  24h per project (`needsMetadataRefresh()`), so a Category added in
-  Brandwatch after the last refresh won't show up as a Narrativa until the
-  next refresh window.
+  **If `narratives` is still empty after a successful sync**: check the
+  `refreshMetadata:done` log line's `categoriesCount` — if it's `0` (also
+  logged explicitly as `refreshMetadata:no_categories_found`), the
+  Brandwatch Project genuinely has no Categories configured yet. `bw-sync`
+  only mirrors Categories that already exist in Brandwatch (`GET
+  /rulecategories`) — it can't invent them; they have to be created in the
+  Brandwatch UI first (see `brandwatch-setup.md`).
+  **Second fix, same day**: `needsMetadataRefresh()` originally only
+  checked the placeholder name / 24h staleness — so if Categories were
+  configured in Brandwatch *after* the first (empty) metadata refresh, the
+  24h throttle would keep skipping the refresh and `narratives` would stay
+  empty for up to a day even with real Categories now on the Brandwatch
+  side (user hit this exact case: "Existem categorias e tags configuradas
+  na Brandwatch, portanto narrativas deve ser capturada corretamente").
+  Fixed: `needsMetadataRefresh()` now also returns `true` whenever
+  `bw_categories` has zero rows for the project, regardless of
+  `synced_at` — self-correcting, stops forcing extra refreshes as soon as
+  Categories exist and sync successfully once.
 - **Data scope is deliberately bounded**: `foundation`/`bw-sync` covers all
   *pull* data later sprints need (projects, queries, query groups,
   categories, mentions, daily/weekly/monthly metrics, Query Group SOV).

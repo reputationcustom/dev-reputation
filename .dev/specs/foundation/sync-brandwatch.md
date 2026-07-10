@@ -105,14 +105,29 @@ o Executive Overview consomem o resultado (tabelas já sincronizadas).
    data do último registro e fazer incremental"): `orderDirection=asc` (não
    `desc`) — caminha cronologicamente do mais antigo (`startDate`) pro mais
    recente, em vez de pegar sempre a leva mais nova e pular o backlog.
-   `sinceAdded` é **sempre** enviado: resolvido por
-   `resolveMentionsResumePoint()` como `sync_cursors.last_added_cursor` se
-   existir; senão, `MAX(added)` já persistido em `mentions` pra aquele
-   `query_id` (cobre reset de cursor sem re-varrer/gastar rate limit em
-   meses já coletados); senão, a própria `startDate` (nunca coletado
-   ainda). Com resume point conhecido, buffer de 5 minutos + `sourceType=new`;
-   sem ele (primeiríssima leva), sem buffer nem `sourceType=new` (queremos
-   pegar backfill também na primeira leva).
+   `sinceAdded` é **sempre** enviado, resolvido por
+   `resolveMentionsSinceAdded()`.
+   ⚠️ **Segunda correção 2026-07-10** (relatado pelo usuário: mentions
+   parou de crescer além de ~100 linhas mesmo após corrigir a paginação):
+   o bug original (bootstrap com `orderDirection=desc`) já tinha avançado
+   `sync_cursors.last_added_cursor` pra perto de "agora" **antes** deste
+   fix existir — e o `MAX(added)` já persistido em `mentions` tinha
+   exatamente a mesma leva viciada (as mentions mais recentes, não as mais
+   antigas). Ou seja, nem o cursor nem o dado já salvo davam pra distinguir
+   "já varri tudo" de "o cursor pulou o histórico por um bug antigo". Fix:
+   nova coluna `sync_cursors.backfill_completed_at` (migration
+   `20260710020000`, que também reseta `last_added_cursor` pra `null` em
+   todas as linhas existentes). Enquanto `backfill_completed_at` for
+   `null`, o walk confia **só** em `last_added_cursor` (progresso real
+   dentro do próprio walk ascendente corrigido) — nunca no fallback de
+   `MAX(added)` em `mentions`, que é exatamente o sinal que mascarava o
+   bug. Só quando uma página vier menor que `pageSize` pela primeira vez
+   (alcançou o presente de verdade) é que `backfill_completed_at` é
+   setado — daí em diante, o fallback por `MAX(added)` volta a ser seguro
+   (modo de polling incremental normal: buffer de 5 minutos +
+   `sourceType=new`). Sem `backfill_completed_at` ainda, sem buffer nem
+   `sourceType=new` (queremos pegar backfill genuíno, não só o que é
+   "novo").
    **Correção 2026-07-10** (pedido do usuário: "garanta que a busca está
    utilizando o retorno máximo de linhas" + "a tabela de menções só conta
    pouco mais de 100 menções, o que não condiz com a realidade"): duas
