@@ -205,6 +205,27 @@ deve ser conferido contra esta lista antes de ser considerado pronto.
   risco próprio do produto, não depende de Custom Alerts nativos;
   `brandwatch-setup.md` §7.
 - Reputation Score composto — usar apenas `risk_level` (low/medium/high/critical).
+- **Clusterização semântica por IA e classificação de papel do autor**
+  (Institucional/Imprensa/Apoiador/Crítico/Amplificador) — pedido em
+  2026-07-10 a partir de um mockup de "Relatório de Insights"
+  (`mockup_governo_sp_narrativas.pdf`) com clusters temáticos gerados por
+  embeddings/HDBSCAN. Confirmado com o usuário: **não são dados da
+  Brandwatch** — ficam fora de `foundation`/`bw-sync`, viram gap
+  documentado pra um módulo futuro (candidato natural: `executive-reports`,
+  Sprint 4, já que a prosa/síntese do relatório é geração de conteúdo, não
+  sync de dados). `foundation` cobre só a captura de dados brutos que esse
+  módulo futuro vai precisar (mentions enriquecidas, `bw_query_topics`,
+  `bw_query_top_authors` — ver `data-model.md` §5, migration
+  `20260710010000`).
+  **Investigação sobre "Iris"** (a IA da Brandwatch — teria uma API
+  própria que resolvesse isso?): pesquisa direta em
+  `developers.brandwatch.com` (índice `llms.txt` + páginas individuais)
+  confirmou que **não existe uma "Iris API" separada** — Iris é a camada de
+  IA que já alimenta as APIs padrão (Consumer Research, Analysis, Data
+  Upload, Measure), sem endpoint que devolva narrativas prontas ou papel de
+  autor. `data/topics` (Consumer Research API) é o mecanismo mais próximo
+  de tematização automática disponível hoje — ver `sync-brandwatch.md`
+  passo 6.4.
 
 ## Decisões pendentes globais
 

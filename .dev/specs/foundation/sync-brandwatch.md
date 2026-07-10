@@ -122,6 +122,25 @@ o Executive Overview consomem o resultado (tabelas já sincronizadas).
    `/data/mentions/fulltext` dobraria as chamadas por poll; decisão
    deliberada, revisar se o produto precisar de texto completo (ex:
    matching de narrativa por `keyword` em fontes sem restrição).
+   **Ampliação 2026-07-10** (pedido do usuário: garantir que tudo
+   necessário pra visões estilo "Relatório de Insights" — mockup
+   `mockup_governo_sp_narrativas.pdf` — já é capturado; nomes confirmados
+   direto em `developers.brandwatch.com/docs/
+   mention-metadata-field-definitions`, não só o resumo curado da skill):
+   `gender`, `countryCode/region/city/continentCode`,
+   `contentSource→content_source` (substitui `pageType`, deprecated pela
+   Brandwatch), `language`, `impressions`, `impact`, `classifications`
+   (array bruto, inclui emoção — `emotion` é derivado best-effort em
+   `bw-sync`, não campo direto), `insightsHashtag→insights_hashtag`,
+   `insightsMentioned→insights_mentioned`, `replyTo→reply_to`,
+   `retweetOf→retweet_of`, e `engagement` (jsonb compacto só com as chaves
+   de engajamento por plataforma presentes na mention — Brandwatch não tem
+   campo genérico de engajamento, é por rede: `twitterFollowers/
+   twitterLikeCount/twitterRetweets/twitterReplyCount`,
+   `instagramFollowerCount/instagramLikeCount/instagramCommentCount`,
+   `facebookLikes/Comments/Shares`, `tiktokLikes/Comments/Shares`,
+   `blueskyFollowers/Likes/Replies/Reposts`,
+   `linkedinLikes/Comments/Shares/Impressions`). Ver `data-model.md` §3.
 6. Busca `data/volume/sentiment/days` para o par (`category` omitido = Query
    inteira, mais uma chamada por Category **vinculada a alguma
    `narratives.bw_category_id`** neste Project — não todas as Categories do
@@ -135,11 +154,49 @@ o Executive Overview consomem o resultado (tabelas já sincronizadas).
    (~20-30s) gastaria chamadas em dados que só mudam semanalmente/mensalmente.
 6.2. Se a Query pertence a algum `bw_query_groups.query_ids`, e não existe
    linha "fresca" (7 dias) em `bw_query_group_metrics_weekly` para aquele
-   grupo: busca `data/volume/queryGroups/weeks?queryGroupId=...` e faz
-   upsert (uma linha por Query dentro do grupo, por semana) — Share of Voice
-   para o card do Executive Overview. ⚠️ Formato de resposta inferido da
-   documentação, não confirmado contra um payload real — ver ressalva em
-   `bw-sync/index.ts`, `syncQueryGroupSov()`.
+   grupo: busca `data/volume/queries/weeks?queryGroupId=...` e faz upsert
+   (uma linha por Query dentro do grupo, por semana) — Share of Voice para
+   o card do Executive Overview.
+   ⚠️ **Correção 2026-07-10**: chamava originalmente
+   `data/volume/queryGroups/weeks?queryGroupId=...`, assumindo (sem
+   confirmação) um item por Query dentro do grupo. O exemplo real
+   confirmado em `developers.brandwatch.com/docs/basic-charts` mostra o
+   oposto: a dimensão `queryGroups` devolve **um item por Query Group
+   inteiro**, volume agregado do grupo todo — não o breakdown
+   candidato × concorrente que este passo precisa. Trocado para a dimensão
+   `queries` (válida conforme `chart-dimensions-and-aggregates`), usando o
+   grupo como filtro/escopo. Ainda não 100% confirmado contra um payload
+   real (a doc não mostra um exemplo com os dois parâmetros juntos) — ver
+   ressalva em `bw-sync/index.ts`, `syncQueryGroupSov()`.
+6.3. Breakdown diário de volume por plataforma: busca `data/volume/
+   pageTypes/days` (dimensão de chart `pageTypes`, plural — distinta do
+   campo de mention `pageType`, deprecated) e faz upsert em
+   `bw_query_metrics_daily_by_platform`. Roda em **toda** invocação, mesmo
+   throttle do passo 6 (só query inteira, sem quebra por Narrativa).
+   Adicionado 2026-07-10.
+6.4. Temas: se não existir linha "fresca" (7 dias) em `bw_query_topics`
+   para o par (e cada `categoryTarget`, mesmo padrão do passo 6.1): busca
+   `data/topics?extract=words,phrases,hashtags,entities,people,places,
+   organisations&metrics=volume,percentageVolume,sentiment,trending` e faz
+   upsert em `bw_query_topics`. Este é o mecanismo nativo da Brandwatch
+   mais próximo de "clusters temáticos com sentimento/volume/trending" do
+   mockup de referência — ver investigação sobre "Iris" em `_index.md`
+   ("Fora de escopo do MVP"): não existe uma Iris API separada, este é o
+   que a Consumer Research API
+   realmente oferece pra tematização automática, sem precisar de
+   embeddings/clusterização próprios. Resposta usa a chave `topics` (não
+   `results`, diferente dos outros endpoints de chart) — confirmado.
+   Adicionado 2026-07-10.
+6.5. Ranking de autores: se não existir linha "fresca" (7 dias) em
+   `bw_query_top_authors` para o par (só nível de Query inteira, o
+   endpoint não filtra por Category): busca `data/volume/
+   topauthors/queries?limit=100` e faz upsert. Endpoint nativo de "Top
+   Authors" — melhor do que calcular localmente por SQL sobre a amostra de
+   `mentions` sincronizada (que a skill `brandwatch-api` recomendava como
+   fallback, mas fica sujeito ao sampling de Queries de alto volume).
+   Envelope de resposta confirmado: `results[].data.{authorName,
+   authorGender, authorVolume, reachEstimate, impact, sentiment, twitter*/
+   facebook*/reddit* fields}`. Adicionado 2026-07-10.
 7. Atualiza `sync_cursors` (`last_added_cursor`, `last_synced_at`,
    `status = 'idle'`, `last_error = null`) e insere uma linha em `sync_log`
    (`status = 'success'`, `rows_processed` = mentions upsertadas).

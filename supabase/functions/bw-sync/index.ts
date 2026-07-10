@@ -513,6 +513,42 @@ async function ensureMentionPartitions(supabase: SupabaseClient, mentionDates: s
   }
 }
 
+// Campos de engajamento são por plataforma, sem nome genérico (ver
+// mention-metadata-field-definitions da Brandwatch, pesquisado
+// 2026-07-10) — em vez de ~20 colunas tipadas sem consumidor ainda,
+// extraímos só as chaves presentes na mention pra um jsonb compacto.
+const ENGAGEMENT_FIELDS = [
+  "twitterFollowers", "twitterFollowing", "twitterLikeCount", "twitterRetweets", "twitterReplyCount",
+  "instagramFollowerCount", "instagramLikeCount", "instagramCommentCount",
+  "facebookLikes", "facebookComments", "facebookShares",
+  "tiktokLikes", "tiktokComments", "tiktokShares",
+  "blueskyFollowers", "blueskyLikes", "blueskyReplies", "blueskyReposts",
+  "linkedinLikes", "linkedinComments", "linkedinShares", "linkedinImpressions",
+] as const;
+
+function extractEngagement(m: any): Record<string, unknown> {
+  const engagement: Record<string, unknown> = {};
+  for (const field of ENGAGEMENT_FIELDS) {
+    if (m[field] !== undefined && m[field] !== null) engagement[field] = m[field];
+  }
+  return engagement;
+}
+
+// classifications é um array de {classifierId, labelId, name, trainingId,
+// confidence} — emoção não é um campo próprio da mention, é best-effort:
+// primeiro classifier cujo classifierId/name indica "emotions" (ex:
+// "emotions:Anger" no formato addClassifications de editing-mentions).
+function extractEmotion(classifications: any[]): string | null {
+  for (const c of classifications ?? []) {
+    const name: string = c?.name ?? "";
+    if (name.toLowerCase().startsWith("emotions:")) return name.slice("emotions:".length);
+    if (typeof c?.classifierId === "string" && c.classifierId.toLowerCase().includes("emotion")) {
+      return c?.name ?? null;
+    }
+  }
+  return null;
+}
+
 async function upsertMentions(
   supabase: SupabaseClient,
   organizationId: string,
@@ -525,6 +561,7 @@ async function upsertMentions(
   let maxAdded: string | null = null;
   const rows = mentions.map((m) => {
     if (!maxAdded || new Date(m.added).getTime() > new Date(maxAdded).getTime()) maxAdded = m.added;
+    const classifications = m.classifications ?? [];
     return {
       organization_id: organizationId,
       project_id: projectId,
@@ -541,6 +578,27 @@ async function upsertMentions(
       snippet: m.snippet ?? null,
       added: m.added,
       mention_date: toDateOnly(m.date ?? m.added),
+      // Campos adicionados 2026-07-10 (pedido do usuário: garantir que
+      // tudo necessário pra visões estilo "Relatório de Insights" já é
+      // capturado) — nomes confirmados contra
+      // mention-metadata-field-definitions da Brandwatch.
+      gender: m.gender ?? null,
+      country_code: m.countryCode ?? null,
+      region: m.region ?? null,
+      city: m.city ?? null,
+      continent_code: m.continentCode ?? null,
+      // pageType é deprecated pela Brandwatch — usar contentSource.
+      content_source: m.contentSource ?? null,
+      language: m.language ?? null,
+      impressions: m.impressions ?? null,
+      impact: m.impact ?? null,
+      classifications,
+      emotion: extractEmotion(classifications),
+      insights_hashtag: m.insightsHashtag ?? [],
+      insights_mentioned: m.insightsMentioned ?? [],
+      reply_to: m.replyTo ?? null,
+      retweet_of: m.retweetOf ?? null,
+      engagement: extractEngagement(m),
       raw: m,
     };
   });
@@ -711,12 +769,20 @@ async function fetchNarrativeCategoryIds(supabase: SupabaseClient, projectId: nu
 // =========================================================================
 // Passo 6b — Share of Voice de Query Group (mesmo throttle semanal)
 //
-// ⚠️ Formato de `results` inferido da descrição em references/
-// data-retrieval-charts.md ("Um Query Group... gera diretamente o breakdown
-// de share of voice por semana") — não confirmado contra um payload real.
-// Assumido: cada item de `results` representa uma Query dentro do grupo
-// (`id` = queryId), com `values[]` = {id: semana, value: volume}. Revisar
-// se os dados vierem diferentes do esperado (ver logs [bw-sync]).
+// ⚠️ Correção 2026-07-10: a chamada original usava
+// `data/volume/queryGroups/weeks?queryGroupId=X` (dimensão `queryGroups`),
+// mas o exemplo real confirmado na doc oficial
+// (developers.brandwatch.com/docs/basic-charts) mostra que essa dimensão
+// devolve **um item por Query Group inteiro** (`results[].id` = o próprio
+// queryGroupId, volume agregado do grupo todo) — não um breakdown por Query
+// dentro do grupo, que é o que o produto precisa pra comparar candidato ×
+// concorrentes. Trocado para `data/volume/queries/weeks?queryGroupId=X`
+// (dimensão `queries`, válida conforme chart-dimensions-and-aggregates;
+// queryGroupId author como filtro/escopo) — não há exemplo oficial
+// mostrando os dois parâmetros juntos, então o *shape* da resposta
+// (`results[].id` = queryId dentro do grupo) continua não 100% confirmado,
+// mas é a hipótese mais bem fundamentada hoje. Revisar contra os logs
+// [bw-sync] reais após deploy.
 // =========================================================================
 
 async function syncQueryGroupSov(
@@ -734,7 +800,7 @@ async function syncQueryGroupSov(
     timezone: TIMEZONE,
   });
 
-  const json = await callBrandwatch(`/projects/${projectId}/data/volume/queryGroups/weeks?${params.toString()}`, token);
+  const json = await callBrandwatch(`/projects/${projectId}/data/volume/queries/weeks?${params.toString()}`, token);
   const results = (json.results ?? []) as { id: string | number; values?: { id: string; value: number }[] }[];
 
   const rows: Record<string, unknown>[] = [];
@@ -767,6 +833,245 @@ async function syncQueryGroupSov(
   if (error) throw new Error(`Erro upsertando bw_query_group_metrics_weekly: ${error.message}`);
 
   log("syncQueryGroupSov:done", { projectId, queryGroupId, rows: rows.length });
+}
+
+// =========================================================================
+// Passo 6c — Breakdown diário de volume por plataforma
+//
+// data/volume/pageTypes/days — "pageTypes" (plural) é a dimensão de chart
+// confirmada em chart-dimensions-and-aggregates (distinta do campo de
+// mention "pageType", esse sim deprecated). Mesmo shape genérico de
+// results[].id/values[] já usado em syncSentimentMetrics/syncQueryGroupSov
+// — não peguei um payload de exemplo específico desta combinação, então
+// ainda é "inferido pelo padrão geral", mesmo tratamento dado a
+// syncQueryGroupSov antes da correção. Roda toda invocação (mesmo throttle
+// "diário sempre" das métricas de sentiment).
+// =========================================================================
+
+async function syncPlatformMetrics(
+  supabase: SupabaseClient,
+  token: string,
+  projectId: number,
+  queryId: number,
+  startDate: Date,
+  endDate: Date,
+): Promise<void> {
+  const params = new URLSearchParams({
+    queryId: String(queryId),
+    startDate: formatBrandwatchDate(startDate),
+    endDate: formatBrandwatchDate(endDate),
+    timezone: TIMEZONE,
+  });
+
+  const json = await callBrandwatch(`/projects/${projectId}/data/volume/pageTypes/days?${params.toString()}`, token);
+  const results = (json.results ?? []) as { id: string; values?: { id: string; value: number }[] }[];
+
+  const rows: Record<string, unknown>[] = [];
+  for (const series of results) {
+    for (const point of series.values ?? []) {
+      rows.push({
+        project_id: projectId,
+        query_id: queryId,
+        page_type: String(series.id),
+        metric_date: toDateOnly(point.id),
+        total_mentions: point.value,
+        synced_at: new Date().toISOString(),
+      });
+    }
+  }
+
+  if (rows.length === 0) {
+    log("syncPlatformMetrics:empty", { projectId, queryId });
+    return;
+  }
+
+  const { error } = await supabase
+    .from("bw_query_metrics_daily_by_platform")
+    .upsert(rows, { onConflict: "project_id,query_id,page_type,metric_date" });
+  if (error) throw new Error(`Erro upsertando bw_query_metrics_daily_by_platform: ${error.message}`);
+
+  log("syncPlatformMetrics:done", { projectId, queryId, rows: rows.length });
+}
+
+// =========================================================================
+// Passo 6d — Temas (data/topics) — mecanismo nativo da Brandwatch mais
+// próximo de "clusters temáticos com sentimento/volume/trending" (ver
+// investigação sobre "Iris" no plano desta leva — não há uma Iris API
+// separada; isto é o que a Consumer Research API realmente oferece pra
+// tematização automática). Throttle semanal (mesmo isGrainStale usado por
+// weeks/months, mas aqui reaproveitado contra bw_query_topics).
+// Resposta usa a chave "topics" (não "results", diferente dos outros
+// endpoints de chart) — confirmado contra developers.brandwatch.com/docs/
+// data-topics.
+// =========================================================================
+
+async function syncTopicsData(
+  supabase: SupabaseClient,
+  token: string,
+  projectId: number,
+  queryId: number,
+  categoryId: number | null,
+  startDate: Date,
+  endDate: Date,
+): Promise<void> {
+  const params = new URLSearchParams({
+    queryId: String(queryId),
+    startDate: formatBrandwatchDate(startDate),
+    endDate: formatBrandwatchDate(endDate),
+    extract: "words,phrases,hashtags,entities,people,places,organisations",
+    metrics: "volume,percentageVolume,sentiment,trending",
+    limit: "50",
+  });
+  if (categoryId) params.set("category", String(categoryId));
+
+  const json = await callBrandwatch(`/projects/${projectId}/data/topics?${params.toString()}`, token);
+  const topics = (json.topics ?? []) as any[];
+
+  const metricWeek = toDateOnly(new Date().toISOString());
+  const rows = topics
+    .map((t) => {
+      const sentiment = t.sentiment ?? {};
+      return {
+        project_id: projectId,
+        query_id: queryId,
+        category_id: categoryId,
+        topic_type: String(t.type ?? "unknown"),
+        label: String(t.label ?? t.id ?? ""),
+        volume: t.volume ?? 0,
+        percentage_volume: t.percentageVolume ?? null,
+        sentiment_positive: sentiment.positive ?? 0,
+        sentiment_neutral: sentiment.neutral ?? 0,
+        sentiment_negative: sentiment.negative ?? 0,
+        trending: t.trending ?? null,
+        metric_week: metricWeek,
+        synced_at: new Date().toISOString(),
+      };
+    })
+    .filter((r) => r.label.length > 0);
+
+  if (rows.length === 0) {
+    log("syncTopicsData:empty", { projectId, queryId, categoryId });
+    return;
+  }
+
+  const { error } = await supabase
+    .from("bw_query_topics")
+    .upsert(rows, { onConflict: "project_id,query_id,category_id_key,topic_type,label,metric_week" });
+  if (error) throw new Error(`Erro upsertando bw_query_topics: ${error.message}`);
+
+  log("syncTopicsData:done", { projectId, queryId, categoryId, rows: rows.length });
+}
+
+async function isTopicsStale(
+  supabase: SupabaseClient,
+  projectId: number,
+  queryId: number,
+  categoryId: number | null,
+  maxAgeMs: number,
+): Promise<boolean> {
+  let query = supabase
+    .from("bw_query_topics")
+    .select("synced_at")
+    .eq("project_id", projectId)
+    .eq("query_id", queryId)
+    .order("synced_at", { ascending: false })
+    .limit(1);
+  query = categoryId ? query.eq("category_id", categoryId) : query.is("category_id", null);
+
+  const { data, error } = await query.maybeSingle();
+  if (error) throw new Error(`Erro checando frescor de bw_query_topics: ${error.message}`);
+  if (!data) return true;
+
+  return Date.now() - new Date(data.synced_at as string).getTime() > maxAgeMs;
+}
+
+// =========================================================================
+// Passo 6e — Ranking de autores (data/volume/topauthors/queries) — endpoint
+// nativo de "Top Authors" (skill brandwatch-api recomendava calcular isso
+// localmente por SQL sobre mentions, mas esse endpoint existe e é melhor:
+// não sofre o mesmo sampling das mentions individuais sincronizadas, e já
+// vem com reach/impact/sentimento/engajamento por plataforma agregados
+// pela própria Brandwatch). Throttle semanal, mesmo padrão de
+// bw_query_topics. Envelope confirmado: results[].data.{authorName,
+// authorGender, authorVolume, reachEstimate, impact, sentiment, twitter*/
+// facebook*/reddit* fields} — via developers.brandwatch.com/docs/
+// top-authors.
+// =========================================================================
+
+async function syncTopAuthors(
+  supabase: SupabaseClient,
+  token: string,
+  projectId: number,
+  queryId: number,
+  startDate: Date,
+  endDate: Date,
+): Promise<void> {
+  const params = new URLSearchParams({
+    queryId: String(queryId),
+    startDate: formatBrandwatchDate(startDate),
+    endDate: formatBrandwatchDate(endDate),
+    limit: "100",
+  });
+
+  const json = await callBrandwatch(`/projects/${projectId}/data/volume/topauthors/queries?${params.toString()}`, token);
+  const results = (json.results ?? []) as { id: string; name?: string; data?: Record<string, any> }[];
+
+  const metricWeek = toDateOnly(new Date().toISOString());
+  const rows = results
+    .map((r) => {
+      const d = r.data ?? {};
+      const sentiment = d.sentiment ?? {};
+      const author = String(d.authorName ?? r.name ?? r.id ?? "");
+      return {
+        project_id: projectId,
+        query_id: queryId,
+        author,
+        volume: d.authorVolume ?? d.volume ?? 0,
+        reach_estimate: d.reachEstimate ?? null,
+        impact: d.impact ?? null,
+        sentiment_positive: sentiment.positive ?? 0,
+        sentiment_neutral: sentiment.neutral ?? 0,
+        sentiment_negative: sentiment.negative ?? 0,
+        // Guarda o objeto `data` inteiro (twitter*/facebook*/reddit* etc.)
+        // — mesmo raciocínio de mentions.engagement, sem coluna por campo.
+        platform_stats: d,
+        metric_week: metricWeek,
+        synced_at: new Date().toISOString(),
+      };
+    })
+    .filter((r) => r.author.length > 0);
+
+  if (rows.length === 0) {
+    log("syncTopAuthors:empty", { projectId, queryId });
+    return;
+  }
+
+  const { error } = await supabase
+    .from("bw_query_top_authors")
+    .upsert(rows, { onConflict: "project_id,query_id,author,metric_week" });
+  if (error) throw new Error(`Erro upsertando bw_query_top_authors: ${error.message}`);
+
+  log("syncTopAuthors:done", { projectId, queryId, rows: rows.length });
+}
+
+async function isTopAuthorsStale(
+  supabase: SupabaseClient,
+  projectId: number,
+  queryId: number,
+  maxAgeMs: number,
+): Promise<boolean> {
+  const { data, error } = await supabase
+    .from("bw_query_top_authors")
+    .select("synced_at")
+    .eq("project_id", projectId)
+    .eq("query_id", queryId)
+    .order("synced_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw new Error(`Erro checando frescor de bw_query_top_authors: ${error.message}`);
+  if (!data) return true;
+
+  return Date.now() - new Date(data.synced_at as string).getTime() > maxAgeMs;
 }
 
 // =========================================================================
@@ -871,6 +1176,10 @@ Deno.serve(async (_req: Request) => {
       await syncSentimentMetrics(supabase, token, "days", projectId, queryId, categoryId, sevenDaysAgo, now);
     }
 
+    // Passo 6c: breakdown de plataforma — sempre roda, mesmo throttle do
+    // diário (query inteira, sem quebra por Narrativa).
+    await syncPlatformMetrics(supabase, token, projectId, queryId, sevenDaysAgo, now);
+
     // Passo 6: semanal/mensal — throttle por frescor (evita gastar rate
     // limit em dado que muda bem mais devagar que a cada 20-30s).
     for (const categoryId of categoryTargets) {
@@ -880,6 +1189,17 @@ Deno.serve(async (_req: Request) => {
       if (await isGrainStale(supabase, "months", projectId, queryId, categoryId, 30 * 24 * 60 * 60 * 1000)) {
         await syncSentimentMetrics(supabase, token, "months", projectId, queryId, categoryId, sevenDaysAgo, now);
       }
+      // Passo 6d: temas (data/topics) — mesmo throttle semanal, por
+      // categoryTarget (query inteira + cada Narrativa).
+      if (await isTopicsStale(supabase, projectId, queryId, categoryId, 7 * 24 * 60 * 60 * 1000)) {
+        await syncTopicsData(supabase, token, projectId, queryId, categoryId, sevenDaysAgo, now);
+      }
+    }
+
+    // Passo 6e: ranking de autores — mesmo throttle semanal, só no nível de
+    // Query inteira (o endpoint não filtra por Category).
+    if (await isTopAuthorsStale(supabase, projectId, queryId, 7 * 24 * 60 * 60 * 1000)) {
+      await syncTopAuthors(supabase, token, projectId, queryId, sevenDaysAgo, now);
     }
 
     // Passo 6b: SOV de Query Group, se a query pertence a algum grupo.

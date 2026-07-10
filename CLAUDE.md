@@ -118,12 +118,15 @@ yet (no migration sets it up) — for now the function is invoked manually.
   goes through `callBrandwatch()`, which is sequential (never parallel —
   official best practice) and retries up to 3× on `429` honoring
   `retry-after`. Per-invocation call count varies: mentions poll (1) +
-  daily metrics (1 + 1 per narrative-linked Category) run *every*
-  invocation; metadata bootstrap (~4 calls) only when
-  `bw_projects.synced_at` is >24h stale; weekly/monthly/SOV only when no
-  "fresh" row exists yet for the current week/month (`isGrainStale()`/
-  `isQueryGroupSovStale()`) — this throttle is what keeps steady-state
-  invocations cheap despite covering 3 time grains.
+  daily sentiment metrics (1 + 1 per narrative-linked Category) + daily
+  platform breakdown (1, added 2026-07-10, `data/volume/pageTypes/days`)
+  run *every* invocation; metadata bootstrap (~4 calls) only when
+  `bw_projects.synced_at` is >24h stale; weekly/monthly sentiment/SOV/topics
+  (`data/topics`, added 2026-07-10)/top-authors (`data/volume/
+  topauthors/queries`, added 2026-07-10) only when no "fresh" row exists
+  yet for the current week (`isGrainStale()`/`isQueryGroupSovStale()`/
+  `isTopicsStale()`/`isTopAuthorsStale()`) — this throttle is what keeps
+  steady-state invocations cheap despite covering 5 aggregate types.
 - **Brandwatch auth**: no long-lived pre-generated token, so `bw-sync` mints
   one at runtime via `grant_type=api-password` (`mintBrandwatchAccessToken()`)
   using Edge Function secrets `BRANDWATCH_USERNAME`/`BRANDWATCH_PASSWORD`/
@@ -149,6 +152,49 @@ yet (no migration sets it up) — for now the function is invoked manually.
   deliberately left `null` — fetching it means a second call per poll
   (`/data/mentions/fulltext`); revisit if the product needs full text (e.g.
   `keyword` narrative signals on unrestricted sources).
+- **Mention enrichment fields** (added 2026-07-10, field names confirmed
+  against `developers.brandwatch.com/docs/mention-metadata-field-definitions`
+  directly — not just the skill's curated summary, which had several field
+  names wrong): `gender`, `countryCode/region/city/continentCode`,
+  `contentSource→content_source` (`pageType` is deprecated by Brandwatch —
+  don't use it for new code), `language`, `impressions`, `impact`,
+  `classifications` (raw array; `emotion` is a best-effort derived column,
+  not a real API field — first classifier whose name matches
+  `emotions:...`), `insightsHashtag→insights_hashtag`,
+  `insightsMentioned→insights_mentioned`, `replyTo→reply_to`,
+  `retweetOf→retweet_of`, `engagement` (compact jsonb — Brandwatch has no
+  generic engagement field, it's per-platform: `twitterFollowers/
+  twitterLikeCount/twitterRetweets/twitterReplyCount`, `instagramFollowerCount/
+  instagramLikeCount/instagramCommentCount`, `facebookLikes/Comments/Shares`,
+  `tiktokLikes/Comments/Shares`, `blueskyFollowers/Likes/Replies/Reposts`,
+  `linkedinLikes/Comments/Shares/Impressions` — stored as jsonb rather than
+  ~20 typed columns since there's no consumer yet to justify it).
+- **New aggregate tables** (added 2026-07-10, `bw_query_metrics_daily_by_platform`/
+  `bw_query_topics`/`bw_query_top_authors`): platform breakdown via
+  `data/volume/pageTypes/days` (chart dimension `pageTypes`, plural —
+  distinct from the deprecated per-mention `pageType` field); topic/theme
+  extraction via `data/topics` (`extract=words,phrases,hashtags,entities,
+  people,places,organisations`, `metrics=volume,percentageVolume,sentiment,
+  trending`) — this is the closest thing Brandwatch's *standard* API offers
+  to automatic theme/narrative clustering (see "Iris" investigation in
+  `.dev/specs/_index.md` "Fora de escopo do MVP" — there is no separate
+  Iris API); native author ranking via `data/volume/topauthors/queries`
+  (better than computing "top authors" locally over the synced mentions
+  sample, which the skill recommended as a fallback but is subject to
+  sampling on high-volume Queries). All three throttled weekly like
+  `bw_query_metrics_weekly` (`isTopicsStale()`/`isTopAuthorsStale()`).
+- **`syncQueryGroupSov()` dimension bug fixed** (2026-07-10): originally
+  called `data/volume/queryGroups/weeks?queryGroupId=X`, assuming one
+  result item per Query inside the group. The confirmed real example in
+  Brandwatch's `basic-charts` docs shows the opposite — `queryGroups` as a
+  dimension returns **one item for the whole group** (aggregated volume),
+  not a per-Query breakdown, so the SOV table was very likely storing the
+  wrong shape of data since it shipped. Fixed to
+  `data/volume/queries/weeks?queryGroupId=X` (dimension `queries`, group
+  used as scope/filter) — still not confirmed against a real payload (no
+  official example shows both params together), but grounded in a real
+  documented bug rather than a guess. Verify against real logs after this
+  deploys.
 - **Mentions polling walks history forward, resumed from the DB, not just
   `sync_cursors`** (fixed 2026-07-10 — the original `orderDirection=desc`
   bootstrap grabbed only the newest 100 mentions and the cursor jumped

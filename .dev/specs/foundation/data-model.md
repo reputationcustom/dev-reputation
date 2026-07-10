@@ -223,17 +223,50 @@ usando join implícito por `project_id in (select id from bw_projects where orga
 
 ## 3. Mentions (particionada por mês)
 
-Sem alterações estruturais em relação ao schema anexo — já tinha RLS correta
-e índices adequados. Mantido aqui só como referência de campos usados pelas
-seções seguintes: `organization_id`, `project_id`, `query_id`, `resource_id`,
-`category_ids bigint[]`, `tag_names text[]`, `sentiment`, `author`,
-`author_handle_normalized` (gerada, `lower(author)`), `reach_estimate`,
-`domain`, `snippet`, `full_text`, `added`, `mention_date`, `raw jsonb`.
+Campos originais (sem alteração): `organization_id`, `project_id`,
+`query_id`, `resource_id`, `category_ids bigint[]`, `tag_names text[]`,
+`sentiment`, `author`, `author_handle_normalized` (gerada,
+`lower(author)`), `reach_estimate`, `domain`, `snippet`, `full_text`,
+`added`, `mention_date`, `raw jsonb`.
 
-> ⚠️ DECISÃO PENDENTE: campos de engajamento (likes/shares/comentários) não
-> têm coluna tipada hoje — só existiriam dentro de `raw jsonb` se a
-> Brandwatch retornar isso por mention. Verificar payload real antes de
-> adicionar coluna.
+> ✅ **Decisão fechada (2026-07-10)**: a ⚠️ DECISÃO PENDENTE sobre campos de
+> engajamento (likes/shares/comentários) foi resolvida — pesquisa direta em
+> `developers.brandwatch.com/docs/mention-metadata-field-definitions`
+> (não só o resumo curado da skill `brandwatch-api`) confirmou que
+> engajamento **não tem campo genérico**, é específico por plataforma
+> (`twitterFollowers/twitterLikeCount/twitterRetweets/twitterReplyCount`,
+> `instagramFollowerCount/instagramLikeCount/instagramCommentCount`,
+> `facebookLikes/Comments/Shares`, `tiktokLikes/Comments/Shares`,
+> `blueskyFollowers/Likes/Replies/Reposts`,
+> `linkedinLikes/Comments/Shares/Impressions`). Migration `20260710010000`
+> adiciona `engagement jsonb not null default '{}'` — subconjunto extraído
+> do raw só com as chaves de engajamento presentes na mention (não uma
+> coluna tipada por campo — ~20 campos possíveis, sem consumidor ainda que
+> justifique tipar todos; `impact`/`reach_estimate`, já tipados, cobrem
+> ranking cross-platform).
+
+**Colunas adicionadas em `20260710010000`** (pedido do usuário: garantir
+que todo dado necessário pra visões estilo "Relatório de Insights" —
+mockup `mockup_governo_sp_narrativas.pdf` — está sendo capturado; nomes
+confirmados contra `mention-metadata-field-definitions`, não inferidos):
+
+| Campo | Tipo | Origem/nota |
+|---|---|---|
+| `gender` | `text` | `gender` — "X specific metric" |
+| `country_code`/`region`/`city`/`continent_code` | `text` | `countryCode`/`region`/`city`/`continentCode` |
+| `content_source` | `text` | `contentSource` — **substitui** `pageType`, que a Brandwatch marca como deprecated no objeto de mention |
+| `language` | `text` | `language` |
+| `impressions` | `integer` | `impressions` — só X, `0` nas demais fontes |
+| `impact` | `numeric` | `impact` — métrica logarítmica 0–100, cross-platform (referência de ranking de influência) |
+| `classifications` | `jsonb` | array bruto `{classifierId, labelId, name, trainingId, confidence}` — inclui emoção |
+| `emotion` | `text` | derivado em `bw-sync` (não é campo direto da API): primeiro classifier de emoção em `classifications`, best-effort |
+| `insights_hashtag` | `text[]` | `insightsHashtag` — específico de X/Instagram |
+| `insights_mentioned` | `text[]` | `insightsMentioned` — específico de X/Instagram |
+| `reply_to` / `retweet_of` | `text` | `replyTo`/`retweetOf` (URLs) |
+| `engagement` | `jsonb` | ver nota acima |
+
+Índices: `idx_mentions_content_source`, `idx_mentions_classifications`
+(gin), `idx_mentions_insights_hashtag` (gin).
 
 **Índice adicional necessário** (ausente no schema anexo, precisa para
 `narrative_matched_mentions()` abaixo, sinal `signal_type = 'domain'`):
@@ -326,11 +359,107 @@ problema de `category_id` nullable acima (`query_id` aqui nunca é null).
 **Políticas RLS**: `org_isolation_bw_query_group_metrics_weekly` — via
 `project_id` (mesmo padrão das demais tabelas de cache).
 
-Populada por `data/volume/queryGroups/weeks?queryGroupId=...` — grão de
+Populada por `data/volume/queries/weeks?queryGroupId=...` — grão de
 comparação entre candidato/concorrentes (ver exemplo de Query Group em
-`brandwatch-setup.md` §4). ⚠️ Formato de resposta inferido da documentação
-(um item de `results` por Query do grupo), não confirmado contra um payload
-real — ver ressalva em `bw-sync/index.ts`, `syncQueryGroupSov()`.
+`brandwatch-setup.md` §4).
+
+> ⚠️ **Correção (2026-07-10)**: originalmente populada via
+> `data/volume/queryGroups/weeks?queryGroupId=...`, assumindo (sem
+> confirmação) que `results` teria um item por Query dentro do grupo. O
+> exemplo real confirmado em `developers.brandwatch.com/docs/basic-charts`
+> mostra o oposto: a dimensão `queryGroups` devolve **um item por Query
+> Group inteiro** (`id` = o próprio `queryGroupId`), volume agregado do
+> grupo todo — não dá o breakdown candidato × concorrente que esta tabela
+> precisa. Trocado para `data/volume/queries/weeks?queryGroupId=...`
+> (dimensão `queries`, válida conforme `chart-dimensions-and-aggregates`,
+> usando o grupo como filtro/escopo). Ainda ⚠️ **não 100% confirmado**
+> contra um payload real (a doc não tem exemplo mostrando os dois
+> parâmetros juntos) — é a hipótese mais bem fundamentada hoje, mas o
+> comportamento anterior estava provadamente errado. Ver
+> `bw-sync/index.ts`, `syncQueryGroupSov()`.
+
+### `bw_query_metrics_daily_by_platform`
+
+Breakdown diário de volume por plataforma/fonte — populada por
+`data/volume/pageTypes/days` (dimensão de chart `pageTypes`, plural;
+distinta do campo de mention `pageType`, esse sim deprecated — ver §3).
+Mesma motivação de sampling-safe das demais tabelas de agregado desta
+seção. Adicionada em `20260710010000` a pedido do usuário (visão "Origem
+das menções · por plataforma" do mockup de referência).
+
+| Campo | Tipo | Obrigatório | Descrição |
+|---|---|---|---|
+| `id` | `uuid` | sim | PK |
+| `project_id` | `bigint` | sim | FK → `bw_projects(id)` ON DELETE CASCADE |
+| `query_id` | `bigint` | sim | FK → `bw_queries(id)` ON DELETE CASCADE |
+| `page_type` | `text` | sim | nome da plataforma/fonte retornado pela dimensão `pageTypes` — sempre preenchido (não sofre o bug de `category_id` nullable) |
+| `metric_date` | `date` | sim | |
+| `total_mentions` | `integer` | sim | default `0` |
+| `synced_at` | `timestamptz` | sim | |
+
+**Índices**: unique `(project_id, query_id, page_type, metric_date)`.
+**Políticas RLS**: select-only via `project_id`, mesmo padrão das demais.
+Sync roda **toda invocação** (mesmo throttle "diário sempre" do sentiment).
+
+### `bw_query_topics`
+
+Temas extraídos via `data/topics` (`extract=words,phrases,hashtags,
+entities,people,places,organisations`, `metrics=volume,percentageVolume,
+sentiment,trending`) — o mecanismo nativo da Brandwatch mais próximo de
+"clusters temáticos com sentimento/volume/trending" do mockup de
+referência, sem precisar de embeddings/clusterização próprios (ver
+investigação sobre "Iris" em `overview.md`/`_index.md` — não há uma Iris
+API separada; isto é o que a Consumer Research API realmente oferece).
+Adicionada em `20260710010000`.
+
+| Campo | Tipo | Obrigatório | Descrição |
+|---|---|---|---|
+| `id` | `uuid` | sim | PK |
+| `project_id` | `bigint` | sim | FK → `bw_projects(id)` ON DELETE CASCADE |
+| `query_id` | `bigint` | sim | FK → `bw_queries(id)` ON DELETE CASCADE |
+| `category_id` | `bigint` | não | FK → `bw_categories(id)`; `null` = tema da Query inteira, preenchido = tema dentro de uma Narrativa |
+| `category_id_key` | `bigint` | sim | gerada, `coalesce(category_id, 0)` — mesmo padrão de `bw_query_metrics_daily` (evita o bug de `NULL <> NULL`) |
+| `topic_type` | `text` | sim | um dos valores de `extract` (`words`, `phrases`, `hashtags`, `entities`, `people`, `places`, `organisations`) |
+| `label` | `text` | sim | o termo/tema em si |
+| `volume` | `integer` | sim | |
+| `percentage_volume` | `numeric` | não | |
+| `sentiment_positive`/`neutral`/`negative` | `integer` | sim | default `0` |
+| `trending` | `numeric` | não | |
+| `metric_week` | `date` | sim | data do snapshot de sync (não um bucket semanal literal — `data/topics` é um agregado sobre a janela toda, não uma série por semana; usado só como marcador de frescor/throttle) |
+| `synced_at` | `timestamptz` | sim | |
+
+**Índices**: unique `(project_id, query_id, category_id_key, topic_type,
+label, metric_week)`. **Políticas RLS**: select-only via `project_id`.
+Throttle semanal (mesmo padrão de `bw_query_metrics_weekly`,
+`isTopicsStale()` em `bw-sync/index.ts`), por `categoryTarget` (query
+inteira + cada Narrativa).
+
+### `bw_query_top_authors`
+
+Ranking nativo de autores via `data/volume/topauthors/queries` (até 1000,
+`bw-sync` pede `limit=100`) — melhor do que calcular "quem move a
+conversa" localmente por SQL sobre a amostra de `mentions` sincronizada
+(que a própria skill `brandwatch-api` recomendava como fallback, mas fica
+sujeita ao sampling de Queries de alto volume — ver nota de sampling em
+§5 acima). Adicionada em `20260710010000`.
+
+| Campo | Tipo | Obrigatório | Descrição |
+|---|---|---|---|
+| `id` | `uuid` | sim | PK |
+| `project_id` | `bigint` | sim | FK → `bw_projects(id)` ON DELETE CASCADE |
+| `query_id` | `bigint` | sim | FK → `bw_queries(id)` ON DELETE CASCADE |
+| `author` | `text` | sim | |
+| `volume` | `integer` | sim | default `0` |
+| `reach_estimate` | `integer` | não | |
+| `impact` | `numeric` | não | |
+| `sentiment_positive`/`neutral`/`negative` | `integer` | sim | default `0` |
+| `platform_stats` | `jsonb` | sim | objeto `data` inteiro devolvido pelo endpoint por autor (twitter*/facebook*/reddit* etc.) — mesmo raciocínio de `mentions.engagement`, sem coluna por campo |
+| `metric_week` | `date` | sim | mesmo caráter de snapshot que `bw_query_topics.metric_week` |
+| `synced_at` | `timestamptz` | sim | |
+
+**Índices**: unique `(project_id, query_id, author, metric_week)`.
+**Políticas RLS**: select-only via `project_id`. Throttle semanal, só no
+nível de Query inteira (endpoint não filtra por Category).
 
 ---
 
@@ -645,6 +774,11 @@ revoke all on schema public from bi_reader;
       → `bw_query_metrics_weekly`/`bw_query_metrics_monthly`/`bw_query_group_metrics_weekly`
       (migration `20260707030000`, também corrige o bug de `category_id`
       nullable em `bw_query_metrics_daily` — ver seção 5)
+      → colunas novas de `mentions` + `bw_query_metrics_daily_by_platform`/
+      `bw_query_topics`/`bw_query_top_authors` (migration `20260710010000`,
+      também corrige `create_mentions_partition` pra `security definer` —
+      ver migration `20260710000000` — e o fix de dimensão do SOV de Query
+      Group em `bw-sync/index.ts`)
 - [ ] Triggers `set_updated_at` em `organizations`, `brandwatch_credentials`, `narratives`
 - [ ] RLS habilitada em **todas** as tabelas deste módulo (inclusive
       `sync_cursors`/`sync_log`, deny-all)
