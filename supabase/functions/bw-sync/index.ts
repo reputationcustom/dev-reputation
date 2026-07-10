@@ -421,6 +421,20 @@ async function fetchMentions(
   return json.results ?? [];
 }
 
+// `mentions` é particionada por mês (mention_date) — a migration inicial só
+// pré-cria o mês do deploy + o seguinte. Como BRANDWATCH_MENTIONS_START_DATE
+// pode trazer histórico de meses arbitrários (e não há pg_cron criando
+// partições futuras com antecedência), garantimos aqui, sob demanda, que a
+// partição de cada mês presente no lote existe antes do upsert — evita
+// "no partition of relation \"mentions\" found for row".
+async function ensureMentionPartitions(supabase: SupabaseClient, mentionDates: string[]): Promise<void> {
+  const months = new Set(mentionDates.map((d) => d.slice(0, 7) + "-01"));
+  for (const month of months) {
+    const { error } = await supabase.rpc("create_mentions_partition", { p_month: month });
+    if (error) throw new Error(`Erro criando partição de mentions para ${month}: ${error.message}`);
+  }
+}
+
 async function upsertMentions(
   supabase: SupabaseClient,
   organizationId: string,
@@ -452,6 +466,8 @@ async function upsertMentions(
       raw: m,
     };
   });
+
+  await ensureMentionPartitions(supabase, rows.map((r) => r.mention_date));
 
   const { error } = await supabase
     .from("mentions")

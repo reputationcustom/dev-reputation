@@ -179,7 +179,15 @@ yet (no migration sets it up) — for now the function is invoked manually.
 - `mentions` is partitioned by month (`mention_date`); the natural
   dedup key is `(query_id, resource_id, mention_date)`, not just
   `(query_id, resource_id)` — Postgres requires the partition key in any
-  unique index on a partitioned table.
+  unique index on a partitioned table. The foundation migration only
+  pre-creates partitions for its deploy month +1; polling historical data
+  (`BRANDWATCH_MENTIONS_START_DATE`) needs partitions for earlier months
+  too, so `bw-sync` calls `ensureMentionPartitions()` (RPC to
+  `create_mentions_partition()`, now `security definer` so it doesn't
+  depend on `service_role`'s DDL grants — migration `20260710000000`)
+  before every mentions upsert, covering whatever months are in that
+  batch. No `pg_cron` job pre-creates future partitions ahead of time yet
+  — this per-invocation check is what makes it safe regardless.
 - `narrative_matched_mentions(narrative_id)` is the single canonical
   definition of "which mentions belong to a Narrativa" — every consumer
   (`refresh_narrative_metrics()`, future `narrative_entities`, Intelligence

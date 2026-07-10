@@ -83,8 +83,17 @@ o Executive Overview consomem o resultado (tabelas já sincronizadas).
    `last_added_cursor` ainda, bootstrap
    (`pageSize=100&page=0&orderBy=added&orderDirection=desc`, sem
    `sinceAdded`); com cursor, `sinceAdded` = `last_added_cursor` menos buffer
-   de 5 minutos + `sourceType=new`, mesma ordenação. Faz upsert em `mentions`
-   via `idx_mentions_natural_key` (`query_id, resource_id, mention_date`).
+   de 5 minutos + `sourceType=new`, mesma ordenação. **Antes do upsert**,
+   garante que a partição mensal de `mentions` existe para cada mês presente
+   no lote (⚠️ correção 2026-07-10, encontrado em teste real: a migration de
+   fundação só pré-cria as partições do mês do deploy e do seguinte —
+   histórico anterior, como `2026-01`, quebrava com `"no partition of
+   relation \"mentions\" found for row"`). `bw-sync` chama
+   `ensureMentionPartitions()`, que faz RPC pra `create_mentions_partition()`
+   (agora `security definer`, migration `20260710000000`) por mês distinto
+   do lote — não depende de `pg_cron` pré-criando partições futuras com
+   antecedência. Faz upsert em `mentions` via `idx_mentions_natural_key`
+   (`query_id, resource_id, mention_date`).
    Campos mapeados: `resourceId→resource_id`, `categories→category_ids`,
    `tags→tag_names`, `sentiment`, `author`, `reachEstimate→reach_estimate`,
    `domain`, `snippet`, `added`, `date→mention_date`, e o objeto completo em
