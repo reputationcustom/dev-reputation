@@ -152,9 +152,13 @@ begin
     sum(mention_engagement_reposts(m.engagement)),
     sum(mention_engagement_comments(m.engagement))
   from narratives n
+  -- generate_series(date, date, interval) devolve timestamp (não date) —
+  -- "d.metric_date + 1" (inteiro) não é operador válido pra timestamp,
+  -- só pra date (que é o que funciona em q.metric_date + 1 na Via 1
+  -- acima). Corrigido pra "+ interval '1 day'".
   cross join generate_series(p_from, p_to, interval '1 day') as d(metric_date)
   join lateral narrative_matched_mentions(
-    n.id, d.metric_date::timestamptz, (d.metric_date + 1)::timestamptz
+    n.id, d.metric_date::timestamptz, (d.metric_date + interval '1 day')::timestamptz
   ) m on true
   where n.bw_category_id is null
   group by n.id, d.metric_date
