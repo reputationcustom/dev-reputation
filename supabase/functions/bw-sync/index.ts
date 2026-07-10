@@ -111,6 +111,18 @@ async function mintBrandwatchAccessToken(): Promise<BrandwatchToken> {
 // referência, adaptado inline por não poder importar de `_shared/`).
 // =========================================================================
 
+// Erro tipado com o status HTTP — permite que chamadores decidam tratar
+// certos status (ex: 404 em endpoints opcionais como query-groups) como
+// "recurso não configurado" em vez de falha real. Ver refreshMetadata().
+class BrandwatchApiError extends Error {
+  status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "BrandwatchApiError";
+    this.status = status;
+  }
+}
+
 async function callBrandwatch(path: string, token: string): Promise<any> {
   const url = `${BRANDWATCH_BASE_URL}${path}`;
 
@@ -132,7 +144,7 @@ async function callBrandwatch(path: string, token: string): Promise<any> {
 
     if (!response.ok) {
       const body = await response.text().catch(() => "");
-      throw new Error(`Brandwatch API error ${response.status} em ${path}: ${body}`);
+      throw new BrandwatchApiError(response.status, `Brandwatch API error ${response.status} em ${path}: ${body}`);
     }
 
     log("callBrandwatch:ok", { path, rateLimitUsed: response.headers.get("x-rate-limit-used") });
@@ -295,8 +307,22 @@ async function refreshMetadata(
     if (error) throw new Error(`Erro atualizando bw_queries: ${error.message}`);
   }
 
-  const queryGroupsResponse = await callBrandwatch(`/projects/${projectId}/query-groups`, token);
-  const queryGroups = (queryGroupsResponse.results ?? []) as any[];
+  // Query Groups são opcionais — nem todo Project tem um configurado (só é
+  // necessário para o card de SOV, ver brandwatch-setup.md §4), e a
+  // Brandwatch responde 404 nesse caso em vez de `{results: []}`. Trata como
+  // "nenhum grupo" em vez de derrubar o bootstrap inteiro (mentions/métricas
+  // do par continuam rodando normalmente).
+  let queryGroups: any[] = [];
+  try {
+    const queryGroupsResponse = await callBrandwatch(`/projects/${projectId}/query-groups`, token);
+    queryGroups = (queryGroupsResponse.results ?? []) as any[];
+  } catch (err) {
+    if (err instanceof BrandwatchApiError && err.status === 404) {
+      log("refreshMetadata:query_groups_not_found", { projectId });
+    } else {
+      throw err;
+    }
+  }
   if (queryGroups.length > 0) {
     const { error } = await supabase.from("bw_query_groups").upsert(
       queryGroups.map((g) => ({
