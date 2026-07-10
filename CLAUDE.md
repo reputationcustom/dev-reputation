@@ -149,6 +149,18 @@ yet (no migration sets it up) — for now the function is invoked manually.
   deliberately left `null` — fetching it means a second call per poll
   (`/data/mentions/fulltext`); revisit if the product needs full text (e.g.
   `keyword` narrative signals on unrestricted sources).
+- **Mentions polling walks history forward, resumed from the DB, not just
+  `sync_cursors`** (fixed 2026-07-10 — the original `orderDirection=desc`
+  bootstrap grabbed only the newest 100 mentions and the cursor jumped
+  straight to "now," permanently skipping the Jan–Jun/26 backlog).
+  `fetchMentions()` always uses `orderDirection=asc` from
+  `BRANDWATCH_MENTIONS_START_DATE` forward, ~100 mentions/invocation.
+  `resolveMentionsResumePoint()` picks the resume point: prefer
+  `sync_cursors.last_added_cursor`; if empty, fall back to `MAX(added)`
+  already in `mentions` for that `query_id` (so a lost/reset cursor never
+  re-walks — and doesn't overwrite, upsert is idempotent anyway — months
+  already collected); only true first-ever poll for a pair falls back to
+  `BRANDWATCH_MENTIONS_START_DATE` itself.
 - **`category_id` nullable-uniqueness bug**: `bw_query_metrics_{daily,weekly,monthly}`
   originally had `unique(..., category_id, ...)` with nullable `category_id`
   — SQL treats `NULL <> NULL`, so the "whole query" (no category) row would
@@ -157,6 +169,17 @@ yet (no migration sets it up) — for now the function is invoked manually.
   constraining on that instead (migration `20260707030000`). Any new
   nullable column that's part of a uniqueness/upsert key needs the same
   treatment.
+- **Narratives auto-seed from top-level Categories** (fixed 2026-07-10 —
+  `narratives.md` originally only allowed manual/seed creation, which in
+  practice left the table permanently empty with no Sprint 1 UI to populate
+  it). `ensureNarrativesFromCategories()` runs at the end of metadata
+  bootstrap/refresh: every top-level `bw_categories` row (`parent_id is
+  null`) without a matching `narratives.bw_category_id` yet gets one
+  auto-created (`title` = Category name). Idempotent and never overwrites
+  `title`/`stage`/`risk_level` on rows that already exist — manual curation
+  (deactivating a Category as a Narrativa, adding subcategory-level
+  Narrativas, editing risk/priority) still works on top. Subcategories are
+  *not* auto-seeded, left for manual curation.
 - **Data scope is deliberately bounded**: `foundation`/`bw-sync` covers all
   *pull* data later sprints need (projects, queries, query groups,
   categories, mentions, daily/weekly/monthly metrics, Query Group SOV).

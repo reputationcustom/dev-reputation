@@ -22,10 +22,20 @@ edição de Narrativas **não têm UI no Sprint 1** — ver Regras de negócio.
 
 ## Fluxo principal (dados, não UI)
 
-1. Uma Narrativa é criada manualmente (SQL/seed) por um analista/dev, com
-   `title`, opcionalmente `bw_category_id` (se já existe uma Category
-   equivalente curada na Brandwatch) e/ou linhas em `narrative_signals`
-   (`keyword`, `hashtag`, `author_handle`, `domain`, `url`).
+1. **Correção 2026-07-10**: uma Narrativa é criada **automaticamente** por
+   `bw-sync` (`ensureNarrativesFromCategories()`, chamada no final do
+   bootstrap/refresh de metadata — ver `sync-brandwatch.md` passo 4) — uma
+   por Category **de topo** do Project (`bw_category_id` = a Category,
+   `title` = nome da Category), idempotente (nunca sobrescreve
+   `title`/`stage`/`risk_level` de uma Narrativa já existente/editada). A
+   versão original desta spec previa só criação manual (SQL/seed) por um
+   analista/dev — na prática isso deixava a tabela sempre vazia, já que não
+   há UI de gestão no Sprint 1 (ver Interface abaixo) e nenhum seed manual
+   avulso foi mantido em dia com a Brandwatch. Curadoria manual continua
+   possível por cima do que é auto-criado: editar `title`/`stage`/
+   `risk_level`/`priority`, desativar uma Narrativa indesejada, criar
+   Narrativas extras sem `bw_category_id` (só `narrative_signals`) ou para
+   subcategorias (não auto-criadas).
 2. `refresh_narrative_metrics()` roda diariamente via `pg_cron`
    (ver [data-model.md](data-model.md)):
    - Se `bw_category_id` preenchido: copia de `bw_query_metrics_daily`
@@ -73,7 +83,7 @@ spec.
 ## Dados envolvidos
 
 - **Lê**: `bw_query_metrics_daily`, `mentions` (via `narrative_matched_mentions`).
-- **Escreve**: `narratives`, `narrative_signals`, `narrative_tags` (manual/seed), `narrative_metrics` (via `refresh_narrative_metrics()`).
+- **Escreve**: `narratives` (auto-criadas por `ensureNarrativesFromCategories()` em `bw-sync`, editáveis manualmente por cima — ver Fluxo principal), `narrative_signals`, `narrative_tags` (manual/seed), `narrative_metrics` (via `refresh_narrative_metrics()`).
 - Detalhes: [data-model.md](data-model.md).
 
 ## Permissões
@@ -81,7 +91,8 @@ spec.
 | Ação | Quem pode |
 |---|---|
 | Ler Narrativas/métricas | Membros da organização (RLS) |
-| Criar/editar Narrativa, sinais, tags | Manual via SQL/backend no MVP — sem policy de INSERT/UPDATE via client no Sprint 1 |
+| Criar Narrativa a partir de Category | Automático (`bw-sync`, service role) |
+| Editar Narrativa, criar sinais/tags | Manual via SQL/backend no MVP — sem policy de INSERT/UPDATE via client no Sprint 1 |
 
 ## Notificações / Feedback
 

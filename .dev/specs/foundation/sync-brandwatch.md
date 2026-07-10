@@ -72,18 +72,39 @@ o Executive Overview consomem o resultado (tabelas já sincronizadas).
    linhas de `bw_categories`, `parent_id` para subcategoria), e faz upsert
    em `bw_projects`/`bw_queries`/`bw_query_groups`/`bw_categories`.
    `GET /metrics` (Global Preset Metrics) **não é buscado nesta leva** — não
-   há coluna/uso para esse cache ainda no MVP.
+   há coluna/uso para esse cache ainda no MVP. **Correção 2026-07-10**: logo
+   após o upsert de `bw_categories`, `ensureNarrativesFromCategories()` cria
+   automaticamente uma linha em `narratives` (`bw_category_id` = a Category,
+   `title` = nome da Category) para cada Category **de topo** (não
+   subcategoria) que ainda não tem Narrativa mapeada — idempotente, nunca
+   sobrescreve `title`/`stage`/`risk_level` já editados manualmente. Antes
+   disso `narratives.md` previa só criação manual (SQL/seed) sem UI, o que na
+   prática deixava a tabela sempre vazia sem um seed manual avulso; o design
+   "Narrativa = Category" (ver `overview.md`) já suporta esse mapeamento
+   direto 1:1, então ele agora é o caminho automático — curadoria manual
+   (Categories que não devem virar Narrativa, subcategorias como Narrativa
+   própria, sinais adicionais) continua possível por cima, só não é mais
+   pré-requisito pra ter dado nenhum na tela.
 5. Busca mentions daquele par — **sempre** com `startDate`/`endDate` (⚠️
    correção 2026-07-07, encontrado em teste real: a Brandwatch rejeita
    `/data/mentions` sem `startDate`, mesmo no polling, apesar do exemplo de
    "bootstrap" da doc omitir o parâmetro — `"This method requires a start
    date"`). `startDate` = `BRANDWATCH_MENTIONS_START_DATE` (secret da Edge
    Function, `YYYY-MM-DD`, default `2026-01-01` se não configurada — data
-   mínima de histórico a considerar), `endDate` = agora. Sem
-   `last_added_cursor` ainda, bootstrap
-   (`pageSize=100&page=0&orderBy=added&orderDirection=desc`, sem
-   `sinceAdded`); com cursor, `sinceAdded` = `last_added_cursor` menos buffer
-   de 5 minutos + `sourceType=new`, mesma ordenação. **Antes do upsert**,
+   mínima de histórico a considerar), `endDate` = agora.
+   **Correção 2026-07-10** (encontrado em teste real + pedido do usuário —
+   "sempre a partir de Janeiro/26 até a data atual... ler do banco de dados a
+   data do último registro e fazer incremental"): `orderDirection=asc` (não
+   `desc`) — caminha cronologicamente do mais antigo (`startDate`) pro mais
+   recente, avançando ~100 mentions por invocação, em vez de pegar sempre a
+   leva mais nova e pular o backlog. `sinceAdded` é **sempre** enviado:
+   resolvido por `resolveMentionsResumePoint()` como
+   `sync_cursors.last_added_cursor` se existir; senão, `MAX(added)` já
+   persistido em `mentions` pra aquele `query_id` (cobre reset de cursor sem
+   re-varrer/gastar rate limit em meses já coletados); senão, a própria
+   `startDate` (nunca coletado ainda). Com resume point conhecido, buffer de
+   5 minutos + `sourceType=new`; sem ele (primeiríssima leva), sem buffer.
+   **Antes do upsert**,
    garante que a partição mensal de `mentions` existe para cada mês presente
    no lote (⚠️ correção 2026-07-10, encontrado em teste real: a migration de
    fundação só pré-cria as partições do mês do deploy e do seguinte —

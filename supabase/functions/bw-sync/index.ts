@@ -380,41 +380,119 @@ async function refreshMetadata(
     if (error) throw new Error(`Erro atualizando bw_categories: ${error.message}`);
   }
 
+  const narrativesCreated = await ensureNarrativesFromCategories(supabase, organizationId, categoryRows);
+
   log("refreshMetadata:done", {
     projectId,
     queriesCount: queries.length,
     queryGroupsCount: queryGroups.length,
     categoriesCount: categoryRows.length,
+    narrativesCreated,
   });
+}
+
+// narratives.md: criação/edição de Narrativa não tem UI no Sprint 1 — o
+// design ("Narrativa = Category, caso particular opcional", ver overview.md)
+// já permite mapeamento 1:1 direto, então em vez de deixar a tabela vazia
+// esperando um seed manual que nunca roda, cada Category de topo (não
+// subcategoria — fica pra curadoria manual futura, mais granular) vira uma
+// Narrativa automaticamente. Idempotente: só insere as que ainda não têm
+// `bw_category_id` mapeado para esta organização; nunca sobrescreve
+// title/stage/risk_level já editados manualmente por um analista.
+async function ensureNarrativesFromCategories(
+  supabase: SupabaseClient,
+  organizationId: string,
+  categoryRows: Record<string, unknown>[],
+): Promise<number> {
+  const topLevel = categoryRows.filter((c) => c.parent_id === null);
+  if (topLevel.length === 0) return 0;
+
+  const topLevelIds = topLevel.map((c) => c.id as number);
+  const { data: existing, error: existingError } = await supabase
+    .from("narratives")
+    .select("bw_category_id")
+    .eq("organization_id", organizationId)
+    .in("bw_category_id", topLevelIds);
+  if (existingError) throw new Error(`Erro lendo narratives existentes: ${existingError.message}`);
+
+  const existingCategoryIds = new Set((existing ?? []).map((n) => (n as { bw_category_id: number }).bw_category_id));
+  const missing = topLevel.filter((c) => !existingCategoryIds.has(c.id as number));
+  if (missing.length === 0) return 0;
+
+  const { error: insertError } = await supabase.from("narratives").insert(
+    missing.map((c) => ({
+      organization_id: organizationId,
+      bw_category_id: c.id,
+      title: c.name,
+    })),
+  );
+  if (insertError) throw new Error(`Erro criando narratives a partir de bw_categories: ${insertError.message}`);
+  return missing.length;
 }
 
 // =========================================================================
 // Passo 4 — Polling de mentions
 // =========================================================================
 
+// sync_cursors.last_added_cursor é a fonte primária de "até onde já
+// coletamos", mas se ela estiver vazia (reset manual, linha nova) não
+// podemos simplesmente recomeçar do zero — isso re-varreria/sobrescreveria
+// (via upsert, então não duplica, mas desperdiça orçamento de rate limit)
+// meses já coletados. Correção 2026-07-10 (pedido do usuário: "Importante
+// ler do banco de dados a data do último registro e fazer incremental"):
+// cai pro MAX(added) já persistido em `mentions` para aquele query_id antes
+// de cair pro default de BRANDWATCH_MENTIONS_START_DATE.
+async function resolveMentionsResumePoint(
+  supabase: SupabaseClient,
+  queryId: number,
+  cursorLastAdded: string | null,
+): Promise<string | null> {
+  if (cursorLastAdded) return cursorLastAdded;
+
+  const { data, error } = await supabase
+    .from("mentions")
+    .select("added")
+    .eq("query_id", queryId)
+    .order("added", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw new Error(`Erro lendo último "added" de mentions: ${error.message}`);
+  return (data as { added: string } | null)?.added ?? null;
+}
+
 async function fetchMentions(
   projectId: number,
   queryId: number,
   token: string,
-  lastAddedCursor: string | null,
+  resumePoint: string | null,
 ): Promise<any[]> {
+  // orderDirection=asc (não desc): caminha cronologicamente a partir do mais
+  // antigo (startDate = BRANDWATCH_MENTIONS_START_DATE, default 2026-01-01)
+  // até o presente, avançando o cursor a cada invocação — correção
+  // 2026-07-10. Antes, a primeira chamada (sem cursor) pegava as 100 mentions
+  // mais recentes (orderBy=added&orderDirection=desc&page=0) e o cursor
+  // pulava direto pra "agora", nunca voltando a buscar o histórico de
+  // Jan-Jun/26 (só a leva mais recente jamais fica coberta).
   const params = new URLSearchParams({
     queryId: String(queryId),
     pageSize: "100",
     orderBy: "added",
-    orderDirection: "desc",
+    orderDirection: "asc",
     // Obrigatório pela API mesmo no polling ("This method requires a start
     // date") — ver getMentionsStartDate(). endDate = agora, sempre.
     startDate: formatBrandwatchDate(getMentionsStartDate()),
     endDate: formatBrandwatchDate(new Date()),
   });
 
-  if (lastAddedCursor) {
-    const bufferedSince = new Date(new Date(lastAddedCursor).getTime() - 5 * 60 * 1000);
+  if (resumePoint) {
+    const bufferedSince = new Date(new Date(resumePoint).getTime() - 5 * 60 * 1000);
     params.set("sinceAdded", formatBrandwatchDate(bufferedSince));
     params.set("sourceType", "new");
   } else {
-    params.set("page", "0");
+    // Primeiríssima vez para este par (sem cursor, sem mention nenhuma no
+    // banco ainda): sinceAdded = a própria startDate, sem buffer (nada foi
+    // coletado ainda, não há o que re-verificar).
+    params.set("sinceAdded", formatBrandwatchDate(getMentionsStartDate()));
   }
 
   const json = await callBrandwatch(`/projects/${projectId}/data/mentions?${params.toString()}`, token);
@@ -779,9 +857,10 @@ Deno.serve(async (_req: Request) => {
     }
 
     // Passo 4: polling de mentions.
-    const mentions = await fetchMentions(projectId, queryId, token, cursor.last_added_cursor as string | null);
+    const resumePoint = await resolveMentionsResumePoint(supabase, queryId, cursor.last_added_cursor as string | null);
+    const mentions = await fetchMentions(projectId, queryId, token, resumePoint);
     const { count: mentionsCount, maxAdded } = await upsertMentions(supabase, organizationId, projectId, queryId, mentions);
-    log("invocation:mentions_synced", { projectId, queryId, mentionsCount });
+    log("invocation:mentions_synced", { projectId, queryId, mentionsCount, resumePoint });
 
     // Passo 5: métricas diárias — sempre roda, query inteira (category=null)
     // + cada Category vinculada a alguma Narrativa deste projeto.
