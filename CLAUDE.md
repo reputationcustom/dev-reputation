@@ -217,20 +217,33 @@ yet (no migration sets it up) — for now the function is invoked manually.
   a page comes back shorter than `pageSize` — genuinely caught up to
   `now`. Only then does the `MAX(added)` fallback become safe again
   (normal incremental polling mode: 5-minute buffer + `sourceType=new`).
-- **Mentions pagination: max page size + in-invocation loop** (fixed
-  2026-07-10 — user report: "a tabela de menções só conta pouco mais de
-  100 menções, o que não condiz com a realidade"). `pageSize` was `100`
-  instead of Brandwatch's documented max of `5000` (`MENTIONS_PAGE_SIZE`),
-  and each invocation only fetched *one page*, so with invocations still
-  triggered manually (no `pg_cron` yet) progress was ~100 mentions per
-  manual click. The handler now loops
-  (`MAX_MENTIONS_PAGES_PER_INVOCATION = 20`, i.e. up to ~100k mentions per
-  invocation) advancing `sinceAdded` after each page (no 5-minute buffer
-  between in-loop pages — that buffer only matters *between* invocations,
-  for Brandwatch's async indexing lag) until either a short page signals
-  "caught up to now" (see `backfill_completed_at` above) or the page
-  budget runs out, leaving room in the 30-calls/10min budget for the
-  metrics calls that follow.
+- **Mentions pagination: page size + in-invocation loop, sized to fit Edge
+  Function resource limits** (fixed 2026-07-10, tuned same day after
+  hitting production limits). `pageSize` was `100` and each invocation
+  only fetched *one page*, so with invocations still triggered manually
+  (no `pg_cron` yet) progress was ~100 mentions per manual click. First
+  fix looped up to `MAX_MENTIONS_PAGES_PER_INVOCATION = 20` pages at
+  `pageSize = 5000` (Brandwatch's documented max) — up to ~100k
+  mentions/invocation. **That crashed the function in production**: `HTTP
+  546 WORKER_RESOURCE_LIMIT` ("está dando erro de memória excedida") —
+  each mention carries a fairly large payload (full `raw` + engagement/
+  classifications arrays), and serializing 5000 of them per upsert call
+  was too much for the Deno isolate's memory/CPU budget. Tuned down to
+  `MENTIONS_PAGE_SIZE = 1000` / `MAX_MENTIONS_PAGES_PER_INVOCATION = 10`
+  (up to ~10k mentions/invocation — still 10x the original, comfortably
+  under the limit that broke at 5000×20). Also added
+  `MENTIONS_LOOP_BUDGET_MS = 20_000`: the loop voluntarily stops once
+  elapsed wall-clock time crosses this, *before* the runtime can kill it —
+  important because a `WORKER_RESOURCE_LIMIT` kill isn't a catchable JS
+  exception, so the handler's `try/catch` never runs and `sync_cursors`
+  never gets updated, meaning the same pair would keep retrying and
+  crashing on every future invocation. Voluntarily stopping persists
+  whatever progress was made and lets the next invocation continue
+  cleanly. `sinceAdded` advances after each page with no 5-minute buffer
+  in-loop (that buffer only matters *between* invocations, for
+  Brandwatch's async indexing lag) until either a short page signals
+  "caught up to now" (see `backfill_completed_at` above), the page count
+  limit, or the time budget — whichever comes first.
 - **Metrics date range bug** (fixed 2026-07-10 — user report: "as métricas
   não estão sendo trazidas corretamente" / "Data início 01/01/2026 até a
   data de hj"): every `data/volume/...` call (`syncSentimentMetrics` daily/

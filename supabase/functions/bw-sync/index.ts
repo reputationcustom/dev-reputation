@@ -513,22 +513,43 @@ async function resolveMentionsSinceAdded(
 }
 
 // Máximo aceito pela Brandwatch em paginação clássica (`pageSize`: 1–5000,
-// ver references/mentions.md) — corrigido 2026-07-10: estava em 100,
-// artificialmente pequeno, fazendo cada invocação avançar só ~100 mentions
-// mesmo quando a Query tinha muito mais dado disponível no range
-// (pedido do usuário: "garanta que a busca está utilizando o retorno
-// máximo de linhas").
-const MENTIONS_PAGE_SIZE = 5000;
+// ver references/mentions.md). ⚠️ Correção 2026-07-10 (relatado pelo
+// usuário: "está dando erro de memória excedida", HTTP 546
+// `WORKER_RESOURCE_LIMIT` em produção): o valor inicial dessa correção
+// (5000, o máximo documentado pela Brandwatch) somado a
+// MAX_MENTIONS_PAGES_PER_INVOCATION alto derrubava a Edge Function por
+// estourar o limite de memória/CPU do runtime (Deno isolate) — cada
+// mention tem um payload relativamente grande (raw completo + arrays de
+// engajamento/classificações), e 5000 delas de uma vez, serializadas pro
+// upsert do Supabase, é pesado demais pro runtime de uma Edge Function.
+// Reduzido pra 1000 — ainda 10x o valor original (100) sem chegar perto do
+// teto documentado pela Brandwatch, que era o que estava causando o
+// estouro.
+const MENTIONS_PAGE_SIZE = 1000;
 
 // Quantas páginas de mentions uma única invocação pode buscar antes de
 // seguir pras métricas — sem isso, backfill de meses de histórico levaria
-// uma invocação por ~5000 mentions (invocações são manuais/espaçadas hoje,
-// sem pg_cron real ainda). 20 páginas * 5000 = até 100k mentions por
-// invocação, deixando ainda orçamento de rate limit (30 chamadas/10min)
-// pra bootstrap condicional + métricas depois. Se a Query tiver mais que
-// isso pendente, a invocação seguinte continua de onde parou
-// (sync_cursors.last_added_cursor).
-const MAX_MENTIONS_PAGES_PER_INVOCATION = 20;
+// uma invocação por página (invocações são manuais/espaçadas hoje, sem
+// pg_cron real ainda). ⚠️ Correção 2026-07-10 (mesmo incidente de memória
+// acima): reduzido de 20 pra 10 — 10 páginas * 1000 = até 10k
+// mentions/invocação (ante ~100k antes), bem mais seguro pro limite de
+// memória do runtime, ainda deixando orçamento de rate limit (30
+// chamadas/10min) pra bootstrap condicional + métricas depois. Ver também
+// MENTIONS_LOOP_BUDGET_MS abaixo — a invocação também para voluntariamente
+// por tempo decorrido, não só por contagem de páginas, pra nunca ser morta
+// à força pelo runtime (o que pularia a atualização de sync_cursors, já
+// que um kill do isolate não é um erro capturável pelo try/catch do
+// handler). Se a Query tiver mais que isso pendente, a invocação seguinte
+// continua de onde parou (sync_cursors.last_added_cursor/
+// backfill_completed_at).
+const MAX_MENTIONS_PAGES_PER_INVOCATION = 10;
+
+// Orçamento de tempo (ms) que o loop de paginação de mentions pode consumir
+// antes de parar voluntariamente e deixar o resto da invocação (métricas)
+// rodar — separado do limite por contagem de páginas acima, como uma
+// segunda rede de segurança contra estourar o timeout/CPU do runtime em
+// Queries com respostas mais lentas que o normal.
+const MENTIONS_LOOP_BUDGET_MS = 20_000;
 
 async function fetchMentions(
   projectId: number,
@@ -1251,7 +1272,18 @@ Deno.serve(async (_req: Request) => {
     let maxAdded: string | null = null;
     let mentionsPagesFetched = 0;
     let reachedNow = false;
+    let stoppedByTimeBudget = false;
     while (mentionsPagesFetched < MAX_MENTIONS_PAGES_PER_INVOCATION) {
+      // Segunda rede de segurança (além do limite de páginas): para
+      // voluntariamente antes de estourar o timeout/CPU do runtime, em vez
+      // de deixar o Supabase matar a invocação à força (o que puxaria um
+      // HTTP 546 WORKER_RESOURCE_LIMIT e pularia a atualização de
+      // sync_cursors, já que um kill do isolate não é capturável pelo
+      // try/catch do handler).
+      if (Date.now() - invocationStartedAt > MENTIONS_LOOP_BUDGET_MS) {
+        stoppedByTimeBudget = true;
+        break;
+      }
       const page = await fetchMentions(projectId, queryId, token, sinceAdded, useSourceTypeNew);
       const upserted = await upsertMentions(supabase, organizationId, projectId, queryId, page);
       mentionsCount += upserted.count;
@@ -1272,6 +1304,7 @@ Deno.serve(async (_req: Request) => {
       mentionsCount,
       pagesFetched: mentionsPagesFetched,
       reachedNow,
+      stoppedByTimeBudget,
     });
 
     // Passo 5: métricas diárias — sempre roda, query inteira (category=null)

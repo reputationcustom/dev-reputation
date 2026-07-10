@@ -131,20 +131,34 @@ o Executive Overview consomem o resultado (tabelas já sincronizadas).
    **Correção 2026-07-10** (pedido do usuário: "garanta que a busca está
    utilizando o retorno máximo de linhas" + "a tabela de menções só conta
    pouco mais de 100 menções, o que não condiz com a realidade"): duas
-   causas somadas. `pageSize` estava em `100`; corrigido para `5000`, o
-   máximo documentado pela Brandwatch em paginação clássica
-   (`MENTIONS_PAGE_SIZE`). E cada invocação buscava só **uma página** —
-   com invocações ainda manuais (sem `pg_cron` real agendado), isso levava
-   um clique por ~100 mentions. Agora `bw-sync` **pagina dentro da mesma
-   invocação**, avançando `sinceAdded` a cada página (sem buffer de 5
-   minutos entre páginas do mesmo loop — o buffer só importa *entre*
-   invocações, por causa do delay de indexação assíncrona da Brandwatch),
-   até uma página vir menor que `pageSize` (alcançou o presente) ou até
-   `MAX_MENTIONS_PAGES_PER_INVOCATION = 20` páginas (até ~100k
-   mentions/invocação), o que vier primeiro — o limite de páginas existe
-   pra deixar orçamento de rate limit (30 chamadas/10min) pras métricas que
-   rodam depois na mesma invocação. Se sobrar histórico, a invocação
-   seguinte continua de onde parou.
+   causas somadas. `pageSize` estava em `100`; e cada invocação buscava só
+   **uma página** — com invocações ainda manuais (sem `pg_cron` real
+   agendado), isso levava um clique por ~100 mentions. `bw-sync` passou a
+   **paginar dentro da mesma invocação**, avançando `sinceAdded` a cada
+   página (sem buffer de 5 minutos entre páginas do mesmo loop — o buffer
+   só importa *entre* invocações, por causa do delay de indexação
+   assíncrona da Brandwatch), até uma página vir menor que `pageSize`
+   (alcançou o presente) ou até esgotar `MAX_MENTIONS_PAGES_PER_INVOCATION`
+   páginas.
+   ⚠️ **Segunda correção 2026-07-10** (relatado pelo usuário em produção:
+   `HTTP 546 WORKER_RESOURCE_LIMIT`, "está dando erro de memória
+   excedida"): o primeiro ajuste usou `pageSize = 5000` (o máximo
+   documentado pela Brandwatch) com `MAX_MENTIONS_PAGES_PER_INVOCATION =
+   20` — até 100k mentions por invocação, pesado demais pro runtime de uma
+   Edge Function (cada mention carrega um payload relativamente grande:
+   `raw` completo + arrays de engajamento/classificações; serializar 5000
+   delas de uma vez pro upsert do Supabase estourava memória/CPU do
+   isolate Deno). Reduzido para `MENTIONS_PAGE_SIZE = 1000` e
+   `MAX_MENTIONS_PAGES_PER_INVOCATION = 10` (até 10k
+   mentions/invocação — ainda 10x o valor original, bem mais seguro).
+   Adicionado também `MENTIONS_LOOP_BUDGET_MS = 20000`: o loop para
+   voluntariamente se o tempo decorrido da invocação passar desse teto,
+   **antes** de o runtime matar a invocação à força — importante porque um
+   kill por `WORKER_RESOURCE_LIMIT` não é capturável pelo `try/catch` do
+   handler, então `sync_cursors` nunca seria atualizado e o mesmo par
+   tentaria (e provavelmente falharia) de novo indefinidamente. Parando
+   voluntariamente, o progresso feito até ali é persistido normalmente e a
+   invocação seguinte continua de onde parou.
    **Antes do upsert**,
    garante que a partição mensal de `mentions` existe para cada mês presente
    no lote (⚠️ correção 2026-07-10, encontrado em teste real: a migration de
