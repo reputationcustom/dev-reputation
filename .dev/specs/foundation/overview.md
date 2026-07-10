@@ -168,16 +168,21 @@ volumétrica antes de virar migration (motivos abaixo):
     ressalva explícita de que o número pode subestimar o real se a Query de
     origem dos sinais também estiver amostrada.
   - Campos ajustados ao que existe em `mentions`/`bw_query_metrics_daily`
-    hoje: `total_mentions`, `unique_authors` (só na via `mentions_sample`;
-    `count distinct author_handle_normalized`), `sentiment_positive/neutral/negative`,
-    `reach_estimated` (soma de `reach_estimate`, só via `mentions_sample`),
-    `top_domain` (domínio mais frequente, só via `mentions_sample`), mais o
-    campo `source` acima. O campo de "engajamento" (likes/shares/comentários)
-    da proposta original **não tem coluna equivalente em `mentions` hoje** —
-    só existiria dentro do `raw jsonb` se a Brandwatch retornar esses campos
-    por mention; marcado como ⚠️ DECISÃO PENDENTE (verificar payload real da
-    API antes de prometer esse dado — se existir, vira coluna tipada em
-    `mentions` na migration).
+    hoje: `total_mentions`, `unique_authors`, `sentiment_positive/neutral/negative`,
+    `reach_estimated` (soma de `reach_estimate`), `top_domain` (domínio mais
+    frequente), mais o campo `source` acima.
+    ✅ **Decisão fechada (2026-07-10)**: o campo de "engajamento"
+    (likes/shares/comentários) da proposta original ganhou coluna própria —
+    `mentions.engagement jsonb` (migration `20260710010000`, campos por
+    plataforma confirmados contra a doc real da Brandwatch, não um payload
+    genérico) — e `narrative_metrics` ganhou `engagement_total`/
+    `repost_count`/`comment_count` (migration `20260710030000`, somando
+    `mentions.engagement` via `narrative_matched_mentions()`). Ver
+    `data-model.md` §`narrative_metrics` — essas 3 colunas (e
+    `unique_authors`/`reach_estimated`/`top_domain`) são sempre agregação
+    local sobre mentions, mesmo pra Narrativas com `bw_category_id`, porque
+    a Brandwatch não expõe esses números quebrados por Category em nenhum
+    endpoint de chart.
 
 **Validação de viabilidade (skill `brandwatch-api`, `references/mentions.md` e
 `references/data-restrictions-compliance.md`)** — achado central:

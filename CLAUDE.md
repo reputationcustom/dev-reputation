@@ -293,6 +293,39 @@ yet (no migration sets it up) — for now the function is invoked manually.
   `bw_categories` has zero rows for the project, regardless of
   `synced_at` — self-correcting, stops forcing extra refreshes as soon as
   Categories exist and sync successfully once.
+- **`refresh_narrative_metrics()` was never actually scheduled** (found
+  2026-07-10 while investigating "narrativas continuam nulas" further —
+  user asked how narratives get their numbers and to add engagement/
+  repost/comment metrics per narrative). The function existed since the
+  first migration but no `cron.schedule` ever called it — `narrative_metrics`
+  (what the Executive Overview actually reads, via `narratives_overview`)
+  was *always* empty, independent of the Categories/`narratives`-row fixes
+  above. Migration `20260710030000` schedules `pg_cron`
+  (`refresh_narrative_metrics_hourly`) and also runs an immediate one-time
+  historical backfill call. Unlike `bw-sync`, this function makes zero
+  Brandwatch API calls (pure Postgres aggregation over already-synced
+  data) — it was never blocked by the token-caching prerequisite that
+  blocks scheduling `bw-sync` itself.
+- **Narrative-level engagement/repost/comment metrics** (added 2026-07-10,
+  user request: "trazer as métricas por narrativa e por outras dimensões
+  como: engajamento, quantidade de repost, qtde de comentários"). Verified
+  against Brandwatch's chart-dimensions-and-aggregates docs first: no
+  chart/aggregate endpoint breaks engagement down by Category reliably
+  (only a composite `engagementScore`, no likes/reposts/comments split) —
+  the only real source is the individual mention (`mentions.engagement`).
+  `narrative_metrics` gains `engagement_total`/`repost_count`/
+  `comment_count`, computed by 3 new SQL helpers
+  (`mention_engagement_likes`/`_reposts`/`_comments(jsonb)`) summing the
+  per-platform keys in `mentions.engagement`. These are **always** local
+  aggregation via `narrative_matched_mentions()`, even for
+  `source = 'bw_aggregate'` rows (i.e. every Narrativa with a
+  `bw_category_id` — currently all of them) — same sampling caveat as any
+  mentions-derived number on a high-volume Query. Same fix also closes a
+  pre-existing gap: the `bw_aggregate` path never populated
+  `unique_authors`/`reach_estimated`/`top_domain` either (those columns
+  were only ever written by the `mentions_sample` path, which no current
+  Narrativa uses since all are auto-seeded with a `bw_category_id`) — now
+  both paths populate all of it.
 - **Data scope is deliberately bounded**: `foundation`/`bw-sync` covers all
   *pull* data later sprints need (projects, queries, query groups,
   categories, mentions, daily/weekly/monthly metrics, Query Group SOV).

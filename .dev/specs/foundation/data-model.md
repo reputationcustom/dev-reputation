@@ -550,14 +550,17 @@ narrative_id in (
 | `narrative_id`         | `uuid`        | sim | FK → `narratives(id)` ON DELETE CASCADE |
 | `metric_date`          | `date`        | sim | |
 | `period`               | `text`        | sim | `daily` \| `weekly` \| `monthly`; default `daily` |
-| `source`               | `text`        | sim | `bw_aggregate` \| `mentions_sample` — check constraint |
+| `source`               | `text`        | sim | `bw_aggregate` \| `mentions_sample` — check constraint. Ver nota abaixo: só qualifica `total_mentions`/sentimento a partir de `20260710030000` |
 | `total_mentions`       | `integer`     | sim | default `0` |
-| `unique_authors`       | `integer`     | não | só preenchido na via `mentions_sample` |
+| `unique_authors`       | `integer`     | não | agregação local sobre `mentions` (`narrative_matched_mentions`) |
 | `sentiment_positive`   | `integer`     | sim | default `0` |
 | `sentiment_neutral`    | `integer`     | sim | default `0` |
 | `sentiment_negative`   | `integer`     | sim | default `0` |
-| `reach_estimated`      | `integer`     | não | só via `mentions_sample` |
-| `top_domain`           | `text`        | não | só via `mentions_sample` |
+| `reach_estimated`      | `integer`     | não | agregação local (`sum(mentions.reach_estimate)`) |
+| `top_domain`           | `text`        | não | agregação local (`mode()` sobre `mentions.domain`) |
+| `engagement_total`     | `integer`     | não | agregação local (`sum(mention_engagement_likes(mentions.engagement))`) — adicionado `20260710030000` |
+| `repost_count`         | `integer`     | não | agregação local (`sum(mention_engagement_reposts(...))`) — retweets/shares/reposts somados entre plataformas |
+| `comment_count`        | `integer`     | não | agregação local (`sum(mention_engagement_comments(...))`) — replies/comments somados entre plataformas |
 | `created_at`           | `timestamptz` | sim | `now()` |
 
 **Índices**: unique `(narrative_id, metric_date, period)`.
@@ -565,6 +568,51 @@ narrative_id in (
 **Check constraint**: `source in ('bw_aggregate', 'mentions_sample')`.
 
 **Políticas RLS**: mesmo padrão satélite de `narrative_signals`.
+
+> ✅ **Correção/ampliação (2026-07-10, migration `20260710030000`)**: pedido
+> do usuário — "Importante trazer as métricas por narrativa e por outras
+> dimensões como: engajamento, quantidade de repost, qtde de comentários".
+> Pesquisa contra a documentação real da Brandwatch confirmou que os
+> endpoints de chart/aggregate **não** expõem engajamento quebrado por
+> Category de forma confiável (só um `engagementScore` composto, sem
+> discriminar likes/reposts/comments) — a única fonte é a mention
+> individual (`mentions.engagement` jsonb, migration `20260710010000`).
+> Por isso `engagement_total`/`repost_count`/`comment_count` **são sempre
+> agregação local**, mesmo quando `source = 'bw_aggregate'` (que continua
+> sendo a fonte de verdade só pra `total_mentions`/sentimento — mesma
+> ressalva de sampling que já valia implicitamente pra
+> `reach_estimated`/`top_domain`/`unique_authors`). Antes desta migration,
+> a via `bw_aggregate` (usada por **toda** Narrativa com `bw_category_id`,
+> ou seja todas as auto-criadas hoje) não preenchia
+> `unique_authors`/`reach_estimated`/`top_domain` — essas colunas ficavam
+> sempre `null` fora da via `mentions_sample`, que nenhuma Narrativa atual
+> usa. Agora ambas as vias populam essas colunas via
+> `narrative_matched_mentions()`. Três funções helper (`mention_engagement_likes`/
+> `_reposts`/`_comments(jsonb) returns integer`) somam os campos de
+> engajamento por plataforma (ver `mentions.engagement` em §3) — Brandwatch
+> não tem um campo genérico de engajamento.
+
+> ✅ **`refresh_narrative_metrics()` finalmente agendada (2026-07-10)**:
+> a função existe desde a migration inicial mas **nunca teve um
+> `cron.schedule` correspondente** — `narrative_metrics` sempre esteve
+> vazia, mesmo com `narratives`/`bw_query_metrics_daily` populadas. Migration
+> `20260710030000` (a) muda a assinatura pra `(p_from date, p_to date)`
+> em vez de um único dia, servindo tanto de backfill quanto de refresh
+> incremental; (b) roda um backfill único imediato
+> (`refresh_narrative_metrics('2026-01-01', current_date)`) cobrindo o
+> mesmo histórico configurado pro resto da integração; (c) agenda
+> `pg_cron` (`refresh_narrative_metrics_hourly`, a cada hora) cobrindo uma
+> janela larga (`current_date - 210` até `current_date`) em vez de só
+> "ontem" — necessário porque o backfill de `mentions`/
+> `bw_query_metrics_daily` pelo `bw-sync` ainda está em andamento (sem
+> `pg_cron` próprio ainda, só invocação manual), então dias antigos podem
+> ganhar dado novo e precisam ser reprocessados aqui também. Revisar essa
+> janela pra algo mais estreito quando o backfill de mentions estiver
+> confirmadamente completo. Diferente de `bw-sync` (cujo `pg_cron` real
+> está bloqueado até o cache de token no Vault existir, ver
+> `sync-brandwatch.md`), `refresh_narrative_metrics()` não chama a
+> Brandwatch — sem implicação de rate limit, podia rodar em `pg_cron`
+> desde sempre.
 
 ---
 
@@ -641,63 +689,31 @@ $$;
 Chamada direto pelo `pg_cron` (sem Edge Function). Populável em duas vias —
 prioriza `bw_aggregate` quando a Narrativa tem `bw_category_id`.
 
-```sql
-create or replace function refresh_narrative_metrics(p_metric_date date default current_date - 1)
-returns void
-language plpgsql
-as $$
-begin
-  -- Via 1: agregado oficial da Brandwatch (Narrativas com bw_category_id)
-  insert into narrative_metrics (
-    narrative_id, metric_date, period, source,
-    total_mentions, sentiment_positive, sentiment_neutral, sentiment_negative
-  )
-  select n.id, q.metric_date, 'daily', 'bw_aggregate',
-         q.total_mentions, q.sentiment_positive, q.sentiment_neutral, q.sentiment_negative
-  from narratives n
-  join bw_query_metrics_daily q
-    on q.category_id = n.bw_category_id and q.metric_date = p_metric_date
-  where n.bw_category_id is not null
-  on conflict (narrative_id, metric_date, period) do update set
-    source = excluded.source,
-    total_mentions = excluded.total_mentions,
-    sentiment_positive = excluded.sentiment_positive,
-    sentiment_neutral = excluded.sentiment_neutral,
-    sentiment_negative = excluded.sentiment_negative;
+> ⚠️ **A definição completa da função vive só na migration**
+> (`supabase/migrations/20260710030000_narrative_metrics_engagement_and_schedule.sql`,
+> que substitui a versão original de `20260707000000`) — não duplicada
+> aqui verbatim pra evitar drift entre spec e código (já aconteceu com
+> outras partes deste módulo nesta sessão). Resumo do comportamento atual:
 
-  -- Via 2: agregação local (Narrativas só com sinais, sem bw_category_id)
-  insert into narrative_metrics (
-    narrative_id, metric_date, period, source,
-    total_mentions, unique_authors, sentiment_positive, sentiment_neutral,
-    sentiment_negative, reach_estimated, top_domain
-  )
-  select
-    n.id, p_metric_date, 'daily', 'mentions_sample',
-    count(*),
-    count(distinct m.author_handle_normalized),
-    count(*) filter (where m.sentiment = 'positive'),
-    count(*) filter (where m.sentiment = 'neutral'),
-    count(*) filter (where m.sentiment = 'negative'),
-    sum(m.reach_estimate),
-    mode() within group (order by m.domain)
-  from narratives n
-  join lateral narrative_matched_mentions(
-    n.id, p_metric_date::timestamptz, (p_metric_date + 1)::timestamptz
-  ) m on true
-  where n.bw_category_id is null
-  group by n.id
-  on conflict (narrative_id, metric_date, period) do update set
-    source = excluded.source,
-    total_mentions = excluded.total_mentions,
-    unique_authors = excluded.unique_authors,
-    sentiment_positive = excluded.sentiment_positive,
-    sentiment_neutral = excluded.sentiment_neutral,
-    sentiment_negative = excluded.sentiment_negative,
-    reach_estimated = excluded.reach_estimated,
-    top_domain = excluded.top_domain;
-end;
-$$;
-```
+- **Assinatura**: `refresh_narrative_metrics(p_from date, p_to date)` —
+  mudou de um único `p_metric_date` pra um range, servindo tanto de
+  backfill histórico (chamada uma vez cobrindo `2026-01-01` até hoje,
+  feita na própria migration) quanto de refresh incremental (via
+  `pg_cron`, ver seção "`pg_cron` — agendamentos deste módulo" abaixo).
+- **Via 1** (`bw_category_id` preenchido — toda Narrativa auto-criada
+  hoje): `total_mentions`/sentimento vêm de `bw_query_metrics_daily`
+  (agregado oficial, sampling-safe). `unique_authors`/`reach_estimated`/
+  `top_domain`/`engagement_total`/`repost_count`/`comment_count` vêm de
+  uma agregação local sobre `narrative_matched_mentions()` — Brandwatch
+  não expõe esses números quebrados por Category em nenhum endpoint de
+  chart (ver nota na tabela `narrative_metrics` acima), então ficam
+  sujeitos à mesma ressalva de sampling que qualquer soma sobre mentions
+  individuais em Query de alto volume.
+- **Via 2** (sem `bw_category_id`, só `narrative_signals`): tudo agregado
+  localmente, mesma lógica de antes, agora também quebrada por dia dentro
+  do range (`generate_series`) e incluindo as 3 colunas de engajamento.
+- Helpers `mention_engagement_likes`/`_reposts`/`_comments(jsonb) returns
+  integer` somam os campos por plataforma de `mentions.engagement`.
 
 > ⚠️ Rascunho de referência — validar performance real (via 2 escaneia
 > mentions via `narrative_matched_mentions`, uma vez por Narrativa sem
@@ -777,8 +793,8 @@ revoke all on schema public from bi_reader;
 
 | Job | Frequência | Ação |
 |---|---|---|
-| `bw-sync` (Edge Function) | a cada ~20–30s | invocação HTTP via `net.http_post` para a Edge Function `bw-sync` (round-robin de project+query) |
-| `refresh_narrative_metrics` | diário (ex: 02:00 America/Sao_Paulo) | `select refresh_narrative_metrics();` — chamada SQL direta, sem Edge Function |
+| `bw-sync` (Edge Function) | a cada ~20–30s | ⚠️ **ainda não agendado** — bloqueado até o cache de token no Vault existir (ver `sync-brandwatch.md`), invocação hoje é manual |
+| `refresh_narrative_metrics_hourly` | de hora em hora | ✅ **agendado em `20260710030000`** — `select refresh_narrative_metrics(current_date - 210, current_date);`. Não chama a Brandwatch (só agrega dado já sincronizado), então não tinha o mesmo bloqueio de `bw-sync`. Janela larga (210 dias) hoje porque o backfill de `bw-sync` ainda está em andamento; revisar pra uma janela mais estreita quando isso estabilizar |
 
 ## Checklist antes de aplicar a migration
 
@@ -798,10 +814,14 @@ revoke all on schema public from bi_reader;
       também corrige `create_mentions_partition` pra `security definer` —
       ver migration `20260710000000` — e o fix de dimensão do SOV de Query
       Group em `bw-sync/index.ts`)
+      → colunas de engajamento em `narrative_metrics` +
+      `refresh_narrative_metrics()` reescrita (range + engagement) +
+      `pg_cron` agendado pela primeira vez (migration `20260710030000`)
 - [ ] Triggers `set_updated_at` em `organizations`, `brandwatch_credentials`, `narratives`
 - [ ] RLS habilitada em **todas** as tabelas deste módulo (inclusive
       `sync_cursors`/`sync_log`, deny-all)
 - [ ] Schema `reporting` + views + role `bi_reader` (senha fora do repo)
 - [ ] `reporting` fora de `db.schemas` no dashboard do Supabase
-- [ ] `pg_cron` configurado para `bw-sync` e `refresh_narrative_metrics`
+- [x] `pg_cron` configurado para `refresh_narrative_metrics` (migration
+      `20260710030000`) — `bw-sync` continua ⚠️ pendente (ver acima)
 - [ ] Rodar `supabase gen types typescript --local > types/database.types.ts`
