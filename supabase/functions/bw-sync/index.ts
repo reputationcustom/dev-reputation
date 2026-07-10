@@ -370,6 +370,17 @@ async function refreshMetadata(
 
   const categoriesResponse = await callBrandwatch(`/projects/${projectId}/rulecategories`, token);
   const categories = (categoriesResponse.results ?? []) as any[];
+  // Diagnóstico 2026-07-10 (usuário relatou Categories configuradas na
+  // Brandwatch que não chegam em bw_categories/narratives): loga
+  // resultsTotal vs. categories.length pra flagrar qualquer truncamento —
+  // o envelope da resposta (resultsTotal/resultsPage/resultsPageSize)
+  // sugere que o endpoint suporta paginação, mesmo sem exemplo documentado
+  // de quando ela entra em vigor.
+  log("refreshMetadata:categories_fetched", {
+    projectId,
+    resultsTotal: categoriesResponse.resultsTotal ?? null,
+    categoriesReturned: categories.length,
+  });
   const categoryRows: Record<string, unknown>[] = [];
   for (const category of categories) {
     categoryRows.push({
