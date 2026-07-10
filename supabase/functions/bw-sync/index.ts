@@ -164,6 +164,21 @@ function toDateOnly(isoString: string): string {
   return isoString.slice(0, 10);
 }
 
+// Data mínima de histórico a considerar para mentions — parametrizável via
+// secret (BRANDWATCH_MENTIONS_START_DATE, "YYYY-MM-DD"), default 2026-01-01
+// se não configurada. A Brandwatch exige startDate em /data/mentions mesmo
+// no polling (o exemplo de "bootstrap" da doc omite o parâmetro, mas a API
+// real rejeita sem ele — "This method requires a start date").
+function getMentionsStartDate(): Date {
+  const raw = Deno.env.get("BRANDWATCH_MENTIONS_START_DATE");
+  if (raw) {
+    const parsed = new Date(raw);
+    if (!Number.isNaN(parsed.getTime())) return parsed;
+    logError("getMentionsStartDate:invalid", `BRANDWATCH_MENTIONS_START_DATE="${raw}" inválida, usando default`);
+  }
+  return new Date("2026-01-01T00:00:00.000Z");
+}
+
 // =========================================================================
 // Passo 0 — Semeadura inicial de sync_cursors (ver sync-brandwatch.md,
 // passo 0). MVP de Client único: usa BRANDWATCH_PROJECT_ID/QUERY_IDS em vez
@@ -388,6 +403,10 @@ async function fetchMentions(
     pageSize: "100",
     orderBy: "added",
     orderDirection: "desc",
+    // Obrigatório pela API mesmo no polling ("This method requires a start
+    // date") — ver getMentionsStartDate(). endDate = agora, sempre.
+    startDate: formatBrandwatchDate(getMentionsStartDate()),
+    endDate: formatBrandwatchDate(new Date()),
   });
 
   if (lastAddedCursor) {

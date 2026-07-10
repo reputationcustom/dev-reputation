@@ -73,7 +73,14 @@ o Executive Overview consomem o resultado (tabelas já sincronizadas).
    em `bw_projects`/`bw_queries`/`bw_query_groups`/`bw_categories`.
    `GET /metrics` (Global Preset Metrics) **não é buscado nesta leva** — não
    há coluna/uso para esse cache ainda no MVP.
-5. Busca mentions daquele par: sem `last_added_cursor` ainda, bootstrap
+5. Busca mentions daquele par — **sempre** com `startDate`/`endDate` (⚠️
+   correção 2026-07-07, encontrado em teste real: a Brandwatch rejeita
+   `/data/mentions` sem `startDate`, mesmo no polling, apesar do exemplo de
+   "bootstrap" da doc omitir o parâmetro — `"This method requires a start
+   date"`). `startDate` = `BRANDWATCH_MENTIONS_START_DATE` (secret da Edge
+   Function, `YYYY-MM-DD`, default `2026-01-01` se não configurada — data
+   mínima de histórico a considerar), `endDate` = agora. Sem
+   `last_added_cursor` ainda, bootstrap
    (`pageSize=100&page=0&orderBy=added&orderDirection=desc`, sem
    `sinceAdded`); com cursor, `sinceAdded` = `last_added_cursor` menos buffer
    de 5 minutos + `sourceType=new`, mesma ordenação. Faz upsert em `mentions`
