@@ -382,6 +382,21 @@ async function refreshMetadata(
 
   const narrativesCreated = await ensureNarrativesFromCategories(supabase, organizationId, categoryRows);
 
+  if (categoryRows.length === 0) {
+    // Narrativas são criadas a partir de bw_categories (ver
+    // ensureNarrativesFromCategories abaixo) — se rulecategories veio
+    // vazio, não há nenhuma Category configurada neste Project na
+    // Brandwatch ainda, e narratives vai continuar vazia até que existam
+    // Categories lá (configuração feita na própria Brandwatch, ver
+    // brandwatch-setup.md — bw-sync só espelha o que já existe, não cria
+    // Categories). Log explícito pra não precisar cruzar categoriesCount
+    // manualmente ao investigar "narrativas continuam nulas".
+    log("refreshMetadata:no_categories_found", {
+      projectId,
+      hint: "rulecategories voltou vazio — configure Categories no Project na Brandwatch (brandwatch-setup.md) para que narratives seja populada",
+    });
+  }
+
   log("refreshMetadata:done", {
     projectId,
     queriesCount: queries.length,
@@ -460,40 +475,52 @@ async function resolveMentionsResumePoint(
   return (data as { added: string } | null)?.added ?? null;
 }
 
+// Máximo aceito pela Brandwatch em paginação clássica (`pageSize`: 1–5000,
+// ver references/mentions.md) — corrigido 2026-07-10: estava em 100,
+// artificialmente pequeno, fazendo cada invocação avançar só ~100 mentions
+// mesmo quando a Query tinha muito mais dado disponível no range
+// (pedido do usuário: "garanta que a busca está utilizando o retorno
+// máximo de linhas").
+const MENTIONS_PAGE_SIZE = 5000;
+
+// Quantas páginas de mentions uma única invocação pode buscar antes de
+// seguir pras métricas — sem isso, backfill de meses de histórico levaria
+// uma invocação por ~5000 mentions (invocações são manuais/espaçadas hoje,
+// sem pg_cron real ainda). 20 páginas * 5000 = até 100k mentions por
+// invocação, deixando ainda orçamento de rate limit (30 chamadas/10min)
+// pra bootstrap condicional + métricas depois. Se a Query tiver mais que
+// isso pendente, a invocação seguinte continua de onde parou
+// (sync_cursors.last_added_cursor).
+const MAX_MENTIONS_PAGES_PER_INVOCATION = 20;
+
 async function fetchMentions(
   projectId: number,
   queryId: number,
   token: string,
-  resumePoint: string | null,
+  sinceAdded: Date,
+  useSourceTypeNew: boolean,
 ): Promise<any[]> {
   // orderDirection=asc (não desc): caminha cronologicamente a partir do mais
   // antigo (startDate = BRANDWATCH_MENTIONS_START_DATE, default 2026-01-01)
-  // até o presente, avançando o cursor a cada invocação — correção
-  // 2026-07-10. Antes, a primeira chamada (sem cursor) pegava as 100 mentions
-  // mais recentes (orderBy=added&orderDirection=desc&page=0) e o cursor
-  // pulava direto pra "agora", nunca voltando a buscar o histórico de
-  // Jan-Jun/26 (só a leva mais recente jamais fica coberta).
+  // até o presente — correção 2026-07-10. Antes, a primeira chamada (sem
+  // cursor) pegava as mentions mais recentes (orderDirection=desc&page=0) e
+  // o cursor pulava direto pra "agora", nunca voltando a buscar o histórico
+  // de Jan-Jun/26.
   const params = new URLSearchParams({
     queryId: String(queryId),
-    pageSize: "100",
+    pageSize: String(MENTIONS_PAGE_SIZE),
     orderBy: "added",
     orderDirection: "asc",
     // Obrigatório pela API mesmo no polling ("This method requires a start
     // date") — ver getMentionsStartDate(). endDate = agora, sempre.
     startDate: formatBrandwatchDate(getMentionsStartDate()),
     endDate: formatBrandwatchDate(new Date()),
+    sinceAdded: formatBrandwatchDate(sinceAdded),
   });
-
-  if (resumePoint) {
-    const bufferedSince = new Date(new Date(resumePoint).getTime() - 5 * 60 * 1000);
-    params.set("sinceAdded", formatBrandwatchDate(bufferedSince));
-    params.set("sourceType", "new");
-  } else {
-    // Primeiríssima vez para este par (sem cursor, sem mention nenhuma no
-    // banco ainda): sinceAdded = a própria startDate, sem buffer (nada foi
-    // coletado ainda, não há o que re-verificar).
-    params.set("sinceAdded", formatBrandwatchDate(getMentionsStartDate()));
-  }
+  // sourceType=new ("ignora mentions reprocessadas por backfill") só faz
+  // sentido quando já existe histórico coletado — na primeiríssima leva
+  // pra um par, backfill É o que queremos capturar.
+  if (useSourceTypeNew) params.set("sourceType", "new");
 
   const json = await callBrandwatch(`/projects/${projectId}/data/mentions?${params.toString()}`, token);
   return json.results ?? [];
@@ -1140,7 +1167,14 @@ Deno.serve(async (_req: Request) => {
   const token = brandwatchToken.accessToken;
 
   const now = new Date();
-  const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+  // Correção 2026-07-10 (pedido do usuário: "Data início 01/01/2026 até a
+  // data de hj" para as métricas, não só mentions): as chamadas de
+  // data/volume/{...} devolvem todos os buckets do range pedido numa única
+  // chamada (não uma por dia/semana) — usar o range completo configurado
+  // em vez de só os últimos 7 dias é o mesmo custo de rate limit, só que
+  // cobrindo o histórico inteiro em vez de uma janela que nunca alcançava
+  // Jan-Jun/26.
+  const metricsStartDate = getMentionsStartDate();
 
   try {
     // Resolve organization_id (necessário pro bootstrap de metadata e pro
@@ -1161,11 +1195,42 @@ Deno.serve(async (_req: Request) => {
       log("invocation:metadata_fresh", { projectId });
     }
 
-    // Passo 4: polling de mentions.
-    const resumePoint = await resolveMentionsResumePoint(supabase, queryId, cursor.last_added_cursor as string | null);
-    const mentions = await fetchMentions(projectId, queryId, token, resumePoint);
-    const { count: mentionsCount, maxAdded } = await upsertMentions(supabase, organizationId, projectId, queryId, mentions);
-    log("invocation:mentions_synced", { projectId, queryId, mentionsCount, resumePoint });
+    // Passo 4: polling de mentions — pagina dentro da mesma invocação até
+    // alcançar o presente ou esgotar o orçamento de páginas, em vez de
+    // avançar só uma página por invocação (correção 2026-07-10, pedido do
+    // usuário: "a tabela de menções só conta pouco mais de 100 menções, o
+    // que não condiz com a realidade" — com invocações manuais/espaçadas,
+    // uma página por invocação levaria muito tempo pra cobrir um
+    // trimestre de histórico). `sourceType=new` só entra depois da
+    // primeiríssima leva pra este par (queremos backfill na primeira vez).
+    const rawResumePoint = await resolveMentionsResumePoint(supabase, queryId, cursor.last_added_cursor as string | null);
+    const hadResumePoint = rawResumePoint !== null;
+    let sinceAdded = rawResumePoint
+      ? new Date(new Date(rawResumePoint).getTime() - 5 * 60 * 1000)
+      : getMentionsStartDate();
+
+    let mentionsCount = 0;
+    let maxAdded: string | null = null;
+    let mentionsPagesFetched = 0;
+    while (mentionsPagesFetched < MAX_MENTIONS_PAGES_PER_INVOCATION) {
+      const page = await fetchMentions(projectId, queryId, token, sinceAdded, hadResumePoint);
+      const upserted = await upsertMentions(supabase, organizationId, projectId, queryId, page);
+      mentionsCount += upserted.count;
+      mentionsPagesFetched++;
+      if (upserted.maxAdded) {
+        maxAdded = upserted.maxAdded;
+        sinceAdded = new Date(upserted.maxAdded);
+      }
+      log("invocation:mentions_page", { projectId, queryId, page: mentionsPagesFetched, count: upserted.count });
+      if (page.length < MENTIONS_PAGE_SIZE) break; // alcançou o presente
+    }
+    log("invocation:mentions_synced", {
+      projectId,
+      queryId,
+      mentionsCount,
+      pagesFetched: mentionsPagesFetched,
+      caughtUpToNow: mentionsPagesFetched < MAX_MENTIONS_PAGES_PER_INVOCATION,
+    });
 
     // Passo 5: métricas diárias — sempre roda, query inteira (category=null)
     // + cada Category vinculada a alguma Narrativa deste projeto.
@@ -1173,33 +1238,33 @@ Deno.serve(async (_req: Request) => {
     const categoryTargets: (number | null)[] = [null, ...narrativeCategoryIds];
 
     for (const categoryId of categoryTargets) {
-      await syncSentimentMetrics(supabase, token, "days", projectId, queryId, categoryId, sevenDaysAgo, now);
+      await syncSentimentMetrics(supabase, token, "days", projectId, queryId, categoryId, metricsStartDate, now);
     }
 
     // Passo 6c: breakdown de plataforma — sempre roda, mesmo throttle do
     // diário (query inteira, sem quebra por Narrativa).
-    await syncPlatformMetrics(supabase, token, projectId, queryId, sevenDaysAgo, now);
+    await syncPlatformMetrics(supabase, token, projectId, queryId, metricsStartDate, now);
 
     // Passo 6: semanal/mensal — throttle por frescor (evita gastar rate
     // limit em dado que muda bem mais devagar que a cada 20-30s).
     for (const categoryId of categoryTargets) {
       if (await isGrainStale(supabase, "weeks", projectId, queryId, categoryId, 7 * 24 * 60 * 60 * 1000)) {
-        await syncSentimentMetrics(supabase, token, "weeks", projectId, queryId, categoryId, sevenDaysAgo, now);
+        await syncSentimentMetrics(supabase, token, "weeks", projectId, queryId, categoryId, metricsStartDate, now);
       }
       if (await isGrainStale(supabase, "months", projectId, queryId, categoryId, 30 * 24 * 60 * 60 * 1000)) {
-        await syncSentimentMetrics(supabase, token, "months", projectId, queryId, categoryId, sevenDaysAgo, now);
+        await syncSentimentMetrics(supabase, token, "months", projectId, queryId, categoryId, metricsStartDate, now);
       }
       // Passo 6d: temas (data/topics) — mesmo throttle semanal, por
       // categoryTarget (query inteira + cada Narrativa).
       if (await isTopicsStale(supabase, projectId, queryId, categoryId, 7 * 24 * 60 * 60 * 1000)) {
-        await syncTopicsData(supabase, token, projectId, queryId, categoryId, sevenDaysAgo, now);
+        await syncTopicsData(supabase, token, projectId, queryId, categoryId, metricsStartDate, now);
       }
     }
 
     // Passo 6e: ranking de autores — mesmo throttle semanal, só no nível de
     // Query inteira (o endpoint não filtra por Category).
     if (await isTopAuthorsStale(supabase, projectId, queryId, 7 * 24 * 60 * 60 * 1000)) {
-      await syncTopAuthors(supabase, token, projectId, queryId, sevenDaysAgo, now);
+      await syncTopAuthors(supabase, token, projectId, queryId, metricsStartDate, now);
     }
 
     // Passo 6b: SOV de Query Group, se a query pertence a algum grupo.
@@ -1213,7 +1278,7 @@ Deno.serve(async (_req: Request) => {
     for (const group of queryGroups ?? []) {
       const queryGroupId = (group as { id: number }).id;
       if (await isQueryGroupSovStale(supabase, queryGroupId, 7 * 24 * 60 * 60 * 1000)) {
-        await syncQueryGroupSov(supabase, token, projectId, queryGroupId, sevenDaysAgo, now);
+        await syncQueryGroupSov(supabase, token, projectId, queryGroupId, metricsStartDate, now);
       }
     }
 

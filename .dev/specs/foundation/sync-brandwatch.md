@@ -85,6 +85,14 @@ o Executive Overview consomem o resultado (tabelas já sincronizadas).
    (Categories que não devem virar Narrativa, subcategorias como Narrativa
    própria, sinais adicionais) continua possível por cima, só não é mais
    pré-requisito pra ter dado nenhum na tela.
+   **Diagnóstico (2026-07-10)**: se `narratives` continuar vazia mesmo após
+   sync bem-sucedido, o log `refreshMetadata:done` traz `categoriesCount` —
+   se `0`, é sinal de que o Project na Brandwatch ainda não tem nenhuma
+   Category configurada (logado explicitamente como
+   `refreshMetadata:no_categories_found`). `bw-sync` só espelha Categories
+   que já existem na Brandwatch, não cria — configuração é manual na
+   própria Brandwatch (`brandwatch-setup.md`). Lembrar também que o
+   refresh de metadata só roda 1x/24h por Project.
 5. Busca mentions daquele par — **sempre** com `startDate`/`endDate` (⚠️
    correção 2026-07-07, encontrado em teste real: a Brandwatch rejeita
    `/data/mentions` sem `startDate`, mesmo no polling, apesar do exemplo de
@@ -96,14 +104,32 @@ o Executive Overview consomem o resultado (tabelas já sincronizadas).
    "sempre a partir de Janeiro/26 até a data atual... ler do banco de dados a
    data do último registro e fazer incremental"): `orderDirection=asc` (não
    `desc`) — caminha cronologicamente do mais antigo (`startDate`) pro mais
-   recente, avançando ~100 mentions por invocação, em vez de pegar sempre a
-   leva mais nova e pular o backlog. `sinceAdded` é **sempre** enviado:
-   resolvido por `resolveMentionsResumePoint()` como
-   `sync_cursors.last_added_cursor` se existir; senão, `MAX(added)` já
-   persistido em `mentions` pra aquele `query_id` (cobre reset de cursor sem
-   re-varrer/gastar rate limit em meses já coletados); senão, a própria
-   `startDate` (nunca coletado ainda). Com resume point conhecido, buffer de
-   5 minutos + `sourceType=new`; sem ele (primeiríssima leva), sem buffer.
+   recente, em vez de pegar sempre a leva mais nova e pular o backlog.
+   `sinceAdded` é **sempre** enviado: resolvido por
+   `resolveMentionsResumePoint()` como `sync_cursors.last_added_cursor` se
+   existir; senão, `MAX(added)` já persistido em `mentions` pra aquele
+   `query_id` (cobre reset de cursor sem re-varrer/gastar rate limit em
+   meses já coletados); senão, a própria `startDate` (nunca coletado
+   ainda). Com resume point conhecido, buffer de 5 minutos + `sourceType=new`;
+   sem ele (primeiríssima leva), sem buffer nem `sourceType=new` (queremos
+   pegar backfill também na primeira leva).
+   **Correção 2026-07-10** (pedido do usuário: "garanta que a busca está
+   utilizando o retorno máximo de linhas" + "a tabela de menções só conta
+   pouco mais de 100 menções, o que não condiz com a realidade"): duas
+   causas somadas. `pageSize` estava em `100`; corrigido para `5000`, o
+   máximo documentado pela Brandwatch em paginação clássica
+   (`MENTIONS_PAGE_SIZE`). E cada invocação buscava só **uma página** —
+   com invocações ainda manuais (sem `pg_cron` real agendado), isso levava
+   um clique por ~100 mentions. Agora `bw-sync` **pagina dentro da mesma
+   invocação**, avançando `sinceAdded` a cada página (sem buffer de 5
+   minutos entre páginas do mesmo loop — o buffer só importa *entre*
+   invocações, por causa do delay de indexação assíncrona da Brandwatch),
+   até uma página vir menor que `pageSize` (alcançou o presente) ou até
+   `MAX_MENTIONS_PAGES_PER_INVOCATION = 20` páginas (até ~100k
+   mentions/invocação), o que vier primeiro — o limite de páginas existe
+   pra deixar orçamento de rate limit (30 chamadas/10min) pras métricas que
+   rodam depois na mesma invocação. Se sobrar histórico, a invocação
+   seguinte continua de onde parou.
    **Antes do upsert**,
    garante que a partição mensal de `mentions` existe para cada mês presente
    no lote (⚠️ correção 2026-07-10, encontrado em teste real: a migration de
@@ -146,6 +172,17 @@ o Executive Overview consomem o resultado (tabelas já sincronizadas).
    `narratives.bw_category_id`** neste Project — não todas as Categories do
    Project) e faz upsert em `bw_query_metrics_daily`. Roda em **toda**
    invocação — é o dado mais volátil depois de mentions.
+   ⚠️ **Correção 2026-07-10** (pedido do usuário: "as métricas não estão
+   sendo trazidas corretamente" / "Data início 01/01/2026 até a data de
+   hj"): este e todos os passos 6.x abaixo chamavam `data/volume/...` com
+   `startDate`/`endDate` fixos numa janela de 7 dias (`sevenDaysAgo`/`now`),
+   ignorando `BRANDWATCH_MENTIONS_START_DATE` — nenhuma das tabelas de
+   agregado tinha dado mais antigo que uma semana. Corrigido: `startDate` =
+   `metricsStartDate` (mesma config de `getMentionsStartDate()`) em todos
+   os passos 6.x. Esses endpoints de chart devolvem todos os buckets do
+   range pedido numa única chamada — alargar a janela não custa chamada
+   extra de rate limit, só passa a cobrir o histórico configurado de
+   verdade.
 6.1. Mesma lógica para `data/volume/sentiment/weeks`/`.../months`, upsert em
    `bw_query_metrics_weekly`/`bw_query_metrics_monthly` — mas só quando não
    existir linha "fresca" (semanal: sem `synced_at` nos últimos 7 dias;

@@ -200,13 +200,40 @@ yet (no migration sets it up) — for now the function is invoked manually.
   bootstrap grabbed only the newest 100 mentions and the cursor jumped
   straight to "now," permanently skipping the Jan–Jun/26 backlog).
   `fetchMentions()` always uses `orderDirection=asc` from
-  `BRANDWATCH_MENTIONS_START_DATE` forward, ~100 mentions/invocation.
+  `BRANDWATCH_MENTIONS_START_DATE` forward.
   `resolveMentionsResumePoint()` picks the resume point: prefer
   `sync_cursors.last_added_cursor`; if empty, fall back to `MAX(added)`
   already in `mentions` for that `query_id` (so a lost/reset cursor never
   re-walks — and doesn't overwrite, upsert is idempotent anyway — months
   already collected); only true first-ever poll for a pair falls back to
   `BRANDWATCH_MENTIONS_START_DATE` itself.
+- **Mentions pagination: max page size + in-invocation loop** (fixed
+  2026-07-10 — user report: "a tabela de menções só conta pouco mais de
+  100 menções, o que não condiz com a realidade"). Two compounding causes:
+  `pageSize` was `100` instead of Brandwatch's documented max of `5000`
+  (`MENTIONS_PAGE_SIZE`), and each invocation only fetched *one page*, so
+  with invocations still triggered manually (no `pg_cron` yet) progress was
+  ~100 mentions per manual click. The handler now loops
+  (`MAX_MENTIONS_PAGES_PER_INVOCATION = 20`, i.e. up to ~100k mentions per
+  invocation) advancing `sinceAdded` after each page (no 5-minute buffer
+  between in-loop pages — that buffer only matters *between* invocations,
+  for Brandwatch's async indexing lag) until either a short page signals
+  "caught up to now" or the page budget runs out, leaving room in the
+  30-calls/10min budget for the metrics calls that follow. `sourceType=new`
+  is only applied once a real resume point exists — the very first poll
+  for a pair intentionally includes backfilled mentions too.
+- **Metrics date range bug** (fixed 2026-07-10 — user report: "as métricas
+  não estão sendo trazidas corretamente" / "Data início 01/01/2026 até a
+  data de hj"): every `data/volume/...` call (`syncSentimentMetrics` daily/
+  weekly/monthly, `syncPlatformMetrics`, `syncTopicsData`, `syncTopAuthors`,
+  `syncQueryGroupSov`) was using a hardcoded trailing 7-day window
+  (`sevenDaysAgo`/`now`) as `startDate`/`endDate`, regardless of
+  `BRANDWATCH_MENTIONS_START_DATE` — so none of the aggregate tables ever
+  got data older than a week. Fixed by passing `metricsStartDate =
+  getMentionsStartDate()` (same config as mentions) as `startDate`
+  everywhere — these chart endpoints return every bucket in the requested
+  range in a *single* call, so widening the window doesn't cost more rate
+  limit, it just actually covers the configured history.
 - **`category_id` nullable-uniqueness bug**: `bw_query_metrics_{daily,weekly,monthly}`
   originally had `unique(..., category_id, ...)` with nullable `category_id`
   — SQL treats `NULL <> NULL`, so the "whole query" (no category) row would
@@ -226,6 +253,17 @@ yet (no migration sets it up) — for now the function is invoked manually.
   (deactivating a Category as a Narrativa, adding subcategory-level
   Narrativas, editing risk/priority) still works on top. Subcategories are
   *not* auto-seeded, left for manual curation.
+  **If `narratives` is still empty after a successful sync** (user report
+  2026-07-10): check the `refreshMetadata:done` log line's `categoriesCount`
+  — if it's `0` (also logged explicitly as
+  `refreshMetadata:no_categories_found`), the Brandwatch Project genuinely
+  has no Categories configured yet. `bw-sync` only mirrors Categories that
+  already exist in Brandwatch (`GET /rulecategories`) — it can't invent
+  them. Categories have to be created in the Brandwatch UI first (see
+  `brandwatch-setup.md`); also remember metadata only refreshes once per
+  24h per project (`needsMetadataRefresh()`), so a Category added in
+  Brandwatch after the last refresh won't show up as a Narrativa until the
+  next refresh window.
 - **Data scope is deliberately bounded**: `foundation`/`bw-sync` covers all
   *pull* data later sprints need (projects, queries, query groups,
   categories, mentions, daily/weekly/monthly metrics, Query Group SOV).
