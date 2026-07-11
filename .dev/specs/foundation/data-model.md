@@ -479,8 +479,6 @@ Adicionada em `20260710010000`.
 | `percentage_volume` | `numeric` | não | |
 | `sentiment_positive`/`neutral`/`negative` | `integer` | sim | default `0` |
 | `trending` | `numeric` | não | |
-| `engagement_total` | `numeric` | não | agregação local sobre `mentions`, só pra `topic_type = 'hashtags'` — adicionado `20260710060000`, ver nota abaixo |
-| `reach_estimated` | `integer` | não | idem, só pra `topic_type = 'hashtags'` |
 | `metric_week` | `date` | sim | data do snapshot de sync (não um bucket semanal literal — `data/topics` é um agregado sobre a janela toda, não uma série por semana; usado só como marcador de frescor/throttle) |
 | `synced_at` | `timestamptz` | sim | |
 
@@ -490,23 +488,17 @@ Throttle semanal (mesmo padrão de `bw_query_metrics_weekly`,
 `isTopicsStale()` em `bw-sync/index.ts`), por `categoryTarget` (query
 inteira + cada Narrativa).
 
-> ✅ **Ampliação (2026-07-10, migration `20260710060000`)**: pedido do
-> usuário — "Importante que nos tópicos também tenha o engajamento e o
-> alcance de cada tópico". Pesquisa direta contra
-> `developers.brandwatch.com/docs/data-topics` confirmou: `metrics` só
-> aceita `volume, percentageVolume, sentiment, gender, trending,
-> timeSeries` — **reach e engajamento não existem como métrica desse
-> endpoint**, limitação real da API, não lacuna do código. Único jeito de
-> aproximar: cruzar localmente contra `mentions`, e só é preciso pra
-> `topic_type = 'hashtags'` — `mentions.insights_hashtag @> array[label]`
-> é containment exato (já indexado via GIN), sem ambiguidade. Pra
-> `words`/`phrases`/`entities`/`people`/`places`/`organisations` não há
-> correspondência exata e barata (exigiria `ilike` fuzzy sobre
-> snippet/full_text, mesmo problema já documentado pra `narrative_signals`
-> do tipo `keyword`) — ficam `null` deliberadamente, não estimados às
-> cegas. Função `refresh_topic_engagement_reach()` faz essa agregação em
-> lote (1 `UPDATE`, não uma chamada por tópico), chamada via RPC logo após
-> o upsert de tópicos em `syncTopicsData()`.
+> ⚠️ **Revertido (2026-07-11, migration `20260711010000`)**:
+> `engagement_total`/`reach_estimated` chegaram a existir aqui
+> (`20260710060000`) — `data/topics` confirmadamente não expõe reach/
+> engajamento como métrica (`metrics` só aceita `volume, percentageVolume,
+> sentiment, gender, trending, timeSeries`), e o único jeito de aproximar
+> era cruzar `topic_type='hashtags'` contra `mentions` (amostrada). O
+> usuário fixou a premissa do projeto: **nunca calcular localmente sobre
+> `mentions` pra preencher o que a Brandwatch não expõe como agregado
+> oficial** — "não reflete a realidade, é apenas uma amostra". As duas
+> colunas e a função `refresh_topic_engagement_reach()` foram removidas.
+> Tópicos ficam só com o que `data/topics` de fato devolve.
 
 ### `bw_query_top_authors`
 
@@ -558,47 +550,24 @@ acelera consultas de "só os influentes".
 > volume/relevância, não por seguidores, então isso melhora a cobertura
 > mas **não garante 100%**: um autor de altíssimo alcance com baixo volume
 > na Query específica pode ficar fora mesmo no limite máximo — limitação
-> documentada do endpoint, não do código. Ver `influential_author_activity()`
-> abaixo pra cruzar isso com participação/alcance por mention.
+> documentada do endpoint, não do código. `reach_estimate`/`impact`/
+> `platform_stats` (twitter*/facebook*/reddit*) já são suficientes pra
+> "alcance dos autores influentes" — todos vêm direto deste endpoint
+> (agregado oficial, não amostrado), sem precisar de nenhuma função extra
+> — consultar `bw_query_top_authors where is_influential` já responde.
 
-### Função: `influential_author_activity`
-
-Adicionada em `20260710050000`, resposta direta ao pedido do usuário de
-2026-07-10 (autores >100k seguidores + participação + alcance dos posts).
-Cruza `bw_query_top_authors` (autores influentes, não amostrado) com
-`mentions` (participação por `mention_role` + `reach_estimate` por post).
-
-```sql
-influential_author_activity(
-  p_project_id bigint, p_query_id bigint, p_category_id bigint default null,
-  p_min_followers integer default 100000,
-  p_since timestamptz default null, p_until timestamptz default null,
-  p_limit integer default 50
-)
-returns table (
-  author text, followers integer, impact numeric, reach_estimate integer,
-  total_mentions bigint, original_count bigint, reply_count bigint,
-  retweet_count bigint, total_reach bigint, max_reach integer
-)
-```
-
-- `p_category_id null` = ranking da Query inteira; preenchido = só a
-  Narrativa (usa `category_id_key` de `bw_query_top_authors`, mesmo padrão
-  de `bw_query_metrics_daily`).
-- **`bw_query_top_authors` tem uma linha por autor por semana
-  (`metric_week`)** — a função usa `distinct on (author) order by author,
-  metric_week desc` pra pegar só o snapshot mais recente antes de juntar
-  com `mentions`; sem isso, `total_mentions`/`total_reach` multiplicariam
-  por semana (bug encontrado e corrigido antes do primeiro deploy desta
-  função).
-- Join com `mentions` via `author_handle_normalized = lower(author)` — os
-  dois endpoints devem devolver o mesmo identificador de autor da
-  Brandwatch, mas isso não foi confirmado contra um payload real (mesma
-  categoria de risco já assumida noutras partes desta leva).
-- `original_count`/`reply_count`/`retweet_count` respondem "maior
-  participação (comentários e/ou repost)" via `mentions.mention_role`
-  (ver §3). `total_reach`/`max_reach` respondem "alcance dos posts dos
-  mais influentes" via `mentions.reach_estimate`.
+> ⚠️ **Função `influential_author_activity()` removida (2026-07-11, migration
+> `20260711010000`)**: existiu brevemente (`20260710050000`) cruzando
+> `bw_query_top_authors` com `mentions` pra computar
+> `original_count`/`reply_count`/`retweet_count`/`total_reach`/`max_reach`
+> por autor influente. Essas 5 colunas eram soma/contagem sobre `mentions`
+> (amostrada), a mesma categoria de problema que o usuário pediu pra
+> eliminar do projeto inteiro — "não faça cálculo local confiando na
+> mentions, pois não reflete a realidade... isso deve ser premissa". O que
+> sobrou de valor real (`followers`, `is_influential`, `impact`,
+> `reach_estimate`, `platform_stats` — todos agregados oficiais da
+> Brandwatch, não amostrados) já são colunas diretas de
+> `bw_query_top_authors`, sem precisar de função nenhuma.
 
 ---
 
@@ -670,17 +639,11 @@ narrative_id in (
 | `narrative_id`         | `uuid`        | sim | FK → `narratives(id)` ON DELETE CASCADE |
 | `metric_date`          | `date`        | sim | |
 | `period`               | `text`        | sim | `daily` \| `weekly` \| `monthly`; default `daily` |
-| `source`               | `text`        | sim | `bw_aggregate` \| `mentions_sample` — check constraint. Ver nota abaixo: só qualifica `total_mentions`/sentimento a partir de `20260710030000` |
-| `total_mentions`       | `integer`     | sim | default `0` |
-| `unique_authors`       | `integer`     | não | agregação local sobre `mentions` (`narrative_matched_mentions`) |
-| `sentiment_positive`   | `integer`     | sim | default `0` |
-| `sentiment_neutral`    | `integer`     | sim | default `0` |
-| `sentiment_negative`   | `integer`     | sim | default `0` |
-| `reach_estimated`      | `integer`     | não | agregação local (`sum(mentions.reach_estimate)`) |
-| `top_domain`           | `text`        | não | agregação local (`mode()` sobre `mentions.domain`) |
-| `engagement_total`     | `integer`     | não | agregação local (`sum(mention_engagement_likes(mentions.engagement))`) — adicionado `20260710030000` |
-| `repost_count`         | `integer`     | não | agregação local (`sum(mention_engagement_reposts(...))`) — retweets/shares/reposts somados entre plataformas |
-| `comment_count`        | `integer`     | não | agregação local (`sum(mention_engagement_comments(...))`) — replies/comments somados entre plataformas |
+| `source`               | `text`        | sim | `bw_aggregate` — check constraint permite também `mentions_sample`, mas nada insere com esse valor desde `20260711010000` (ver nota) |
+| `total_mentions`       | `integer`     | sim | default `0`, de `bw_query_metrics_daily.total_mentions` (agregado oficial, não amostrado) |
+| `sentiment_positive`/`neutral`/`negative` | `integer` | sim | default `0`, idem |
+| `reach_estimated`      | `integer`     | não | de `bw_query_metrics_daily.reach_estimate` — `null` até `bw-sync` sincronizar essa coluna pro dia em questão, **nunca** estimado localmente |
+| `engagement_total`     | `numeric`     | não | de `bw_query_metrics_daily.engagement_score` — mesma regra |
 | `created_at`           | `timestamptz` | sim | `now()` |
 
 **Índices**: unique `(narrative_id, metric_date, period)`.
@@ -689,44 +652,32 @@ narrative_id in (
 
 **Políticas RLS**: mesmo padrão satélite de `narrative_signals`.
 
-> ✅ **Correção/ampliação (2026-07-10, migration `20260710030000`)**: pedido
-> do usuário — "Importante trazer as métricas por narrativa e por outras
-> dimensões como: engajamento, quantidade de repost, qtde de comentários".
-> Pesquisa contra a documentação real da Brandwatch confirmou que os
-> endpoints de chart/aggregate **não** expõem engajamento quebrado por
-> Category de forma confiável (só um `engagementScore` composto, sem
-> discriminar likes/reposts/comments) — a única fonte é a mention
-> individual (`mentions.engagement` jsonb, migration `20260710010000`).
-> Por isso `engagement_total`/`repost_count`/`comment_count` **são sempre
-> agregação local**, mesmo quando `source = 'bw_aggregate'` (que continua
-> sendo a fonte de verdade só pra `total_mentions`/sentimento — mesma
-> ressalva de sampling que já valia implicitamente pra
-> `reach_estimated`/`top_domain`/`unique_authors`). Antes desta migration,
-> a via `bw_aggregate` (usada por **toda** Narrativa com `bw_category_id`,
-> ou seja todas as auto-criadas hoje) não preenchia
-> `unique_authors`/`reach_estimated`/`top_domain` — essas colunas ficavam
-> sempre `null` fora da via `mentions_sample`, que nenhuma Narrativa atual
-> usa. Agora ambas as vias populam essas colunas via
-> `narrative_matched_mentions()`. Três funções helper (`mention_engagement_likes`/
-> `_reposts`/`_comments(jsonb) returns integer`) somam os campos de
-> engajamento por plataforma (ver `mentions.engagement` em §3) — Brandwatch
-> não tem um campo genérico de engajamento.
-
-> ✅ **Correção (2026-07-10, migration `20260710040000`, mesmo dia)**:
-> usuário apontou corretamente que a agregação local acima ainda é sobre
-> `mentions`, que **é amostrada** em Queries de alto volume — "como as
-> menções trazidas na integração são apenas amostras... reach/engajamento/
-> influência do autor precisam ser buscados diferentemente". Corrigido:
-> `reach_estimated`/`engagement_total` (via `bw_aggregate`) passam a vir de
-> `bw_query_metrics_daily.reach_estimate`/`engagement_score` (agregado
-> oficial não-amostrado, ver §5) via `coalesce(...)`, com fallback pro
-> cálculo local só enquanto o histórico ainda não tiver sido resincronizado
-> com as 2 colunas novas. `unique_authors`/`top_domain`/`repost_count`/
-> `comment_count` **continuam** locais/amostrados — não há aggregate da
-> Brandwatch pra esses quebrados por Category (nem repost/comment count
-> quebram por nenhum critério, só existem por mention individual). Ranking
-> de autores (`bw_query_top_authors`) também ganhou `category_id` na mesma
-> leva — ver tabela acima.
+> ⚠️ **Premissa fixada pelo usuário (2026-07-11, migration
+> `20260711010000`)**: "Retire os cálculos locais baseados em mentions,
+> pois não fará sentido. Se tem na Brandwatch mantém, se não tem, não faça
+> cálculo local confiando na mentions, pois não reflete a realidade, é
+> apenas uma amostra. Isso deve ser premissa." — regra geral do projeto
+> daqui pra frente, não só desta tabela.
+>
+> Histórico do que essa tabela chegou a ter e foi revertido: colunas
+> `unique_authors`/`top_domain`/`repost_count`/`comment_count`
+> (`20260710030000`) e a via `mentions_sample` inteira (Narrativas sem
+> `bw_category_id`, `20260707000000`) computavam número a partir de
+> `count`/`sum`/`mode` sobre `mentions` — que é amostrada em Queries de
+> alto volume, então esses números **subestimavam** sistematicamente sem
+> avisar. `reach_estimated`/`engagement_total` chegaram a ter um fallback
+> pro cálculo local (`20260710040000`) "só enquanto o histórico não
+> resincronizasse" — também removido, já que qualquer cálculo local viola
+> a premissa, mesmo como fallback temporário.
+>
+> **Estado atual**: só Narrativas com `bw_category_id` (todas as
+> auto-criadas hoje) recebem `narrative_metrics`, inteiramente a partir de
+> `bw_query_metrics_daily` (agregado oficial da Brandwatch). Narrativa sem
+> `bw_category_id` (só `narrative_signals`) **não recebe nenhuma linha** —
+> sem agregado oficial disponível, a tabela fica sem dado em vez de um
+> número que não reflete a realidade. `unique_authors`/`top_domain`/
+> `repost_count`/`comment_count` não existem mais como coluna — não há
+> equivalente oficial da Brandwatch pra eles quebrado por Category.
 
 > ✅ **`refresh_narrative_metrics()` finalmente agendada (2026-07-10)**:
 > a função existe desde a migration inicial mas **nunca teve um
@@ -822,39 +773,30 @@ $$;
 
 ## Função: `refresh_narrative_metrics`
 
-Chamada direto pelo `pg_cron` (sem Edge Function). Populável em duas vias —
-prioriza `bw_aggregate` quando a Narrativa tem `bw_category_id`.
+Chamada direto pelo `pg_cron` (sem Edge Function). Desde `20260711010000`,
+uma via só — sem agregado oficial da Brandwatch (`bw_category_id` nulo),
+sem `narrative_metrics`.
 
 > ⚠️ **A definição completa da função vive só na migration**
-> (`supabase/migrations/20260710030000_narrative_metrics_engagement_and_schedule.sql`,
-> que substitui a versão original de `20260707000000`) — não duplicada
-> aqui verbatim pra evitar drift entre spec e código (já aconteceu com
-> outras partes deste módulo nesta sessão). Resumo do comportamento atual:
+> (`supabase/migrations/20260711010000_remove_sampled_mentions_aggregations.sql`,
+> que substitui as versões anteriores de `20260707000000` e
+> `20260710030000`) — não duplicada aqui verbatim pra evitar drift entre
+> spec e código. Resumo do comportamento atual:
 
 - **Assinatura**: `refresh_narrative_metrics(p_from date, p_to date)` —
-  mudou de um único `p_metric_date` pra um range, servindo tanto de
-  backfill histórico (chamada uma vez cobrindo `2026-01-01` até hoje,
-  feita na própria migration) quanto de refresh incremental (via
-  `pg_cron`, ver seção "`pg_cron` — agendamentos deste módulo" abaixo).
-- **Via 1** (`bw_category_id` preenchido — toda Narrativa auto-criada
-  hoje): `total_mentions`/sentimento vêm de `bw_query_metrics_daily`
-  (agregado oficial, sampling-safe). `unique_authors`/`reach_estimated`/
-  `top_domain`/`engagement_total`/`repost_count`/`comment_count` vêm de
-  uma agregação local sobre `narrative_matched_mentions()` — Brandwatch
-  não expõe esses números quebrados por Category em nenhum endpoint de
-  chart (ver nota na tabela `narrative_metrics` acima), então ficam
-  sujeitos à mesma ressalva de sampling que qualquer soma sobre mentions
-  individuais em Query de alto volume.
-- **Via 2** (sem `bw_category_id`, só `narrative_signals`): tudo agregado
-  localmente, mesma lógica de antes, agora também quebrada por dia dentro
-  do range (`generate_series`) e incluindo as 3 colunas de engajamento.
-- Helpers `mention_engagement_likes`/`_reposts`/`_comments(jsonb) returns
-  integer` somam os campos por plataforma de `mentions.engagement`.
-
-> ⚠️ Rascunho de referência — validar performance real (via 2 escaneia
-> mentions via `narrative_matched_mentions`, uma vez por Narrativa sem
-> Category; aceitável para o volume esperado de Narrativas ativas no MVP,
-> reavaliar se crescer muito).
+  range, não um único dia, servindo tanto de backfill histórico quanto de
+  refresh incremental (via `pg_cron`, ver seção "`pg_cron` —
+  agendamentos deste módulo" abaixo).
+- **Única via**: `join bw_query_metrics_daily on category_id = bw_category_id`
+  — `total_mentions`/sentimento/`reach_estimate`/`engagement_score`, tudo
+  agregado oficial da Brandwatch, sampling-safe. `where bw_category_id is
+  not null` — Narrativa sem Category vinculada não recebe linha nenhuma
+  (não existe agregado oficial pra ela; ver premissa fixada na tabela
+  `narrative_metrics` acima).
+- Não usa `narrative_matched_mentions()` nem toca `mentions` de forma
+  alguma — removido junto com a via antiga (`mentions_sample`) e os 3
+  helpers `mention_engagement_likes`/`_reposts`/`_comments`, que não têm
+  mais chamador.
 
 ---
 
@@ -957,6 +899,18 @@ revoke all on schema public from bi_reader;
       `bw_query_metrics_daily` + `category_id` em `bw_query_top_authors` +
       `refresh_narrative_metrics()` lendo da fonte não-amostrada (migration
       `20260710040000`)
+      → `followers`/`is_influential` em `bw_query_top_authors` +
+      `mentions.mention_role` + `influential_author_activity()` (migration
+      `20260710050000`) → `bw_query_topics.engagement_total`/
+      `reach_estimated` + `refresh_topic_engagement_reach()` (migration
+      `20260710060000`) → lock de concorrência `bw_sync_lock` (migration
+      `20260711000000`) → **remoção** de todo cálculo local sobre
+      `mentions` amostradas: `refresh_topic_engagement_reach()`,
+      `influential_author_activity()`, colunas
+      `unique_authors`/`top_domain`/`repost_count`/`comment_count` de
+      `narrative_metrics`, via `mentions_sample` de
+      `refresh_narrative_metrics()` (migration `20260711010000` — ver
+      premissa fixada na tabela `narrative_metrics`)
 - [ ] Triggers `set_updated_at` em `organizations`, `brandwatch_credentials`, `narratives`
 - [ ] RLS habilitada em **todas** as tabelas deste módulo (inclusive
       `sync_cursors`/`sync_log`, deny-all)

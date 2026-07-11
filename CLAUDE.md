@@ -322,66 +322,67 @@ the same prerequisite.)
   Brandwatch API calls (pure Postgres aggregation over already-synced
   data) — it was never blocked by the token-caching prerequisite that
   blocks scheduling `bw-sync` itself.
-- **Narrative-level engagement/repost/comment metrics** (added 2026-07-10,
-  user request: "trazer as métricas por narrativa e por outras dimensões
-  como: engajamento, quantidade de repost, qtde de comentários"). Verified
-  against Brandwatch's chart-dimensions-and-aggregates docs first: no
-  chart/aggregate endpoint breaks engagement down by Category reliably
-  (only a composite `engagementScore`, no likes/reposts/comments split) —
-  the only real source is the individual mention (`mentions.engagement`).
-  `narrative_metrics` gains `engagement_total`/`repost_count`/
-  `comment_count`, computed by 3 new SQL helpers
-  (`mention_engagement_likes`/`_reposts`/`_comments(jsonb)`) summing the
-  per-platform keys in `mentions.engagement`. These are **always** local
-  aggregation via `narrative_matched_mentions()`, even for
-  `source = 'bw_aggregate'` rows (i.e. every Narrativa with a
-  `bw_category_id` — currently all of them) — same sampling caveat as any
-  mentions-derived number on a high-volume Query. Same fix also closes a
-  pre-existing gap: the `bw_aggregate` path never populated
-  `unique_authors`/`reach_estimated`/`top_domain` either (those columns
-  were only ever written by the `mentions_sample` path, which no current
-  Narrativa uses since all are auto-seeded with a `bw_category_id`) — now
-  both paths populate all of it.
-- **Reach/engagement/author-influence per Narrativa moved off the sampled
-  `mentions` table** (fixed 2026-07-10, same day as the bullet above —
-  user correctly pushed back: "como as menções trazidas na integração são
-  apenas amostras, é importante que... reach/engajamento/influência do
-  autor... sejam buscados diferentemente"). The engagement/repost/comment
-  work above still summed `mentions.engagement`, and `mentions` **is**
-  sampled on high-volume Queries (same caveat that already applied to
-  `total_mentions`, which is why `bw_query_metrics_daily` exists in the
-  first place). Fixed the two pieces that *do* have a non-sampled source:
-  `bw_query_metrics_daily` gains `reach_estimate`/`engagement_score`
-  columns via `data/reachEstimate/categories/days` and
-  `data/engagementScore/categories/days` (the `categories` **dimension**
-  gets every Narrativa's numbers in one call each, not one call per
-  Narrativa) — `refresh_narrative_metrics()` now reads
-  `reach_estimated`/`engagement_total` from there via `coalesce(...)`,
-  falling back to the old local sum only for historical rows not yet
-  resynced. `bw_query_top_authors` gains `category_id` — `syncTopAuthors()`
-  now loops per `categoryTarget` with `category=<id>` as a filter (same
-  convention as sentiment), giving non-sampled author-influence rankings
-  per Narrativa instead of only per-Query. `repost_count`/`comment_count`/
-  `unique_authors`/`top_domain` still have **no** non-sampled alternative —
-  Brandwatch doesn't expose those broken down by Category at all — so they
-  remain local/sampled, now documented explicitly as the exception rather
-  than assumed accurate. ⚠️ Neither the `categories`-dimension combination
-  with `reachEstimate`/`engagementScore` nor the `category` filter on
-  `data/volume/topauthors/queries` has a confirmed example payload — both
-  follow the same pattern already proven for sentiment, flagged the same
-  way `syncPlatformMetrics` was.
-  **Hit in production same day**: the `categories` dimension returned
-  category IDs `bw_categories` didn't have cached (outside `rulecategories`'
-  scope, or stale since the last metadata refresh), which crashed the
-  upsert on the `bw_query_metrics_daily.category_id → bw_categories.id`
-  FK. `syncCategoryDailyAggregate()` now looks up known category IDs first
-  and skips (logging `unknown_categories_skipped`) anything outside that
-  set instead of failing the whole invocation.
-- **Influencer identification, post participation, and reach of influential
-  authors** (added 2026-07-10, user request: capture every top author with
-  >100k followers as "most influential," identify who originated/reposted/
-  engaged with a post and who has the most participation (comments/
-  reposts), and know the reach of influential authors' posts).
+- **⚠️ Project-wide premise, fixed by the user 2026-07-11**: "Retire os
+  cálculos locais baseados em mentions, pois não fará sentido. Se tem na
+  Brandwatch mantém, se não tem, não faça cálculo local confiando na
+  mentions, pois não reflete a realidade, é apenas uma amostra. Isso deve
+  ser premissa." (Remove local calculations based on mentions — if
+  Brandwatch has it, keep it; if not, don't fake it locally, `mentions` is
+  just a sample and doesn't reflect reality. This is a standing rule now,
+  not a one-off fix.) `mentions` is sampled on high-volume Queries — this
+  was already the reason `bw_query_metrics_daily` exists for
+  `total_mentions`/sentiment instead of counting `mentions` rows, but over
+  2026-07-10 several new features (below, now reverted) violated it by
+  summing/counting over `mentions` to fill gaps Brandwatch doesn't expose
+  as an official aggregate. **Going forward: never build a feature that
+  sums/counts/aggregates over `mentions` to represent a total — either the
+  data comes from a Brandwatch aggregate endpoint (`bw_query_metrics_daily`,
+  `bw_query_topics`, `bw_query_top_authors`, etc.) or it doesn't exist.**
+  The one thing that's fine to keep: per-mention classification that
+  doesn't aggregate across the sample (e.g. `mentions.mention_role`,
+  labelling one already-captured mention as `original`/`reply`/`retweet`
+  from its own `reply_to`/`retweet_of` — a fact about that row, not a
+  statistic extrapolated from an incomplete population).
+  Removed as a direct result (migration `20260711010000`): `narrative_metrics`'s
+  `unique_authors`/`top_domain`/`repost_count`/`comment_count` columns and
+  the `mentions_sample` via of `refresh_narrative_metrics()` (a Narrativa
+  without `bw_category_id` now gets **no** `narrative_metrics` row at all,
+  rather than a locally-estimated one) — `total_mentions`/sentiment/
+  `reach_estimated`/`engagement_total` are the only columns left, always
+  from `bw_query_metrics_daily`; `bw_query_topics.engagement_total`/
+  `reach_estimated` and `refresh_topic_engagement_reach()` (topics never
+  had a non-sampled source for these — `data/topics`'s `metrics` param
+  genuinely doesn't offer reach/engagement, confirmed against the docs —
+  so there was no accurate way to provide them at all); `influential_author_activity()`
+  (its useful part — `followers`/`is_influential`/`impact`/`reach_estimate`/
+  `platform_stats` — was already sitting on `bw_query_top_authors` as
+  Brandwatch-native, non-sampled columns; the function's *added* value was
+  `original_count`/`reply_count`/`retweet_count`/`total_reach`/`max_reach`,
+  all summed over `mentions`, so the whole function was removed).
+  `mentions.mention_role` (added same batch as `influential_author_activity`)
+  and `bw_query_top_authors.followers`/`is_influential` (native fields from
+  the Top Authors endpoint) were kept — see below for what they still do.
+- **Non-sampled reach/engagement per Narrativa, via the `categories`
+  dimension** (added 2026-07-10, survived the reversal above because it's
+  genuinely non-sampled). `bw_query_metrics_daily` gains
+  `reach_estimate`/`engagement_score` via `data/reachEstimate/categories/days`
+  and `data/engagementScore/categories/days` — the `categories`
+  **dimension** returns every Narrativa's numbers in one call each, not
+  one call per Narrativa. `refresh_narrative_metrics()` reads these two
+  columns straight from there (no local fallback — see the premise above).
+  ⚠️ The `categories`-dimension combination with `reachEstimate`/
+  `engagementScore` has no confirmed example payload, same risk category
+  as `syncPlatformMetrics`.
+  **Hit in production**: the `categories` dimension returned category IDs
+  `bw_categories` didn't have cached (outside `rulecategories`' scope, or
+  stale since the last metadata refresh), crashing the upsert on the
+  `bw_query_metrics_daily.category_id → bw_categories.id` FK.
+  `syncCategoryDailyAggregate()` now looks up known category IDs first and
+  skips (logging `unknown_categories_skipped`) anything outside that set
+  instead of failing the whole invocation.
+- **Influencer identification via native Top Authors fields** (added
+  2026-07-10, user request: capture every top author with >100k followers
+  as "most influential" and know the reach of their posts).
   `syncTopAuthors()`'s `limit` went from `100` to Brandwatch's documented
   max (`1000`) — better coverage, but not guaranteed: Top Authors is
   ordered by volume/relevance, not followers, so a high-follower/
@@ -390,29 +391,10 @@ the same prerequisite.)
   specific campaign). `bw_query_top_authors` gains `followers` (from
   `twitterFollowers` — the only followers field this endpoint's envelope
   actually has; Facebook/Reddit don't expose one here) and a generated
-  `is_influential` (`followers >= 100000`). `mentions` gains a generated
-  `mention_role` (`original`/`reply`/`retweet`, derived from `reply_to`/
-  `retweet_of`) — answers "who originated" (`mention_role='original'`) and
-  "who reposted" (`mention_role='retweet'`, the reposter, not the original
-  author — Brandwatch only gives the *URL* of the original post in
-  `retweet_of`, not its author, and resolving that URL against another
-  mention isn't guaranteed since the original may never have been
-  captured by the Query). "Who engaged" has a hard ceiling: Brandwatch
-  does not expose individually-attributable likes, only aggregate counts
-  per mention — engagement can only be resolved to the post-author level
-  (`original`/`reply`/`retweet`), not to "everyone who liked this."
-  New function `influential_author_activity()` (migration `20260710050000`)
-  joins `bw_query_top_authors` (latest `metric_week` snapshot per author —
-  the table has one row per author *per week*, so the function uses
-  `distinct on (author) order by metric_week desc` before joining, to
-  avoid fanning out mention counts across weeks) to `mentions` via
-  `author_handle_normalized`, giving per-influential-author
-  `original_count`/`reply_count`/`retweet_count` (participation) and
-  `total_reach`/`max_reach` (from `mentions.reach_estimate` — reach of
-  their posts). Both the `category` filter on `topauthors/queries` and the
-  author-identifier match between the two endpoints are unconfirmed
-  against a real payload, same risk category as other endpoints this
-  session.
+  `is_influential` (`followers >= 100000`). Reach of influential authors'
+  posts is already answerable from this same table's `reach_estimate`
+  (native, non-sampled, from the endpoint itself) — no join to `mentions`
+  needed or wanted (see premise above).
 - **`bw_categories` staleness reduced 24h → 1h** (fixed 2026-07-10, user
   report: "em categorias, não está refletindo as categorias existentes na
   brandwatch"). `needsMetadataRefresh()` already forced a refresh when
@@ -429,21 +411,33 @@ the same prerequisite.)
   destroying metric history. If `categoriesCount` is still `0` after this,
   the next thing to check is whether `BRANDWATCH_PROJECT_ID` actually
   points at the Brandwatch Project where the Categories were created.
-- **Topic engagement/reach — real API ceiling, not a gap** (added
-  2026-07-10, user request: "Importante que nos tópicos também tenha o
-  engajamento e o alcance de cada tópico"). Verified directly against
-  Brandwatch's `data-topics` docs: `metrics` only accepts `volume,
-  percentageVolume, sentiment, gender, trending, timeSeries` — reach and
-  engagement are not offered at all for this endpoint. The only accurate
-  proxy is a local join against `mentions`, and it's only reliable for
-  `topic_type = 'hashtags'` (`mentions.insights_hashtag @> array[label]`,
-  exact containment, GIN-indexed) — `words`/`phrases`/`entities`/`people`/
-  `places`/`organisations` have no exact match without fuzzy `ilike` text
-  search (same accuracy problem already documented for
-  `narrative_signals`' `keyword` type), so those stay `null` rather than
-  guessed. New `refresh_topic_engagement_reach()` SQL function does this
-  as one batched `UPDATE` (not one call per topic), invoked via RPC right
-  after `syncTopicsData()`'s upsert.
+- **Concurrency lock + per-invocation call budget** (fixed 2026-07-10/11,
+  user report: cascading `HTTP 429`s across two *different* endpoints
+  interleaved in the logs — "acho que o código violou alguma regra da
+  brandwatch"). Root cause was almost certainly two `bw-sync` invocations
+  running at once, both making sequential Brandwatch calls but sharing the
+  same 30-calls/10min Client-wide budget — nothing previously stopped two
+  overlapping invocations. Fixed with a mutual-exclusion lock:
+  `bw_sync_lock` (single row, migration `20260711000000`), claimed via an
+  atomic `UPDATE ... WHERE locked_until IS NULL OR locked_until < now()`
+  (not a Postgres advisory lock — those aren't reliable through
+  PostgREST/connection pooling) in `try_acquire_bw_sync_lock()`, released
+  in `release_bw_sync_lock()` via a `try/finally` around the whole
+  invocation. Auto-expires after 5 minutes so a crashed invocation can't
+  wedge the lock forever. A second invocation that finds the lock held
+  exits immediately (`HTTP 200`, no Brandwatch calls at all) instead of
+  competing for budget.
+  Separately, the number of steps in one invocation had grown enough
+  (mentions pagination + daily sentiment + reach/engagement + platform +
+  weekly/monthly + topics + top-authors × `categoryTargets` + SOV) that a
+  *single* cold invocation could approach or exceed 30 calls on its own.
+  Added `brandwatchCallCount`/`BRANDWATCH_CALL_BUDGET = 25` (reset at the
+  top of every invocation, incremented on every real attempt inside
+  `callBrandwatch()` including ones that get `429`'d, since those still
+  spend budget) — the mentions loop and the `categoryTargets` loop
+  (weekly/monthly/topics/top-authors/SOV) both stop themselves once the
+  budget is gone, deferring whatever's left to the next invocation (safe:
+  throttled items just stay "stale" and get picked up naturally).
 - **Data scope is deliberately bounded**: `foundation`/`bw-sync` covers all
   *pull* data later sprints need (projects, queries, query groups,
   categories, mentions, daily/weekly/monthly metrics, Query Group SOV).

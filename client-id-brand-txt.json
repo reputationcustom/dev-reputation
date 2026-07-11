@@ -1,0 +1,295 @@
+{
+    "id": 1997437816,
+    "name": "PI LLC",
+    "parentId": -1,
+    "startDate": "2025-06-17T00:00:00.000+0000",
+    "expiryDate": null,
+    "website": null,
+    "address1": null,
+    "address2": null,
+    "address3": null,
+    "country": null,
+    "postcode": null,
+    "contactName": "suporte bwtrials",
+    "contactEmail": "suporte+bwtrials@polis.consulting",
+    "contactTitle": null,
+    "contactTelephone": null,
+    "contactMobile": null,
+    "tags": {
+        "ratelimit.limit": "30",
+        "ratelimit.period": "10",
+        "rules_only": "true",
+        "shardName": "17"
+    },
+    "maxUsers": 20,
+    "theme": "brandwatch",
+    "themeUrl": "https://app.brandwatch.com/",
+    "userInactivityTimeoutMinutes": 1440,
+    "shardName": "17",
+    "shard": 17,
+    "allowedUIRoles": [
+        "admin",
+        "regular",
+        "analyst",
+        "analystPlus",
+        "view"
+    ],
+    "subscriptionIds": [],
+    "excludedStandardContentSources": [],
+    "agency": false,
+    "crimsonMode": true,
+    "defaultUiLanguage": "en-GB",
+    "clientPackageId": 4,
+    "clientPackageName": "Enterprise",
+    "queryLimit": 17,
+    "monthlyMentionsLimit": null,
+    "monthlyBackfillMentionsLimit": null,
+    "monthsHistoricData": 999999,
+    "monthsRollingData": 999999,
+    "nonTwitterChannelLimit": 500,
+    "twitterChannelLimit": 100,
+    "maxSampledVolume": 30000,
+    "dailyMentionExportLimit": 100000,
+    "dailyTwitterExportLimit": 50000,
+    "monthlyDocumentsUploadLimit": 100000,
+    "customAlertsLimit": 1000,
+    "modules": [
+        "ANALYSIS_API",
+        "API2_ACCESS",
+        "AUDIENCE_LISTS",
+        "BRIGHTVIEW",
+        "CLA_ONLINE",
+        "CLA_PRINT",
+        "CUSTOM_CONTENT_API",
+        "IMAGE_INSIGHTS",
+        "IMPERSONATION",
+        "INSIGHTS_CENTRAL",
+        "IRIS_TAB_SUMMARY",
+        "NLA_ONLINE",
+        "NLA_PRINT",
+        "PROJECT_LEVEL_QUERY_LIMITS",
+        "REACT_SCORE",
+        "SEGMENTATION_IA",
+        "VIZIA"
+    ],
+    "unusedQueryMaxAgeDays": 100,
+    "deactivateInactiveUsersEnabled": true,
+    "inactiveUsersMaxAgeDays": 30,
+    "engagementMetricConfig": [
+        {
+            "metricId": "blueskyLikes",
+            "contentSource": "BLUESKY",
+            "label": "Likes",
+            "weight": 1.0,
+            "active": true
+        },
+        {
+            "metricId": "blueskyQuotes",
+            "contentSource": "BLUESKY",
+            "label": "Quotes",
+            "weight": 1.0,
+            "active": true
+        },
+        {
+            "metricId": "blueskyReplies",
+            "contentSource": "BLUESKY",
+            "label": "Replies",
+            "weight": 1.0,
+            "active": true
+        },
+        {
+            "metricId": "blueskyReposts",
+            "contentSource": "BLUESKY",
+            "label": "Reposts",
+            "weight": 1.0,
+            "active": true
+        },
+        {
+            "metricId": "facebookComments",
+            "contentSource": "FACEBOOK",
+            "label": "Comments",
+            "weight": 1.0,
+            "active": true
+        },
+        {
+            "metricId": "facebookLikes",
+            "contentSource": "FACEBOOK",
+            "label": "Likes",
+            "weight": 1.0,
+            "active": true
+        },
+        {
+            "metricId": "facebookShares",
+            "contentSource": "FACEBOOK",
+            "label": "Shares",
+            "weight": 1.0,
+            "active": true
+        },
+        {
+            "metricId": "instagramComments",
+            "contentSource": "INSTAGRAM",
+            "label": "Comments",
+            "weight": 1.0,
+            "active": true
+        },
+        {
+            "metricId": "instagramLikes",
+            "contentSource": "INSTAGRAM",
+            "label": "Likes",
+            "weight": 1.0,
+            "active": true
+        },
+        {
+            "metricId": "linkedInComments",
+            "contentSource": "LINKEDIN",
+            "label": "Comments",
+            "weight": 1.0,
+            "active": true
+        },
+        {
+            "metricId": "linkedInLikes",
+            "contentSource": "LINKEDIN",
+            "label": "Likes",
+            "weight": 1.0,
+            "active": true
+        },
+        {
+            "metricId": "linkedInShares",
+            "contentSource": "LINKEDIN",
+            "label": "Shares",
+            "weight": 1.0,
+            "active": true
+        },
+        {
+            "metricId": "redditComments",
+            "contentSource": "REDDIT",
+            "label": "Comments",
+            "weight": 1.0,
+            "active": true
+        },
+        {
+            "metricId": "redditScore",
+            "contentSource": "REDDIT",
+            "label": "Reddit score",
+            "weight": 1.0,
+            "active": true
+        },
+        {
+            "metricId": "threadsLikes",
+            "contentSource": "THREADS",
+            "label": "Likes",
+            "weight": 1.0,
+            "active": true
+        },
+        {
+            "metricId": "threadsQuotes",
+            "contentSource": "THREADS",
+            "label": "Quotes",
+            "weight": 1.0,
+            "active": true
+        },
+        {
+            "metricId": "threadsReplies",
+            "contentSource": "THREADS",
+            "label": "Replies",
+            "weight": 1.0,
+            "active": true
+        },
+        {
+            "metricId": "threadsReposts",
+            "contentSource": "THREADS",
+            "label": "Reposts",
+            "weight": 1.0,
+            "active": true
+        },
+        {
+            "metricId": "threadsShares",
+            "contentSource": "THREADS",
+            "label": "Shares",
+            "weight": 1.0,
+            "active": true
+        },
+        {
+            "metricId": "tiktokComments",
+            "contentSource": "TIKTOK",
+            "label": "Comments",
+            "weight": 1.0,
+            "active": true
+        },
+        {
+            "metricId": "tiktokLikes",
+            "contentSource": "TIKTOK",
+            "label": "Likes",
+            "weight": 1.0,
+            "active": true
+        },
+        {
+            "metricId": "tiktokShares",
+            "contentSource": "TIKTOK",
+            "label": "Shares",
+            "weight": 1.0,
+            "active": true
+        },
+        {
+            "metricId": "twitterLikes",
+            "contentSource": "TWITTER",
+            "label": "Likes",
+            "weight": 1.0,
+            "active": true
+        },
+        {
+            "metricId": "twitterReplies",
+            "contentSource": "TWITTER",
+            "label": "Replies",
+            "weight": 1.0,
+            "active": true
+        },
+        {
+            "metricId": "twitterRetweets",
+            "contentSource": "TWITTER",
+            "label": "Retweets",
+            "weight": 1.0,
+            "active": true
+        },
+        {
+            "metricId": "youtubeComments",
+            "contentSource": "YOUTUBE",
+            "label": "Comments",
+            "weight": 1.0,
+            "active": true
+        },
+        {
+            "metricId": "youtubeLikes",
+            "contentSource": "YOUTUBE",
+            "label": "Likes",
+            "weight": 1.0,
+            "active": true
+        }
+    ],
+    "bigQueryEmailThreshold": 250000,
+    "products": [
+        {
+            "code": "analytics",
+            "name": "Analytics"
+        },
+        {
+            "code": "vizia",
+            "name": "Vizia"
+        },
+        {
+            "code": "mybrandwatch",
+            "name": "My Brandwatch"
+        }
+    ],
+    "customerSuccessManagerId": 194650530,
+    "customerSuccessManagerEmail": "alicial@brandwatch.com",
+    "contentLicenses": [
+        "NLA_PRINT",
+        "NLA_ONLINE",
+        "CLA_PRINT",
+        "CLA_ONLINE"
+    ],
+    "organizationId": null,
+    "aiConsentGiven": true,
+    "totalEngagementEnabled": true
+}

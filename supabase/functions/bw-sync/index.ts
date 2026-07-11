@@ -123,10 +123,32 @@ class BrandwatchApiError extends Error {
   }
 }
 
+// Correção 2026-07-10/11 (relatado pelo usuário: HTTP 429 em cascata,
+// "acho que o código violou alguma regra da brandwatch"). Duas causas
+// possíveis somadas: (a) duas invocações concorrentes disputando o mesmo
+// orçamento de 30 chamadas/10min (ver bw_sync_lock, migration
+// `20260711000000`); (b) uma única invocação, sozinha, já perto ou acima
+// de 30 chamadas — o número de passos cresceu bastante (mentions paginado
+// + diário + reach/engagement + plataforma + semanal/mensal + temas + top
+// autores × categoryTargets + SOV). `brandwatchCallCount` é reiniciado no
+// topo de cada invocação (nunca reaproveitado entre invocações, mesmo em
+// warm start do isolate Deno) e incrementado a cada tentativa real de
+// request (inclusive as que tomam 429, já que essas também consomem o
+// orçamento do Client). `BRANDWATCH_CALL_BUDGET` deixa margem sob 30 pro
+// mint de token (que não passa por callBrandwatch()) e pra não flertar
+// com o teto.
+let brandwatchCallCount = 0;
+const BRANDWATCH_CALL_BUDGET = 25;
+
+function hasBrandwatchCallBudget(): boolean {
+  return brandwatchCallCount < BRANDWATCH_CALL_BUDGET;
+}
+
 async function callBrandwatch(path: string, token: string): Promise<any> {
   const url = `${BRANDWATCH_BASE_URL}${path}`;
 
   for (let attempt = 0; attempt <= 3; attempt++) {
+    brandwatchCallCount++;
     const response = await fetch(url, {
       headers: { Authorization: `Bearer ${token}` },
     });
@@ -1175,24 +1197,14 @@ async function syncTopicsData(
     .upsert(rows, { onConflict: "project_id,query_id,category_id_key,topic_type,label,metric_week" });
   if (error) throw new Error(`Erro upsertando bw_query_topics: ${error.message}`);
 
-  // Correção 2026-07-10 (pedido do usuário: "Importante que nos tópicos
-  // também tenha o engajamento e o alcance de cada tópico") — data/topics
-  // não expõe reach/engajamento como métrica (confirmado contra a doc
-  // real da Brandwatch, `metrics` só aceita volume/percentageVolume/
-  // sentiment/gender/trending/timeSeries). Só dá pra cruzar com precisão
-  // contra `mentions` pra topic_type='hashtags' (containment exato via
-  // `insights_hashtag`) — a função faz isso em lote (1 UPDATE, não uma
-  // chamada por tópico). Fica null pros demais tipos (words/phrases/
-  // entities/...), deliberadamente — não tem correspondência exata e
-  // barata contra mentions pra esses.
-  const { error: engagementError } = await supabase.rpc("refresh_topic_engagement_reach", {
-    p_project_id: projectId,
-    p_query_id: queryId,
-    p_category_id: categoryId,
-  });
-  if (engagementError) {
-    throw new Error(`Erro calculando engagement/reach de bw_query_topics: ${engagementError.message}`);
-  }
+  // Correção 2026-07-11 (pedido do usuário: "retire os cálculos locais
+  // baseados em mentions... se não tem na Brandwatch, não faça cálculo
+  // local... isso deve ser premissa"): engagement/reach por tópico
+  // (adicionado em 20260710060000) estimava isso cruzando
+  // `insights_hashtag` contra `mentions` — que é amostrada. Removido
+  // (migration `20260711010000`); `data/topics` genuinamente não expõe
+  // reach/engajamento como métrica, e a premissa agora é: se a Brandwatch
+  // não tem, a gente não estima.
 
   log("syncTopicsData:done", { projectId, queryId, categoryId, rows: rows.length });
 }
@@ -1344,6 +1356,11 @@ async function isTopAuthorsStale(
 
 Deno.serve(async (_req: Request) => {
   const invocationStartedAt = Date.now();
+  // Nunca reaproveitado entre invocações — mesmo se o isolate Deno for
+  // reciclado (warm start), o contador precisa começar do zero a cada
+  // request, senão o orçamento pareceria esgotado pra sempre depois da
+  // primeira invocação.
+  brandwatchCallCount = 0;
   log("invocation:start");
 
   const supabase = createClient(
@@ -1351,6 +1368,41 @@ Deno.serve(async (_req: Request) => {
     Deno.env.get("SUPABASE_SECRET_KEY") ?? Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
   );
 
+  // Correção 2026-07-10/11 (relatado pelo usuário: HTTP 429 em cascata —
+  // logs mostraram duas chamadas diferentes, para endpoints diferentes,
+  // levando 429 de forma intercalada, sinal de duas invocações rodando ao
+  // mesmo tempo e disputando o mesmo orçamento de 30 chamadas/10min do
+  // Client). Reivindica um lock (migration `20260711000000`) antes de
+  // qualquer chamada à Brandwatch — se outra invocação já estiver ativa,
+  // esta encerra imediatamente sem tentar nada, em vez de competir pelo
+  // mesmo orçamento. Lock expira sozinho em 5min mesmo sem release
+  // explícito (auto-cura se uma invocação morrer no meio do caminho).
+  const { data: lockAcquired, error: lockError } = await supabase.rpc("try_acquire_bw_sync_lock", {
+    p_duration_seconds: 300,
+  });
+  if (lockError) {
+    logError("invocation:lock_check_failed", lockError.message);
+    return new Response(JSON.stringify({ ok: false, error: lockError.message }), {
+      status: 500,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+  if (!lockAcquired) {
+    log("invocation:lock_busy", { hint: "outra invocação de bw-sync já está em andamento — encerrando sem chamar a Brandwatch" });
+    return new Response(JSON.stringify({ ok: true, message: "outra invocação já está em andamento" }), {
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  try {
+    return await runSyncInvocation(supabase, invocationStartedAt);
+  } finally {
+    const { error: releaseError } = await supabase.rpc("release_bw_sync_lock");
+    if (releaseError) logError("invocation:lock_release_failed", releaseError.message);
+  }
+});
+
+async function runSyncInvocation(supabase: SupabaseClient, invocationStartedAt: number): Promise<Response> {
   // Passo 0: semeadura (idempotente, roda toda invocação).
   try {
     await ensureBootstrapSeed(supabase);
@@ -1463,6 +1515,15 @@ Deno.serve(async (_req: Request) => {
         stoppedByTimeBudget = true;
         break;
       }
+      // Correção 2026-07-10/11: também respeita o orçamento global de
+      // chamadas da invocação (compartilhado com bootstrap/métricas/
+      // temas/top-authors abaixo) — sem isso, uma Query com muito
+      // histórico sozinha já esgotaria o orçamento antes de qualquer
+      // outro passo rodar.
+      if (!hasBrandwatchCallBudget()) {
+        log("invocation:mentions_stopped_by_call_budget", { projectId, queryId, brandwatchCallCount });
+        break;
+      }
       const page = await fetchMentions(projectId, queryId, token, sinceAdded, useSourceTypeNew);
       const upserted = await upsertMentions(supabase, organizationId, projectId, queryId, page);
       mentionsCount += upserted.count;
@@ -1512,7 +1573,15 @@ Deno.serve(async (_req: Request) => {
 
     // Passo 6: semanal/mensal — throttle por frescor (evita gastar rate
     // limit em dado que muda bem mais devagar que a cada 20-30s).
+    // Correção 2026-07-10/11: cada iteração também respeita o orçamento
+    // global de chamadas — categoryTargets restantes ficam pro próximo
+    // ciclo (continuam "stale", então são retomados naturalmente na
+    // próxima invocação, sem lógica extra de retomada).
     for (const categoryId of categoryTargets) {
+      if (!hasBrandwatchCallBudget()) {
+        log("invocation:category_targets_stopped_by_call_budget", { projectId, queryId, brandwatchCallCount });
+        break;
+      }
       if (await isGrainStale(supabase, "weeks", projectId, queryId, categoryId, 7 * 24 * 60 * 60 * 1000)) {
         await syncSentimentMetrics(supabase, token, "weeks", projectId, queryId, categoryId, metricsStartDate, now);
       }
@@ -1541,6 +1610,10 @@ Deno.serve(async (_req: Request) => {
     if (queryGroupsError) throw new Error(`Erro lendo bw_query_groups: ${queryGroupsError.message}`);
 
     for (const group of queryGroups ?? []) {
+      if (!hasBrandwatchCallBudget()) {
+        log("invocation:sov_stopped_by_call_budget", { projectId, brandwatchCallCount });
+        break;
+      }
       const queryGroupId = (group as { id: number }).id;
       if (await isQueryGroupSovStale(supabase, queryGroupId, 7 * 24 * 60 * 60 * 1000)) {
         await syncQueryGroupSov(supabase, token, projectId, queryGroupId, metricsStartDate, now);
@@ -1599,4 +1672,4 @@ Deno.serve(async (_req: Request) => {
       headers: { "Content-Type": "application/json" },
     });
   }
-});
+}

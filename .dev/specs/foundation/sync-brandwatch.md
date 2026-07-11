@@ -39,6 +39,18 @@ o Executive Overview consomem o resultado (tabelas já sincronizadas).
    dinâmica. `name`/demais campos das linhas placeholder são sobrescritos
    pelo bootstrap de metadata real do passo 4 (mesmo par, upsert, sem apagar
    histórico).
+0.5. **Lock de concorrência** (⚠️ correção 2026-07-10/11, encontrado em
+   teste real: HTTP 429 em cascata em duas chamadas diferentes — sinal de
+   duas invocações de `bw-sync` rodando ao mesmo tempo e disputando o
+   mesmo orçamento de 30 chamadas/10min do Client, já que o rate limit é
+   por Client, não por invocação). Antes de qualquer chamada à Brandwatch,
+   a função reivindica um lock via `try_acquire_bw_sync_lock()` (linha
+   única em `bw_sync_lock`, reivindicada por `UPDATE` atômico — não
+   advisory lock, que não é confiável via PostgREST/pooling de conexão).
+   Se outra invocação já tiver o lock, a atual encerra imediatamente
+   (`HTTP 200, ok: true`) sem tentar nada. Lock expira sozinho em 5min
+   mesmo sem `release_bw_sync_lock()` explícito, pra não travar pra sempre
+   se uma invocação morrer no meio do caminho.
 1. `pg_cron` invoca a Edge Function `bw-sync` a cada ~20–30 segundos
    (`select net.http_post(url := '<edge-function-url>/bw-sync', ...)`).
 2. A função resolve, em round-robin, o próximo par `(project_id, query_id)`
@@ -178,6 +190,20 @@ o Executive Overview consomem o resultado (tabelas já sincronizadas).
    tentaria (e provavelmente falharia) de novo indefinidamente. Parando
    voluntariamente, o progresso feito até ali é persistido normalmente e a
    invocação seguinte continua de onde parou.
+   ⚠️ **Correção 2026-07-10/11, mesmo incidente de HTTP 429 do passo 0.5**:
+   além de duas invocações concorrentes, uma única invocação sozinha já
+   podia se aproximar ou passar de 30 chamadas — o número de passos cresceu
+   bastante (mentions paginado + diário + reach/engajamento + plataforma +
+   semanal/mensal + temas + top autores × `categoryTargets` + SOV).
+   `brandwatchCallCount` (reiniciado no topo de cada invocação, nunca
+   reaproveitado entre invocações mesmo em warm start do isolate) conta
+   toda tentativa real de chamada (inclusive as que tomam 429, já que
+   também consomem o orçamento do Client). `BRANDWATCH_CALL_BUDGET = 25`
+   deixa margem sob 30 pro mint de token (que não passa por
+   `callBrandwatch()`). O loop de mentions e o loop de `categoryTargets`
+   (semanal/mensal/temas/top-autores/SOV) param assim que o orçamento
+   acaba — o que sobrar continua "stale"/incompleto e é retomado
+   naturalmente na invocação seguinte, sem lógica extra de retomada.
    **Antes do upsert**,
    garante que a partição mensal de `mentions` existe para cada mês presente
    no lote (⚠️ correção 2026-07-10, encontrado em teste real: a migration de
@@ -297,16 +323,14 @@ o Executive Overview consomem o resultado (tabelas já sincronizadas).
    embeddings/clusterização próprios. Resposta usa a chave `topics` (não
    `results`, diferente dos outros endpoints de chart) — confirmado.
    Adicionado 2026-07-10.
-   ⚠️ **Correção 2026-07-10, mesmo dia** (pedido do usuário: "Importante
-   que nos tópicos também tenha o engajamento e o alcance de cada
-   tópico"): confirmado contra a doc real que `metrics` de `data/topics`
-   **não** aceita reach/engajamento (só `volume, percentageVolume,
-   sentiment, gender, trending, timeSeries`). Depois do upsert, `bw-sync`
-   chama a função `refresh_topic_engagement_reach()` via RPC — cruza
-   localmente contra `mentions` só pra `topic_type='hashtags'`
-   (`insights_hashtag @> array[label]`, containment exato); outros tipos
-   de tópico ficam sem essas 2 colunas, deliberadamente (sem
-   correspondência exata e barata contra `mentions` sem busca fuzzy).
+   ⚠️ **Correção 2026-07-10, revertida 2026-07-11**: chegou a existir aqui
+   uma chamada pra `refresh_topic_engagement_reach()` (cruzava
+   `topic_type='hashtags'` contra `mentions` pra estimar engajamento/
+   alcance por tópico). Removida — o usuário fixou a premissa de nunca
+   calcular localmente sobre `mentions` (amostrada) pra preencher o que a
+   Brandwatch não expõe como agregado oficial (ver `data-model.md`,
+   `narrative_metrics`). `data/topics` genuinamente não tem essa métrica;
+   `bw_query_topics` fica só com o que o endpoint de fato devolve.
 6.5. Ranking de autores: se não existir linha "fresca" (7 dias) em
    `bw_query_top_authors` para o par **e `categoryTarget`** (query inteira
    + cada Narrativa — ver correção abaixo): busca `data/volume/
@@ -332,17 +356,26 @@ o Executive Overview consomem o resultado (tabelas já sincronizadas).
    por Narrativa com a linha da Query inteira.
    ⚠️ **Correção 2026-07-10, mesmo dia** (pedido do usuário: "capturar
    todos os top autores que tiverem mais de 100000 seguidores e considerar
-   que são os mais influentes" + "saber o alcance dos posts dos mais
-   influentes" + "identificar quem iniciou um post, quem repostou, quem se
-   engajou e quem teve maior participação"): `limit` subiu de `100` pro
-   máximo (`1000`) — cobertura melhor, mas não garantida (Brandwatch
-   ordena por volume/relevância, não seguidores). `bw_query_top_authors`
-   ganhou `followers`/`is_influential` (`>= 100000`, migration
-   `20260710050000`); `mentions` ganhou `mention_role`
-   (`original`/`reply`/`retweet`, derivado de `reply_to`/`retweet_of`); e a
-   função `influential_author_activity()` cruza os dois (autores
-   influentes × participação por `mention_role` × alcance via
-   `mentions.reach_estimate`) — ver `data-model.md` §5.
+   que são os mais influentes"): `limit` subiu de `100` pro máximo
+   (`1000`) — cobertura melhor, mas não garantida (Brandwatch ordena por
+   volume/relevância, não seguidores). `bw_query_top_authors` ganhou
+   `followers`/`is_influential` (`>= 100000`, migration `20260710050000`),
+   ambos direto do envelope do endpoint (agregado oficial, não amostrado).
+   `mentions` ganhou `mention_role` (`original`/`reply`/`retweet`, derivado
+   de `reply_to`/`retweet_of` — classificação de uma mention já capturada,
+   não uma soma sobre a amostra, então não conflita com a premissa abaixo).
+   ⚠️ **Revertido 2026-07-11**: chegou a existir uma função
+   `influential_author_activity()` cruzando `bw_query_top_authors` com
+   `mentions` pra computar participação (`original_count`/`reply_count`/
+   `retweet_count`) e alcance (`total_reach`/`max_reach`) por autor
+   influente — removida, porque essas 5 colunas eram soma/contagem sobre
+   `mentions` (amostrada), a mesma categoria de problema que o usuário
+   pediu pra eliminar do projeto inteiro: "não faça cálculo local
+   confiando na mentions, pois não reflete a realidade... isso deve ser
+   premissa". `reach_estimate`/`impact`/`platform_stats` já em
+   `bw_query_top_authors` (agregado oficial) respondem "alcance dos
+   autores influentes" sem precisar de nenhuma função — ver `data-model.md`
+   §5.
 7. Atualiza `sync_cursors` (`last_added_cursor`, `last_synced_at`,
    `status = 'idle'`, `last_error = null`) e insere uma linha em `sync_log`
    (`status = 'success'`, `rows_processed` = mentions upsertadas).

@@ -175,29 +175,27 @@ volumétrica antes de virar migration (motivos abaixo):
     é alimentada por **upsert a partir de `bw_query_metrics_daily`**
     (populada pelo `sync-brandwatch` direto dos agregados da Brandwatch —
     ver seção anterior), com `source = 'bw_aggregate'`.
-  - Quando a Narrativa **não** tem `bw_category_id` (só sinais próprios,
-    sem Query/Category equivalente na Brandwatch), não há agregado oficial
-    disponível — cai para agregação SQL local sobre `mentions` já
-    sincronizadas (função `refresh_narrative_metrics()`, chamada direto pelo
-    `pg_cron`, sem Edge Function), com `source = 'mentions_sample'` e a
-    ressalva explícita de que o número pode subestimar o real se a Query de
-    origem dos sinais também estiver amostrada.
-  - Campos ajustados ao que existe em `mentions`/`bw_query_metrics_daily`
-    hoje: `total_mentions`, `unique_authors`, `sentiment_positive/neutral/negative`,
-    `reach_estimated` (soma de `reach_estimate`), `top_domain` (domínio mais
-    frequente), mais o campo `source` acima.
-    ✅ **Decisão fechada (2026-07-10)**: o campo de "engajamento"
-    (likes/shares/comentários) da proposta original ganhou coluna própria —
-    `mentions.engagement jsonb` (migration `20260710010000`, campos por
-    plataforma confirmados contra a doc real da Brandwatch, não um payload
-    genérico) — e `narrative_metrics` ganhou `engagement_total`/
-    `repost_count`/`comment_count` (migration `20260710030000`, somando
-    `mentions.engagement` via `narrative_matched_mentions()`). Ver
-    `data-model.md` §`narrative_metrics` — essas 3 colunas (e
-    `unique_authors`/`reach_estimated`/`top_domain`) são sempre agregação
-    local sobre mentions, mesmo pra Narrativas com `bw_category_id`, porque
-    a Brandwatch não expõe esses números quebrados por Category em nenhum
-    endpoint de chart.
+  - ⚠️ **Revertido (2026-07-11)**: quando a Narrativa **não** tem
+    `bw_category_id`, este parágrafo previa cair pra agregação SQL local
+    sobre `mentions` (`source = 'mentions_sample'`). O usuário fixou a
+    premissa do projeto — "se não tem na Brandwatch, não faça cálculo
+    local confiando na mentions, pois não reflete a realidade, é apenas
+    uma amostra" — e essa via foi **removida** (migration
+    `20260711010000`). Estado atual: Narrativa sem `bw_category_id` não
+    recebe nenhuma linha em `narrative_metrics`, ponto. `source` no schema
+    continua aceitando `'mentions_sample'` como valor de check constraint,
+    mas nada insere com ele.
+  - Campos que existem hoje em `narrative_metrics`: `total_mentions`,
+    `sentiment_positive/neutral/negative`, `reach_estimated`,
+    `engagement_total` — **todos** direto de `bw_query_metrics_daily`
+    (agregado oficial da Brandwatch, não amostrado), nunca calculados
+    localmente. `unique_authors`/`top_domain`/`repost_count`/
+    `comment_count` da proposta original **não têm equivalente oficial da
+    Brandwatch quebrado por Category** — chegaram a existir como
+    agregação local sobre `mentions` (migrations `20260710010000`/
+    `20260710030000`) e foram removidos pela mesma premissa acima
+    (`20260711010000`). Ver `data-model.md` §`narrative_metrics` pro
+    histórico completo e o estado atual.
 
 **Validação de viabilidade (skill `brandwatch-api`, `references/mentions.md` e
 `references/data-restrictions-compliance.md`)** — achado central:
