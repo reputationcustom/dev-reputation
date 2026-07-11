@@ -264,9 +264,27 @@ confirmados contra `mention-metadata-field-definitions`, não inferidos):
 | `insights_mentioned` | `text[]` | `insightsMentioned` — específico de X/Instagram |
 | `reply_to` / `retweet_of` | `text` | `replyTo`/`retweetOf` (URLs) |
 | `engagement` | `jsonb` | ver nota acima |
+| `mention_role` | `text` | gerada, `'retweet'` se `retweet_of` preenchido, senão `'reply'` se `reply_to` preenchido, senão `'original'` — adicionado `20260710050000` |
 
 Índices: `idx_mentions_content_source`, `idx_mentions_classifications`
-(gin), `idx_mentions_insights_hashtag` (gin).
+(gin), `idx_mentions_insights_hashtag` (gin), `idx_mentions_mention_role`.
+
+> ✅ **Ampliação (2026-07-10, migration `20260710050000`)**: pedido do
+> usuário — "é necessário identificar quem iniciou um post, quem
+> repostou, quem se engajou e quem teve maior participação". `mention_role`
+> responde "quem iniciou" (`mention_role = 'original'`, `mentions.author`)
+> e "quem repostou" (`mention_role = 'retweet'`, `mentions.author` = quem
+> fez o repost). **Limitação real, não contornável pela API**: `retweet_of`
+> só traz a **URL** do post original (`replyTo`/`retweetOf` da Brandwatch),
+> não o autor original — reconstruir "quem foi retuitado" exigiria
+> resolver essa URL contra outra mention própria da mesma Query, o que não
+> é garantido (o post original pode nunca ter sido capturado pela Query).
+> "Quem se engajou" = qualquer autor com mention (`original`/`reply`/
+> `retweet`) associada à Narrativa/Query — a Brandwatch **não expõe
+> curtidas individuais atribuíveis a uma pessoa**, só contagem agregada
+> (`mentions.engagement->>'twitterLikeCount'` etc., recebida pela mention,
+> nunca uma lista de quem curtiu). "Maior participação" (comentários e/ou
+> repost) é respondido por `influential_author_activity()` — ver §6.
 
 **Índice adicional necessário** (ausente no schema anexo, precisa para
 `narrative_matched_mentions()` abaixo, sinal `signal_type = 'domain'`):
@@ -472,12 +490,12 @@ inteira + cada Narrativa).
 
 ### `bw_query_top_authors`
 
-Ranking nativo de autores via `data/volume/topauthors/queries` (até 1000,
-`bw-sync` pede `limit=100`) — melhor do que calcular "quem move a
-conversa" localmente por SQL sobre a amostra de `mentions` sincronizada
-(que a própria skill `brandwatch-api` recomendava como fallback, mas fica
-sujeita ao sampling de Queries de alto volume — ver nota de sampling em
-§5 acima). Adicionada em `20260710010000`.
+Ranking nativo de autores via `data/volume/topauthors/queries` (até 1000 —
+`bw-sync` pede `limit=1000`, o máximo, desde `20260710050000`) — melhor do
+que calcular "quem move a conversa" localmente por SQL sobre a amostra de
+`mentions` sincronizada (que a própria skill `brandwatch-api` recomendava
+como fallback, mas fica sujeita ao sampling de Queries de alto volume —
+ver nota de sampling em §5 acima). Adicionada em `20260710010000`.
 
 | Campo | Tipo | Obrigatório | Descrição |
 |---|---|---|---|
@@ -490,12 +508,16 @@ sujeita ao sampling de Queries de alto volume — ver nota de sampling em
 | `volume` | `integer` | sim | default `0` |
 | `reach_estimate` | `integer` | não | |
 | `impact` | `numeric` | não | |
+| `followers` | `integer` | não | de `twitterFollowers` — único campo de seguidores confirmado no envelope deste endpoint (Facebook/Reddit não têm campo de seguidores documentado aqui). Adicionado `20260710050000` |
+| `is_influential` | `boolean` | sim | gerada, `coalesce(followers, 0) >= 100000` — adicionado `20260710050000`, pedido do usuário ("mais de 100000 seguidores... os mais influentes") |
 | `sentiment_positive`/`neutral`/`negative` | `integer` | sim | default `0` |
 | `platform_stats` | `jsonb` | sim | objeto `data` inteiro devolvido pelo endpoint por autor (twitter*/facebook*/reddit* etc.) — mesmo raciocínio de `mentions.engagement`, sem coluna por campo |
 | `metric_week` | `date` | sim | mesmo caráter de snapshot que `bw_query_topics.metric_week` |
 | `synced_at` | `timestamptz` | sim | |
 
-**Índices**: unique `(project_id, query_id, category_id_key, author, metric_week)`.
+**Índices**: unique `(project_id, query_id, category_id_key, author, metric_week)`;
+parcial `(project_id, query_id, is_influential) where is_influential` —
+acelera consultas de "só os influentes".
 **Políticas RLS**: select-only via `project_id`. Throttle semanal, agora por
 `categoryTarget` (query inteira + cada Narrativa).
 
@@ -508,6 +530,55 @@ sujeita ao sampling de Queries de alto volume — ver nota de sampling em
 > apoiado na afirmação genérica de `filters.md` de que filtros valem pra
 > "qualquer chamada de Mentions ou Data Retrieval (charts)". Revisar contra
 > logs reais.
+
+> ✅ **Ampliação (2026-07-10, migration `20260710050000`)**: pedido do
+> usuário — "capturar todos os top autores que tiverem mais de 100000
+> seguidores e considerar que são os mais influentes". `limit` subiu pro
+> máximo do endpoint (`1000`) — a Brandwatch ordena Top Authors por
+> volume/relevância, não por seguidores, então isso melhora a cobertura
+> mas **não garante 100%**: um autor de altíssimo alcance com baixo volume
+> na Query específica pode ficar fora mesmo no limite máximo — limitação
+> documentada do endpoint, não do código. Ver `influential_author_activity()`
+> abaixo pra cruzar isso com participação/alcance por mention.
+
+### Função: `influential_author_activity`
+
+Adicionada em `20260710050000`, resposta direta ao pedido do usuário de
+2026-07-10 (autores >100k seguidores + participação + alcance dos posts).
+Cruza `bw_query_top_authors` (autores influentes, não amostrado) com
+`mentions` (participação por `mention_role` + `reach_estimate` por post).
+
+```sql
+influential_author_activity(
+  p_project_id bigint, p_query_id bigint, p_category_id bigint default null,
+  p_min_followers integer default 100000,
+  p_since timestamptz default null, p_until timestamptz default null,
+  p_limit integer default 50
+)
+returns table (
+  author text, followers integer, impact numeric, reach_estimate integer,
+  total_mentions bigint, original_count bigint, reply_count bigint,
+  retweet_count bigint, total_reach bigint, max_reach integer
+)
+```
+
+- `p_category_id null` = ranking da Query inteira; preenchido = só a
+  Narrativa (usa `category_id_key` de `bw_query_top_authors`, mesmo padrão
+  de `bw_query_metrics_daily`).
+- **`bw_query_top_authors` tem uma linha por autor por semana
+  (`metric_week`)** — a função usa `distinct on (author) order by author,
+  metric_week desc` pra pegar só o snapshot mais recente antes de juntar
+  com `mentions`; sem isso, `total_mentions`/`total_reach` multiplicariam
+  por semana (bug encontrado e corrigido antes do primeiro deploy desta
+  função).
+- Join com `mentions` via `author_handle_normalized = lower(author)` — os
+  dois endpoints devem devolver o mesmo identificador de autor da
+  Brandwatch, mas isso não foi confirmado contra um payload real (mesma
+  categoria de risco já assumida noutras partes desta leva).
+- `original_count`/`reply_count`/`retweet_count` respondem "maior
+  participação (comentários e/ou repost)" via `mentions.mention_role`
+  (ver §3). `total_reach`/`max_reach` respondem "alcance dos posts dos
+  mais influentes" via `mentions.reach_estimate`.
 
 ---
 

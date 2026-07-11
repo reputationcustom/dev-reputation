@@ -377,6 +377,42 @@ the same prerequisite.)
   FK. `syncCategoryDailyAggregate()` now looks up known category IDs first
   and skips (logging `unknown_categories_skipped`) anything outside that
   set instead of failing the whole invocation.
+- **Influencer identification, post participation, and reach of influential
+  authors** (added 2026-07-10, user request: capture every top author with
+  >100k followers as "most influential," identify who originated/reposted/
+  engaged with a post and who has the most participation (comments/
+  reposts), and know the reach of influential authors' posts).
+  `syncTopAuthors()`'s `limit` went from `100` to Brandwatch's documented
+  max (`1000`) — better coverage, but not guaranteed: Top Authors is
+  ordered by volume/relevance, not followers, so a high-follower/
+  low-volume author can still be excluded even at the max limit (endpoint
+  limitation, not a code gap — flag this to the user if it matters for a
+  specific campaign). `bw_query_top_authors` gains `followers` (from
+  `twitterFollowers` — the only followers field this endpoint's envelope
+  actually has; Facebook/Reddit don't expose one here) and a generated
+  `is_influential` (`followers >= 100000`). `mentions` gains a generated
+  `mention_role` (`original`/`reply`/`retweet`, derived from `reply_to`/
+  `retweet_of`) — answers "who originated" (`mention_role='original'`) and
+  "who reposted" (`mention_role='retweet'`, the reposter, not the original
+  author — Brandwatch only gives the *URL* of the original post in
+  `retweet_of`, not its author, and resolving that URL against another
+  mention isn't guaranteed since the original may never have been
+  captured by the Query). "Who engaged" has a hard ceiling: Brandwatch
+  does not expose individually-attributable likes, only aggregate counts
+  per mention — engagement can only be resolved to the post-author level
+  (`original`/`reply`/`retweet`), not to "everyone who liked this."
+  New function `influential_author_activity()` (migration `20260710050000`)
+  joins `bw_query_top_authors` (latest `metric_week` snapshot per author —
+  the table has one row per author *per week*, so the function uses
+  `distinct on (author) order by metric_week desc` before joining, to
+  avoid fanning out mention counts across weeks) to `mentions` via
+  `author_handle_normalized`, giving per-influential-author
+  `original_count`/`reply_count`/`retweet_count` (participation) and
+  `total_reach`/`max_reach` (from `mentions.reach_estimate` — reach of
+  their posts). Both the `category` filter on `topauthors/queries` and the
+  author-identifier match between the two endpoints are unconfirmed
+  against a real payload, same risk category as other endpoints this
+  session.
 - **Data scope is deliberately bounded**: `foundation`/`bw-sync` covers all
   *pull* data later sprints need (projects, queries, query groups,
   categories, mentions, daily/weekly/monthly metrics, Query Group SOV).

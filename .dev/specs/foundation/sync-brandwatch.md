@@ -281,8 +281,10 @@ o Executive Overview consomem o resultado (tabelas já sincronizadas).
 6.5. Ranking de autores: se não existir linha "fresca" (7 dias) em
    `bw_query_top_authors` para o par **e `categoryTarget`** (query inteira
    + cada Narrativa — ver correção abaixo): busca `data/volume/
-   topauthors/queries?limit=100` (com `category=<id>` quando aplicável) e
-   faz upsert. Endpoint nativo de "Top Authors" — melhor do que calcular
+   topauthors/queries?limit=1000` (máximo do endpoint, desde
+   `20260710050000` — era `limit=100`; ver correção logo abaixo) (com
+   `category=<id>` quando aplicável) e faz upsert. Endpoint nativo de "Top
+   Authors" — melhor do que calcular
    localmente por SQL sobre a amostra de `mentions` sincronizada (que a
    skill `brandwatch-api` recomendava como fallback, mas fica sujeito ao
    sampling de Queries de alto volume). Envelope de resposta confirmado:
@@ -299,6 +301,19 @@ o Executive Overview consomem o resultado (tabelas já sincronizadas).
    Retrieval (charts). `bw_query_top_authors` ganhou `category_id`/
    `category_id_key` (migration `20260710040000`) pra não colidir a linha
    por Narrativa com a linha da Query inteira.
+   ⚠️ **Correção 2026-07-10, mesmo dia** (pedido do usuário: "capturar
+   todos os top autores que tiverem mais de 100000 seguidores e considerar
+   que são os mais influentes" + "saber o alcance dos posts dos mais
+   influentes" + "identificar quem iniciou um post, quem repostou, quem se
+   engajou e quem teve maior participação"): `limit` subiu de `100` pro
+   máximo (`1000`) — cobertura melhor, mas não garantida (Brandwatch
+   ordena por volume/relevância, não seguidores). `bw_query_top_authors`
+   ganhou `followers`/`is_influential` (`>= 100000`, migration
+   `20260710050000`); `mentions` ganhou `mention_role`
+   (`original`/`reply`/`retweet`, derivado de `reply_to`/`retweet_of`); e a
+   função `influential_author_activity()` cruza os dois (autores
+   influentes × participação por `mention_role` × alcance via
+   `mentions.reach_estimate`) — ver `data-model.md` §5.
 7. Atualiza `sync_cursors` (`last_added_cursor`, `last_synced_at`,
    `status = 'idle'`, `last_error = null`) e insere uma linha em `sync_log`
    (`status = 'success'`, `rows_processed` = mentions upsertadas).

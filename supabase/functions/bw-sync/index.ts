@@ -1206,6 +1206,18 @@ async function isTopicsStale(
 // da skill descreve filtros como aplicáveis a "qualquer chamada de
 // Mentions ou Data Retrieval (charts)" — mesma categoria de risco já
 // assumida em `syncPlatformMetrics`/`syncCategoryDailyAggregate` acima.
+//
+// Correção 2026-07-10, mesmo dia (pedido do usuário: "capturar todos os
+// top autores que tiverem mais de 100000 seguidores"): `limit` sobe de
+// `100` pro máximo documentado (`1000`) — a Brandwatch ordena Top Authors
+// por volume/relevância, não por seguidores, então aumentar o limite é o
+// único jeito de melhorar a chance de cobrir autores de altíssimo alcance
+// mas baixo volume na Query; não há garantia de cobertura de "todos" além
+// do teto do endpoint. `followers` (de `twitterFollowers` — único campo de
+// seguidores confirmado no envelope deste endpoint; Facebook/Reddit não
+// têm campo de seguidores documentado aqui) e `is_influential`
+// (`followers >= 100000`, coluna gerada) viram colunas de
+// `bw_query_top_authors` (migration `20260710050000`).
 // =========================================================================
 
 async function syncTopAuthors(
@@ -1221,7 +1233,7 @@ async function syncTopAuthors(
     queryId: String(queryId),
     startDate: formatBrandwatchDate(startDate),
     endDate: formatBrandwatchDate(endDate),
-    limit: "100",
+    limit: "1000",
   });
   if (categoryId) params.set("category", String(categoryId));
 
@@ -1242,6 +1254,7 @@ async function syncTopAuthors(
         volume: d.authorVolume ?? d.volume ?? 0,
         reach_estimate: d.reachEstimate ?? null,
         impact: d.impact ?? null,
+        followers: d.twitterFollowers ?? null,
         sentiment_positive: sentiment.positive ?? 0,
         sentiment_neutral: sentiment.neutral ?? 0,
         sentiment_negative: sentiment.negative ?? 0,
