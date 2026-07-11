@@ -56,8 +56,10 @@ edição de Narrativas **não têm UI no Sprint 1** — ver Regras de negócio.
 
 ## Interface (UI)
 
-Não há tela de CRUD de Narrativas no Sprint 1 — só consumo (Executive
-Overview, ver `executive-overview.md`). Uma tela de criação/edição de
+Não há tela de CRUD de Narrativas — Sprint 1 não tem UI nenhuma (só
+integração com a Brandwatch, ver `_index.md`); a única leitura prevista é
+consumo (Executive Overview, Sprint 2, ver `executive-overview.md`). Uma
+tela de criação/edição de
 Narrativas (gerenciar sinais, tags, vínculo com Category) é esperada no
 módulo `intelligence-center` (Sprint 2), mas não está comprometida nesta
 spec.

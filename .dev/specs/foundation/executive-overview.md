@@ -8,6 +8,14 @@ atualizado: 2026-07-07
 
 # Executive Overview
 
+> ✅ **Sprint 2** (confirmado 2026-07-10: "Sprint 2 será a interface web
+> com os gráficos") — esta spec descreve a tela, mas a implementação em si
+> não é escopo de Sprint 1. Sprint 1 (`sync-brandwatch`/`narratives`, ver
+> `overview.md`) já deixa pronto tudo que esta tela precisa ler
+> (`bw_query_metrics_daily`, `narratives`/`narrative_metrics`,
+> `bw_query_group_metrics_weekly`) — Sprint 2 é só consumo, sem lógica de
+> negócio nova no backend.
+
 ## Objetivo
 
 Dar ao usuário, logo após o login, uma visão executiva do que está

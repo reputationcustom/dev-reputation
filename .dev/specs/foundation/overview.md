@@ -9,28 +9,43 @@ atualizado: 2026-07-06
 
 ## Objetivo
 
-Estabelecer a base de dados sincronizada da Brandwatch no Supabase e entregar a
-primeira tela de consumo (Executive Overview). Nenhum módulo dos Sprints
-seguintes (`entities`, `command-center`, `threshold-engine`...) tem dado para
-operar sem este módulo — é a fundação literal do produto.
+> ✅ **Escopo de Sprint confirmado (2026-07-10)**: Sprint 1 é **inteiramente**
+> a integração com a Brandwatch (sync serial+rate-limited pra Supabase) —
+> nenhuma UI. A tela de consumo (Executive Overview e demais dashboards)
+> passa a ser Sprint 2 ("a interface web com os gráficos"), consumindo os
+> dados que Sprint 1 já deixa prontos no Supabase. `sync-brandwatch` e
+> `narratives` (a base de dados + a lógica de agregação) são Sprint 1;
+> `executive-overview` (a tela em si) é Sprint 2 — ver tabela abaixo.
+
+Estabelecer a base de dados sincronizada da Brandwatch no Supabase — todo o
+dado que qualquer tela ou módulo futuro (`executive-overview` no Sprint 2;
+`entities`, `command-center`, `threshold-engine`... nos Sprints seguintes)
+vai precisar pra operar. Nenhum desses tem dado sem este módulo — é a
+fundação literal do produto.
 
 ## Funcionalidades
 
-| Funcionalidade      | Descrição resumida                                                        | Status   | Spec |
-|----------------------|------------------------------------------------------------------------------|----------|------|
-| `sync-brandwatch`    | Edge Function agendada que sincroniza projects/queries/metrics/mentions da Brandwatch para o Supabase | rascunho | [sync-brandwatch.md](sync-brandwatch.md) |
-| `narratives`         | Tabela de Narrativas como entidade viva (sinais, tags, métricas históricas), priorizando agregados oficiais da Brandwatch sobre soma local de mentions | rascunho | [narratives.md](narratives.md) |
-| `executive-overview` | Tela pós-login com métricas cacheadas: volume/sentimento, share of voice, contagem total, tabela interativa de Narrativas | rascunho | [executive-overview.md](executive-overview.md) |
+| Funcionalidade      | Descrição resumida                                                        | Sprint | Status implementação | Spec |
+|----------------------|------------------------------------------------------------------------------|--------|----|------|
+| `sync-brandwatch`    | Edge Function que sincroniza projects/queries/query-groups/categories/mentions/métricas (diária/semanal/mensal, plataforma, temas, top autores, SOV) da Brandwatch para o Supabase | 1 | **implementado** (ver `CLAUDE.md` "Brandwatch sync model" pro estado atual completo — mentions, narrativas auto-criadas, métricas não-amostradas por Narrativa incluídas) | [sync-brandwatch.md](sync-brandwatch.md) |
+| `narratives`         | Tabela de Narrativas como entidade viva (auto-criada a partir de Category, sinais, tags, métricas históricas incl. engajamento/reach/reposts/comments), priorizando agregados oficiais da Brandwatch sobre soma local de mentions | 1 | **implementado** | [narratives.md](narratives.md) |
+| `executive-overview` | Tela pós-login com métricas cacheadas: volume/sentimento, share of voice, contagem total, tabela interativa de Narrativas | **2** | não iniciado — depende só de ler o que Sprint 1 já deixa em `narratives_overview`/`bw_query_metrics_daily` | [executive-overview.md](executive-overview.md) |
 
 ## Dependências
 
 - **Módulos que este depende**: nenhum — é a fundação.
-- **Módulos que dependem deste**: `entities` (Sprint 2, usa `mentions.author`
-  para o JOIN de enriquecimento), `command-center` (Sprint 2, `cases.category_id`
-  referencia `bw_categories`), `threshold-engine` e `intelligent-feed` (Sprint 3,
+- **Módulos que dependem deste**: `executive-overview` (Sprint 2, primeira
+  tela — lê direto do que este módulo sincroniza, sem lógica de negócio
+  própria), `entities` (Sprint 2/3, usa `mentions.author` para o JOIN de
+  enriquecimento), `command-center` (`cases.category_id` referencia
+  `bw_categories`), `threshold-engine` e `intelligent-feed` (Sprint 3,
   consomem `mentions`/`bw_categories` sincronizados).
 
 ## Rotas/Páginas
+
+⚠️ Sprint 2 — nenhuma rota abaixo existe no app Next.js ainda (`app/` tem só
+o scaffold inicial). Listada aqui porque é a única UI que `foundation`
+prevê consumir; a implementação em si não é entrega de Sprint 1.
 
 | Rota         | Componente/Página     | Acesso       |
 |--------------|-------------------------|--------------|

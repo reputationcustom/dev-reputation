@@ -23,11 +23,16 @@ to invent silently.
 - `.dev/specs/[module]/overview.md`, `[feature].md`, `data-model.md` — per
   module. Only `foundation` (Sprint 1) exists so far.
 
-Sprint scope is fixed (do not scope-creep without the user): Sprint 1 =
-Brandwatch→Supabase sync + Executive Overview (`foundation`, in progress).
-Sprints 2-4 (`entities`, `command-center`, `intelligence-center`,
-`threshold-engine`, `intelligent-feed`, `propagation-graph`,
-`decision-center`, `executive-reports`) are not started.
+Sprint scope is fixed (do not scope-creep without the user). **Reconfirmed
+2026-07-10**: Sprint 1 is *entirely* the Brandwatch integration —
+`sync-brandwatch` + `narratives` (`foundation`), no UI. It's substantially
+implemented — see "Brandwatch sync model" below for the current state.
+Sprint 2 is the web interface with the charts/dashboards, opening with
+`executive-overview` (`foundation/executive-overview.md` — spec exists,
+implementation not started) and continuing with `entities`,
+`command-center`, `intelligence-center`. Sprints 3-4 (`threshold-engine`,
+`intelligent-feed`, `propagation-graph`, `decision-center`,
+`executive-reports`) are not started.
 
 ## Commands
 
@@ -107,26 +112,37 @@ duplicating `organization_id`.
 
 ### Brandwatch sync model
 
-`bw-sync` (`supabase/functions/bw-sync/index.ts`) is fully implemented as of
-2026-07-07 — not a skeleton. One invocation processes one
-`(project_id, query_id)` pair end-to-end: seed → token → metadata bootstrap
-(conditional) → mentions poll → daily metrics (always) → weekly/monthly
-metrics + Query Group SOV (throttled). `pg_cron` isn't actually scheduled
-yet (no migration sets it up) — for now the function is invoked manually.
+`bw-sync` (`supabase/functions/bw-sync/index.ts`, ~1500 lines) is Sprint 1's
+core deliverable and is substantially built out as of 2026-07-10 — well
+past the "not a skeleton" milestone from 2026-07-07. One invocation
+processes one `(project_id, query_id)` pair end-to-end: seed → token →
+metadata bootstrap (conditional, also auto-creates `narratives` from
+top-level Categories) → mentions poll (paginated, backfill-aware) → daily
+metrics incl. non-sampled reach/engagement (always) → weekly/monthly
+metrics + platform breakdown + topics + top-authors (per Narrativa) + Query
+Group SOV (throttled). `pg_cron` isn't actually scheduled for `bw-sync`
+itself yet (no migration sets it up, blocked on token caching — see
+below) — for now the function is invoked manually. (`refresh_narrative_metrics()`,
+the SQL-only function that computes `narrative_metrics`, *is* on `pg_cron`
+since 2026-07-10 — it doesn't call Brandwatch, so it was never blocked by
+the same prerequisite.)
 
 - **Rate limit budget (30 calls/10min per Client)**: every Brandwatch call
   goes through `callBrandwatch()`, which is sequential (never parallel —
   official best practice) and retries up to 3× on `429` honoring
-  `retry-after`. Per-invocation call count varies: mentions poll (1) +
-  daily sentiment metrics (1 + 1 per narrative-linked Category) + daily
-  platform breakdown (1, added 2026-07-10, `data/volume/pageTypes/days`)
+  `retry-after`. Per-invocation call count varies: mentions poll (up to
+  `MAX_MENTIONS_PAGES_PER_INVOCATION` = 10 pages) + daily sentiment metrics
+  (1 + 1 per narrative-linked Category) + daily reach/engagement (2 calls
+  total, covers every Category via the `categories` dimension — added
+  2026-07-10) + daily platform breakdown (1, `data/volume/pageTypes/days`)
   run *every* invocation; metadata bootstrap (~4 calls) only when
-  `bw_projects.synced_at` is >24h stale; weekly/monthly sentiment/SOV/topics
-  (`data/topics`, added 2026-07-10)/top-authors (`data/volume/
-  topauthors/queries`, added 2026-07-10) only when no "fresh" row exists
+  `bw_projects.synced_at` is >24h stale *or* `bw_categories` is empty for
+  the project (added 2026-07-10); weekly/monthly sentiment/SOV/topics
+  (`data/topics`)/top-authors (`data/volume/topauthors/queries`, now once
+  per `categoryTarget` — added 2026-07-10) only when no "fresh" row exists
   yet for the current week (`isGrainStale()`/`isQueryGroupSovStale()`/
   `isTopicsStale()`/`isTopAuthorsStale()`) — this throttle is what keeps
-  steady-state invocations cheap despite covering 5 aggregate types.
+  steady-state invocations cheap despite covering 6+ aggregate types.
 - **Brandwatch auth**: no long-lived pre-generated token, so `bw-sync` mints
   one at runtime via `grant_type=api-password` (`mintBrandwatchAccessToken()`)
   using Edge Function secrets `BRANDWATCH_USERNAME`/`BRANDWATCH_PASSWORD`/

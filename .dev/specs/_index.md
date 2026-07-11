@@ -1,7 +1,7 @@
 ---
 tipo: index
 projeto: Reputation OS
-atualizado: 2026-07-07
+atualizado: 2026-07-10
 ---
 
 # Reputation OS — Índice de Especificações
@@ -148,9 +148,21 @@ deve ser conferido contra esta lista antes de ser considerado pronto.
 
 ## Módulos
 
+> ✅ **Escopo de Sprint reconfirmado (2026-07-10)**: "Toda essa Sprint 1 que
+> estamos [construindo] terá a integração com a Brandwatch. Sprint 2 será a
+> interface web com os gráficos." Ou seja, Sprint 1 = **só** o backend de
+> integração (`sync-brandwatch`/`narratives`, sem nenhuma UI própria);
+> `executive-overview` (a primeira tela — volume/sentimento, Share of
+> Voice, tabela de Narrativas) passa a ser a abertura de Sprint 2, junto
+> com o restante da "interface web com os gráficos". Isso não move as
+> specs de arquivo (continuam em `foundation/`, já que os dados que a tela
+> consome são deste módulo) — só reatribui a coluna Sprint na tabela
+> abaixo.
+
 | Módulo                 | Descrição curta                                                              | Status geral | Sprint | Specs |
 |-------------------------|-------------------------------------------------------------------------------|--------------|--------|-------|
-| `foundation`            | Sync serial+rate-limited da Brandwatch → Supabase + Executive Overview       | pronto       | 1      | [foundation/overview.md](foundation/overview.md) |
+| `foundation` (sync)     | Sync serial+rate-limited da Brandwatch → Supabase (`sync-brandwatch`, `narratives`) — **implementado**, ver `CLAUDE.md` | pronto | 1 | [foundation/overview.md](foundation/overview.md) |
+| `foundation` (UI)       | Executive Overview — primeira tela web (gráficos de volume/sentimento, Share of Voice, tabela de Narrativas) | rascunho — não iniciado | 2 | [foundation/executive-overview.md](foundation/executive-overview.md) |
 | `entities`              | Cadastro Nacional de Entidades (EAV via entity_tags) + enriquecimento de mentions | rascunho | 2      | — |
 | `command-center`        | CRUD de Casos (`cases`), checklist, comentários, arquivos, histórico de status | rascunho     | 2      | — |
 | `intelligence-center`   | Exploração de narrativas/mentions com filtros + enriquecimento de entidades  | rascunho     | 2      | — |
@@ -160,22 +172,42 @@ deve ser conferido contra esta lista antes de ser considerado pronto.
 | `decision-center`       | AI Advisors sobre mentions/narrativas, respeitando data-restrictions          | rascunho     | 3      | — |
 | `executive-reports`     | Geração de relatórios periódicos (`reports_generated`: diário/semanal/mensal/executivo/crise) | rascunho | 4 | — |
 
-> **Escopo de dados do `foundation` revisado e confirmado (2026-07-07)**:
-> `foundation` é responsável por **todo** o dado de leitura (pull) da
-> Brandwatch que os módulos dos Sprints seguintes precisam — sem isso, Sprint
-> 2/3 não têm dado para operar. Cobertura confirmada em `bw-sync`:
-> `bw_projects`/`bw_queries`/`bw_query_groups`/`bw_categories` (metadata),
-> `mentions` (polling), `bw_query_metrics_daily`/`weekly`/`monthly`
-> (sentiment/volume por Query/Category), `bw_query_group_metrics_weekly`
-> (Share of Voice). Isso já cobre o que `entities` (Sprint 2, via
-> `mentions.author`), `threshold-engine`/`intelligent-feed` (Sprint 3, via
-> `mentions`/`bw_categories`/métricas) e `propagation-graph` (Sprint 3, via
-> `mentions.raw` — os campos de relacionamento `insightsMentioned`/
-> `twitterReplyTo`/`twitterRetweetOf` não têm coluna tipada ainda, mas já
-> ficam preservados no jsonb bruto de cada mention, promovíveis a coluna
-> quando esse módulo for de fato especificado) vão precisar ler. Três tipos
-> de dado da Brandwatch continuam **fora** do `foundation` por decisão
-> explícita, não por esquecimento — ver seção seguinte.
+> **Escopo de dados do `foundation` (sync), confirmado e ampliado em
+> 2026-07-10**: cobre **todo** o dado de leitura (pull) da Brandwatch que
+> Sprint 2 (UI) e os módulos dos Sprints seguintes precisam. Cobertura
+> hoje em `bw-sync` (ver `CLAUDE.md` "Brandwatch sync model" pro detalhe
+> completo, este é só o resumo):
+> - Metadata: `bw_projects`/`bw_queries`/`bw_query_groups`/`bw_categories`.
+> - `mentions`: polling paginado (walk ascendente desde
+>   `BRANDWATCH_MENTIONS_START_DATE`, resumo rastreado via
+>   `sync_cursors.backfill_completed_at`), com campos enriquecidos
+>   (gender/geo/pageType→contentSource/language/impressions/impact/
+>   classifications+emotion/hashtags/@mentions/reply-retweet/engagement por
+>   plataforma).
+> - `narratives`: auto-criadas a partir de Category de topo
+>   (`ensureNarrativesFromCategories`), com `narrative_metrics` agendada via
+>   `pg_cron` incluindo `engagement_total`/`repost_count`/`comment_count` —
+>   sentimento/volume/reach/engagement vêm de agregados oficiais não
+>   amostrados quando a Narrativa tem `bw_category_id` (a maioria hoje);
+>   `unique_authors`/`top_domain`/repost/comment continuam agregação local
+>   (sem alternativa oficial da Brandwatch pra esses, quebrados por
+>   Category).
+> - Agregados oficiais (sampling-safe): `bw_query_metrics_daily`/`weekly`/
+>   `monthly` (sentiment/volume + `reach_estimate`/`engagement_score` por
+>   Category), `bw_query_metrics_daily_by_platform` (breakdown por
+>   plataforma), `bw_query_group_metrics_weekly` (Share of Voice),
+>   `bw_query_topics` (temas/hashtags/entidades com sentimento, via
+>   `data/topics` — o mecanismo mais próximo de "clusterização" que a API
+>   padrão oferece), `bw_query_top_authors` (ranking de autores por Query
+>   e por Narrativa, não amostrado).
+>
+> Isso já cobre o que `entities` (via `mentions.author`),
+> `threshold-engine`/`intelligent-feed` (via `mentions`/`bw_categories`/
+> métricas) e `propagation-graph` (via `mentions.raw` — os campos de
+> relacionamento `insightsMentioned`/`replyTo`/`retweetOf` já têm coluna
+> tipada própria desde 2026-07-10, não só jsonb bruto) vão precisar ler.
+> Três tipos de dado da Brandwatch continuam **fora** do `foundation` por
+> decisão explícita, não por esquecimento — ver seção seguinte.
 
 ## Entidades principais
 
