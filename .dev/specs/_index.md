@@ -200,10 +200,14 @@ deve ser conferido contra esta lista antes de ser considerado pronto.
 >   `data/topics` — o mecanismo mais próximo de "clusterização" que a API
 >   padrão oferece, incl. série diária/breakdown por canal por tópico),
 >   `bw_query_top_authors` (ranking de autores por Query e por Narrativa,
->   não amostrado), `bw_query_x_insights` (hashtags/emojis/URLs/autores
->   citados específicos de X com sentimento próprio, via os 4 endpoints de
->   "X (Twitter) Insights" — ⚠️ identificado em revisão de spec
->   2026-07-11, ainda sem migration/código).
+>   não amostrado, incl. `tweets`/`retweets` por autor — ⚠️ dado já
+>   capturado em `platform_stats`, só falta extrair como coluna),
+>   `bw_query_x_insights` (hashtags/emojis/URLs/autores citados específicos
+>   de X com sentimento próprio, via os 4 endpoints de "X (Twitter)
+>   Insights"), `bw_query_demographics_daily` (gender/tipo de conta/
+>   interesse/profissão — só X — e localização, via dimensões de chart
+>   oficiais não amostradas) — os três últimos ⚠️ identificados em revisão
+>   de spec 2026-07-11, ainda sem migration/código.
 >
 > Isso já cobre o que `entities` (via `mentions.author`),
 > `threshold-engine`/`intelligent-feed` (via `mentions`/`bw_categories`/
@@ -265,6 +269,21 @@ deve ser conferido contra esta lista antes de ser considerado pronto.
   autor. `data/topics` (Consumer Research API) é o mecanismo mais próximo
   de tematização automática disponível hoje — ver `sync-brandwatch.md`
   passo 6.4.
+- **Impressões por autor e temas por autor (X)** — pedido do usuário
+  2026-07-11 junto com a revisão que deu origem a `bw_query_x_insights`/
+  `bw_query_demographics_daily`. Confirmado que **não têm fonte oficial
+  não amostrada**, diferente dos outros itens desta leva:
+  - `data/volume/topauthors/queries` (Top Authors) não devolve impressões
+    por autor (confirmado no payload real) — só existe `impressions` por
+    mention individual (campo de X); agregar isso por autor localmente
+    sobre `mentions` violaria a premissa de nunca somar sobre a amostra
+    (ver `narrative_metrics`).
+  - `data/topics` é agregado por Query/Category inteira, não quebra por
+    autor — não existe endpoint da Brandwatch pra tematização por autor
+    específico.
+  Sem alternativa oficial pra nenhum dos dois — ficam fora do MVP até a
+  Brandwatch (ou uma mudança de escopo, ex: aceitar estimativa amostrada
+  rotulada como tal) mudar esse cenário.
 
 ## Decisões pendentes globais
 

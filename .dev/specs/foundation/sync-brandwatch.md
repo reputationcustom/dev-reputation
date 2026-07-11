@@ -58,6 +58,7 @@ computação síncrona, diferente de esperar rede).
 | `weekly_monthly` | Passo 6.1 (semanal/mensal, throttle 7/30 dias) |
 | `topics` | Passo 6.4 (temas, throttle 7 dias) |
 | `top_authors` | Passo 6.5 (ranking de autores, throttle 7 dias) |
+| `demographics` | ⚠️ Passo 6.6 (demografia — gender/localização, throttle 7 dias) — **pendente de implementação**, ver `data-model.md` §5 |
 | `sov` | Passo 6.2 (Share of Voice de Query Group, throttle 7 dias) |
 
 Cada invocação lê `next_step` do par escolhido, executa **só essa fase**, e
@@ -549,6 +550,24 @@ gigante, complementar à quebra em fases.
    aplicada preventivamente em `syncTopicsData()` (passo 6.4, dedup por
    `topic_type::label`) — mesma classe de risco, ainda não observada em
    produção mas estruturalmente idêntica.
+6.6. ⚠️ **Demografia — pendente de implementação (2026-07-11, revisão de
+   spec, pedido do usuário: "análise demográfica de tudo que vem do X")**:
+   mesmo throttle semanal dos passos acima, buscando `data/volume/
+   {dimension}/days` para cada uma das 8 dimensões demográficas
+   confirmadas em `developers.brandwatch.com/docs/chart-dimensions-and-aggregates`
+   (`gender`, `accountTypes`, `interest`, `profession` — só X/Twitter;
+   `countries`, `continents`, `cities`, `regions` — sem restrição de
+   plataforma) e upsert em `bw_query_demographics_daily` (ver
+   `data-model.md` §5). **Salvaguarda de orçamento**: as 4 dimensões
+   específicas de X só rodam para Queries com `bw_queries.type = 'twitter'`
+   (ou volume relevante em `page_type = 'twitter'`, mesmo sinal já usado em
+   `bw_query_x_insights`) — não gastar chamada em Query sem presença em X;
+   as 4 de localização rodam pra qualquer Query. Itera **uma dimensão por
+   invocação** (para na primeira que precisar de trabalho real, mesmo
+   padrão de 6.1/6.4/6.5) — nunca as 8 de uma vez, pra não reintroduzir o
+   estouro de CPU corrigido na "Execução em fases" acima. Escopo inicial:
+   só nível de Query inteira, sem quebra por Narrativa (mesmo escopo hoje
+   de `bw_query_metrics_daily_by_platform`).
 7. Atualiza `sync_cursors` ao final de **cada fase** (não só ao final de
    tudo — ver "Execução em fases" acima): sempre `next_step` (avança pra
    próxima fase) + `status = 'idle'` + `last_error = null`; `last_added_cursor`/
@@ -609,7 +628,7 @@ gigante, complementar à quebra em fases.
 ## Dados envolvidos
 
 - **Lê**: `brandwatch_credentials`, `sync_cursors`, `bw_projects`, `bw_queries`, `bw_query_groups`, `bw_categories`, `narratives` (para saber quais `bw_category_id` merecem chart por categoria).
-- **Escreve**: `bw_projects`, `bw_queries`, `bw_query_groups`, `bw_categories`, `mentions`, `bw_query_metrics_daily`/`weekly`/`monthly`, `bw_query_metrics_daily_by_platform`, `bw_query_topics`, `bw_query_top_authors`, `bw_query_x_insights` (⚠️ pendente de implementação, ver passo 6.4b), `bw_query_group_metrics_weekly`, `sync_cursors`, `sync_log`.
+- **Escreve**: `bw_projects`, `bw_queries`, `bw_query_groups`, `bw_categories`, `mentions`, `bw_query_metrics_daily`/`weekly`/`monthly`, `bw_query_metrics_daily_by_platform`, `bw_query_topics`, `bw_query_top_authors`, `bw_query_x_insights` (⚠️ pendente de implementação, ver passo 6.4b), `bw_query_demographics_daily` (⚠️ pendente de implementação, ver passo 6.6), `bw_query_group_metrics_weekly`, `sync_cursors`, `sync_log`.
 - Detalhes de schema: ver [data-model.md](data-model.md).
 
 ## Permissões
