@@ -230,11 +230,25 @@ usando join implícito por `project_id in (select id from bw_projects where orga
 
 ## 3. Mentions (particionada por mês)
 
-Campos originais (sem alteração): `organization_id`, `project_id`,
+Campos originais: `organization_id`, `project_id`,
 `query_id`, `resource_id`, `category_ids bigint[]`, `tag_names text[]`,
 `sentiment`, `author`, `author_handle_normalized` (gerada,
-`lower(author)`), `reach_estimate`, `domain`, `snippet`, `full_text`,
+`lower(author)`), `reach_estimate bigint`, `domain`, `snippet`, `full_text`,
 `added`, `mention_date`, `raw jsonb`.
+
+> ⚠️ **`reach_estimate`/`impressions` corrigidos de `integer` pra `bigint`
+> (2026-07-12, migration `20260712000000`)**: bug de produção real —
+> `bw_query_x_insights.impressions` (campo análogo, ver §5) estourou o
+> teto do `integer` do Postgres (~2.1 bilhões) com um valor real de
+> ~3.96 bilhões. Diferente de contagens de posts (`volume`/`tweets`/
+> `retweets`, limitadas ao número de mentions/reposts capturados — não
+> passam de milhões mesmo pra um tema nacional), `reach_estimate`/
+> `impressions` são métricas de **visualização/audiência**, cuja escala é
+> ordens de magnitude maior. Corrigido em toda tabela que tem essas duas
+> colunas: `mentions`, `bw_query_metrics_daily`, `bw_query_group_metrics_weekly`,
+> `bw_query_top_authors`, `bw_query_top_sites`, `bw_query_x_insights`, e
+> `narrative_metrics.reach_estimated` (populado direto de
+> `bw_query_metrics_daily.reach_estimate`, mesmo risco).
 
 > ⚠️ **`full_text` deixa de ser sempre `null` — busca seletiva planejada
 > (2026-07-11, revisão de spec pré-implementação)**: a decisão original
@@ -281,7 +295,7 @@ confirmados contra `mention-metadata-field-definitions`, não inferidos):
 | `country_code`/`region`/`city`/`continent_code` | `text` | `countryCode`/`region`/`city`/`continentCode` |
 | `content_source` | `text` | `contentSource` — **substitui** `pageType`, que a Brandwatch marca como deprecated no objeto de mention |
 | `language` | `text` | `language` |
-| `impressions` | `integer` | `impressions` — só X, `0` nas demais fontes |
+| `impressions` | `bigint` | `impressions` — só X, `0` nas demais fontes. ⚠️ Corrigido de `integer` pra `bigint` em 2026-07-12 (bug de produção: overflow em `bw_query_x_insights.impressions`, mesma classe de risco em todo campo de visualização/audiência — ver nota em `mentions.reach_estimate` abaixo e migration `20260712000000`) |
 | `impact` | `numeric` | `impact` — métrica logarítmica 0–100, cross-platform (referência de ranking de influência) |
 | `classifications` | `jsonb` | array bruto `{classifierId, labelId, name, trainingId, confidence}` — inclui emoção |
 | `emotion` | `text` | derivado em `bw-sync` (não é campo direto da API): primeiro classifier de emoção em `classifications`, best-effort |
@@ -440,7 +454,7 @@ security` em ambas, **sem nenhuma policy** (deny-all para `anon`/
 | `sentiment_positive`     | `integer`     | sim | default `0` |
 | `sentiment_neutral`      | `integer`     | sim | default `0` |
 | `sentiment_negative`     | `integer`     | sim | default `0` |
-| `reach_estimate`         | `integer`     | não | agregado oficial, `data/reachEstimate/categories/days` — adicionado `20260710040000` |
+| `reach_estimate`         | `bigint`     | não | agregado oficial, `data/reachEstimate/categories/days` — adicionado `20260710040000`; corrigido de `integer` pra `bigint` em `20260712000000` (bug de overflow) |
 | `engagement_score`       | `numeric`     | não | agregado oficial, `data/engagementScore/categories/days` — adicionado `20260710040000` |
 | `synced_at`              | `timestamptz` | sim | `now()` |
 
@@ -508,7 +522,7 @@ tabela.
 | `query_id`         | `bigint`      | sim | FK → `bw_queries(id)` ON DELETE CASCADE — uma linha por Query **dentro** do grupo, não um agregado do grupo inteiro |
 | `metric_week`      | `date`        | sim | |
 | `total_mentions`   | `integer`     | sim | default `0` |
-| `reach_estimate`   | `integer`     | não | ✅ adicionado 2026-07-11 (validação contra export real de dashboard Brandwatch — "Reach Over Time" comparado entre candidatos dentro de um Query Group). Via `data/reachEstimate/queries/weeks?queryGroupId=...` — mesmo agregado `reachEstimate` já confirmado em `bw_query_metrics_daily`, mesma dimensão `queries` já usada nesta tabela pro volume, só trocando o agregado |
+| `reach_estimate`   | `bigint`     | não | ✅ adicionado 2026-07-11 (validação contra export real de dashboard Brandwatch — "Reach Over Time" comparado entre candidatos dentro de um Query Group). Via `data/reachEstimate/queries/weeks?queryGroupId=...` — mesmo agregado `reachEstimate` já confirmado em `bw_query_metrics_daily`, mesma dimensão `queries` já usada nesta tabela pro volume, só trocando o agregado. Corrigido de `integer` pra `bigint` em `20260712000000` (bug de overflow) |
 | `synced_at`        | `timestamptz` | sim | `now()` |
 
 **Índices**: unique `(query_group_id, query_id, metric_week)` — sem o
@@ -681,8 +695,8 @@ Posters/Emojis, exatamente este shape de dado).
 | `volume` | `integer` | sim | default `0` |
 | `tweets` | `integer` | não | |
 | `retweets` | `integer` | não | |
-| `impressions` | `integer` | não | |
-| `reach_estimate` | `integer` | não | confirmado **ausente** no payload de `data/hashtags` — `null` para `insight_type = 'hashtag'`, presente para `emoticon`/`url`/`mentioned_author` |
+| `impressions` | `bigint` | não | ⚠️ bug de produção real (2026-07-12): já observado excedendo o teto de `integer` (~2.1 bilhões) num hashtag de alto volume — corrigido pra `bigint` na migration `20260712000000` |
+| `reach_estimate` | `bigint` | não | confirmado **ausente** no payload de `data/hashtags` — `null` para `insight_type = 'hashtag'`, presente para `emoticon`/`url`/`mentioned_author`. Corrigido de `integer` pra `bigint` em `20260712000000` |
 | `sentiment_positive`/`neutral`/`negative` | `integer` | sim | default `0`, do objeto `sentiment` do payload |
 | `metric_week` | `date` | sim | mesmo caráter de snapshot que `bw_query_topics.metric_week`/`bw_query_top_authors.metric_week` — marcador de frescor/throttle, não bucket semanal literal |
 | `synced_at` | `timestamptz` | sim | |
@@ -714,13 +728,13 @@ ver nota de sampling em §5 acima). Adicionada em `20260710010000`.
 | `category_id_key` | `bigint` | sim | gerada, `coalesce(category_id, 0)` — mesmo padrão de `bw_query_metrics_daily` |
 | `author` | `text` | sim | |
 | `volume` | `integer` | sim | default `0` |
-| `reach_estimate` | `integer` | não | |
+| `reach_estimate` | `bigint` | não | corrigido de `integer` pra `bigint` em `20260712000000` (bug de overflow) |
 | `impact` | `numeric` | não | |
 | `followers` | `integer` | não | de `twitterFollowers` — único campo de seguidores confirmado no envelope deste endpoint (Facebook/Reddit não têm campo de seguidores documentado aqui). Adicionado `20260710050000` |
 | `is_influential` | `boolean` | sim | gerada, `coalesce(followers, 0) >= 100000` — adicionado `20260710050000`, pedido do usuário ("mais de 100000 seguidores... os mais influentes") |
 | `tweets` | `integer` | não | de `twitterTweets` — contagem de posts do autor. ✅ Implementado 2026-07-11, migration `20260711060000` |
 | `retweets` | `integer` | não | de `twitterRetweets` — contagem de reposts do autor. Mesmo migration que `tweets` acima |
-| `impressions` | `integer` | não | soma das impressões diárias do autor, via `data/impressions/queries/days?queryId=<id>&author=<handle>` — agregado oficial da Brandwatch (não `Top Authors`, que não expõe isso), filtrado por autor, **não** somado localmente sobre `mentions`. Ver nota abaixo. ✅ Implementado 2026-07-11, migration `20260711040000` |
+| `impressions` | `bigint` | não | soma das impressões diárias do autor, via `data/impressions/queries/days?queryId=<id>&author=<handle>` — agregado oficial da Brandwatch (não `Top Authors`, que não expõe isso), filtrado por autor, **não** somado localmente sobre `mentions`. Ver nota abaixo. ✅ Implementado 2026-07-11, migration `20260711040000`; corrigido de `integer` pra `bigint` em `20260712000000` (bug de overflow real em `bw_query_x_insights.impressions`, mesma classe de campo) |
 | `account_type` | `text` | não | de `authorAccountType` — confirmado no envelope do endpoint (ex: valores tipo governo/empresa/pessoal, exatos ainda não catalogados). ✅ Implementado 2026-07-11, migration `20260711060000` — habilita filtros tipo "Government Verification"/"Business Verification" já vistos num dashboard real da Brandwatch |
 | `country_code` / `country_name` | `text` | não | de `countryCode`/`countryName` — país do autor (não do conteúdo da mention). Mesma migration que `account_type`, habilita "distribuição geográfica dos autores" (distinto de §5's demografia por *mention*) |
 | `sentiment_positive`/`neutral`/`negative` | `integer` | sim | default `0` |
@@ -852,7 +866,7 @@ domínio (nome/gênero/tipo de conta/interesses), não só do site em si.
 | `domain` | `text` | sim | |
 | `volume` | `integer` | sim | default `0` |
 | `monthly_visitors` | `integer` | não | de `monthlyVisitors` |
-| `reach_estimate` | `integer` | não | |
+| `reach_estimate` | `bigint` | não | corrigido de `integer` pra `bigint` em `20260712000000` (bug de overflow) |
 | `impact` | `numeric` | não | |
 | `author_name` | `text` | não | autor típico associado ao domínio (o payload trata isso como propriedade do site, não uma lista de autores) |
 | `account_type` | `text` | não | de `authorAccountType` |
@@ -1047,7 +1061,7 @@ narrative_id in (
 | `source`               | `text`        | sim | `bw_aggregate` — check constraint permite também `mentions_sample`, mas nada insere com esse valor desde `20260711010000` (ver nota) |
 | `total_mentions`       | `integer`     | sim | default `0`, de `bw_query_metrics_daily.total_mentions` (agregado oficial, não amostrado) |
 | `sentiment_positive`/`neutral`/`negative` | `integer` | sim | default `0`, idem |
-| `reach_estimated`      | `integer`     | não | de `bw_query_metrics_daily.reach_estimate` — `null` até `bw-sync` sincronizar essa coluna pro dia em questão, **nunca** estimado localmente |
+| `reach_estimated`      | `bigint`      | não | de `bw_query_metrics_daily.reach_estimate` — `null` até `bw-sync` sincronizar essa coluna pro dia em questão, **nunca** estimado localmente. Corrigido de `integer` pra `bigint` em `20260712000000` (mesmo risco de overflow da coluna de origem) |
 | `engagement_total`     | `numeric`     | não | de `bw_query_metrics_daily.engagement_score` — mesma regra |
 | `created_at`           | `timestamptz` | sim | `now()` |
 
@@ -1394,6 +1408,13 @@ revoke all on schema public from bi_reader;
       `20260711080000`) → `bw_query_metrics_daily_by_platform.category_id`
       + nova fase `platform_by_narrative` em `SYNC_STEPS` (migration
       `20260711090000`, "SOV por plataforma")
+      → **bug de produção corrigido**: `reach_estimate`/`impressions`
+      widened de `integer` pra `bigint` em `mentions`,
+      `bw_query_metrics_daily`, `bw_query_group_metrics_weekly`,
+      `bw_query_top_authors`, `bw_query_top_sites`, `bw_query_x_insights` e
+      `narrative_metrics.reach_estimated` (migration `20260712000000`) —
+      overflow real observado em `bw_query_x_insights.impressions` (valor
+      ~3.96 bilhões, acima do teto de `integer`, ~2.1 bilhões)
 - [ ] Triggers `set_updated_at` em `organizations`, `brandwatch_credentials`, `narratives`
 - [ ] RLS habilitada em **todas** as tabelas deste módulo (inclusive
       `sync_cursors`/`sync_log`, deny-all)
