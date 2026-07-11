@@ -479,6 +479,8 @@ Adicionada em `20260710010000`.
 | `percentage_volume` | `numeric` | não | |
 | `sentiment_positive`/`neutral`/`negative` | `integer` | sim | default `0` |
 | `trending` | `numeric` | não | |
+| `engagement_total` | `numeric` | não | agregação local sobre `mentions`, só pra `topic_type = 'hashtags'` — adicionado `20260710060000`, ver nota abaixo |
+| `reach_estimated` | `integer` | não | idem, só pra `topic_type = 'hashtags'` |
 | `metric_week` | `date` | sim | data do snapshot de sync (não um bucket semanal literal — `data/topics` é um agregado sobre a janela toda, não uma série por semana; usado só como marcador de frescor/throttle) |
 | `synced_at` | `timestamptz` | sim | |
 
@@ -487,6 +489,24 @@ label, metric_week)`. **Políticas RLS**: select-only via `project_id`.
 Throttle semanal (mesmo padrão de `bw_query_metrics_weekly`,
 `isTopicsStale()` em `bw-sync/index.ts`), por `categoryTarget` (query
 inteira + cada Narrativa).
+
+> ✅ **Ampliação (2026-07-10, migration `20260710060000`)**: pedido do
+> usuário — "Importante que nos tópicos também tenha o engajamento e o
+> alcance de cada tópico". Pesquisa direta contra
+> `developers.brandwatch.com/docs/data-topics` confirmou: `metrics` só
+> aceita `volume, percentageVolume, sentiment, gender, trending,
+> timeSeries` — **reach e engajamento não existem como métrica desse
+> endpoint**, limitação real da API, não lacuna do código. Único jeito de
+> aproximar: cruzar localmente contra `mentions`, e só é preciso pra
+> `topic_type = 'hashtags'` — `mentions.insights_hashtag @> array[label]`
+> é containment exato (já indexado via GIN), sem ambiguidade. Pra
+> `words`/`phrases`/`entities`/`people`/`places`/`organisations` não há
+> correspondência exata e barata (exigiria `ilike` fuzzy sobre
+> snippet/full_text, mesmo problema já documentado pra `narrative_signals`
+> do tipo `keyword`) — ficam `null` deliberadamente, não estimados às
+> cegas. Função `refresh_topic_engagement_reach()` faz essa agregação em
+> lote (1 `UPDATE`, não uma chamada por tópico), chamada via RPC logo após
+> o upsert de tópicos em `syncTopicsData()`.
 
 ### `bw_query_top_authors`
 

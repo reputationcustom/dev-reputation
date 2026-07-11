@@ -65,8 +65,9 @@ o Executive Overview consomem o resultado (tabelas já sincronizadas).
    `pg_cron` de verdade em produção, já que sem cache o mint por si só já
    consome 1 chamada por invocação do orçamento de 30/10min.
 4. Se for a primeira sincronização daquele Project (`bw_projects.name` ainda
-   é o placeholder do passo 0) ou um refresh periódico (> 24h desde
-   `synced_at`): busca `GET /projects/{projectId}` (nome/timezone reais),
+   é o placeholder do passo 0), `bw_categories` estiver vazia, ou um refresh
+   periódico (> 1h desde `synced_at` — reduzido de 24h, ver correção
+   abaixo): busca `GET /projects/{projectId}` (nome/timezone reais),
    `queries/summary` (todas as Queries do Project, não só a rastreada),
    `query-groups` e `rulecategories` (achatando Category+Subcategories em
    linhas de `bw_categories`, `parent_id` para subcategoria), e faz upsert
@@ -91,8 +92,26 @@ o Executive Overview consomem o resultado (tabelas já sincronizadas).
    Category configurada (logado explicitamente como
    `refreshMetadata:no_categories_found`). `bw-sync` só espelha Categories
    que já existem na Brandwatch, não cria — configuração é manual na
-   própria Brandwatch (`brandwatch-setup.md`). Lembrar também que o
-   refresh de metadata só roda 1x/24h por Project.
+   própria Brandwatch (`brandwatch-setup.md`). **Se o Project ID
+   configurado em `BRANDWATCH_PROJECT_ID` não for o mesmo Project onde as
+   Categories foram criadas na Brandwatch, a sincronização nunca vai
+   encontrá-las** — checar isso é o primeiro passo se `categoriesCount`
+   continuar `0` mesmo com Categories visíveis na UI da Brandwatch.
+   ⚠️ **Correção 2026-07-10, mesmo dia** (relatado pelo usuário: "em
+   categorias, não está refletindo as categorias existentes na
+   brandwatch" — o throttle de 24h não refletia Categories
+   adicionadas/editadas na Brandwatch depois do último refresh bem
+   sucedido, só o caso de "zero Categories" tinha um bypass). Reduzido de
+   24h pra **1h** — ainda barato de rate limit (no máximo ~4 chamadas
+   extras/hora por Project). **Não deleta** Categories que sumiram da
+   Brandwatch — só adiciona/atualiza (`upsert`). Deletar seria arriscado:
+   `bw_query_metrics_daily`/`bw_query_topics`/`bw_query_top_authors` têm
+   `on delete cascade` pra `bw_categories` (apagaria histórico de
+   métricas), e `narratives.bw_category_id` **não** tem `on delete
+   cascade` (a deleção falharia com violação de FK se a Category já virou
+   Narrativa). Uma Category removida/renomeada na Brandwatch fica órfã em
+   `bw_categories` até limpeza manual — mais seguro que apagar dado
+   histórico às cegas.
 5. Busca mentions daquele par — **sempre** com `startDate`/`endDate` (⚠️
    correção 2026-07-07, encontrado em teste real: a Brandwatch rejeita
    `/data/mentions` sem `startDate`, mesmo no polling, apesar do exemplo de
@@ -278,6 +297,16 @@ o Executive Overview consomem o resultado (tabelas já sincronizadas).
    embeddings/clusterização próprios. Resposta usa a chave `topics` (não
    `results`, diferente dos outros endpoints de chart) — confirmado.
    Adicionado 2026-07-10.
+   ⚠️ **Correção 2026-07-10, mesmo dia** (pedido do usuário: "Importante
+   que nos tópicos também tenha o engajamento e o alcance de cada
+   tópico"): confirmado contra a doc real que `metrics` de `data/topics`
+   **não** aceita reach/engajamento (só `volume, percentageVolume,
+   sentiment, gender, trending, timeSeries`). Depois do upsert, `bw-sync`
+   chama a função `refresh_topic_engagement_reach()` via RPC — cruza
+   localmente contra `mentions` só pra `topic_type='hashtags'`
+   (`insights_hashtag @> array[label]`, containment exato); outros tipos
+   de tópico ficam sem essas 2 colunas, deliberadamente (sem
+   correspondência exata e barata contra `mentions` sem busca fuzzy).
 6.5. Ranking de autores: se não existir linha "fresca" (7 dias) em
    `bw_query_top_authors` para o par **e `categoryTarget`** (query inteira
    + cada Narrativa — ver correção abaixo): busca `data/volume/

@@ -413,6 +413,37 @@ the same prerequisite.)
   author-identifier match between the two endpoints are unconfirmed
   against a real payload, same risk category as other endpoints this
   session.
+- **`bw_categories` staleness reduced 24h → 1h** (fixed 2026-07-10, user
+  report: "em categorias, não está refletindo as categorias existentes na
+  brandwatch"). `needsMetadataRefresh()` already forced a refresh when
+  `bw_categories` was empty, but once *any* categories existed it fell
+  back to the 24h window regardless of edits made in Brandwatch afterward
+  — during active configuration (the exact situation the user is in),
+  that's a long, confusing lag. Reduced to 1h, still cheap on rate limit
+  (~4 calls/hour/project at most). Deliberately does **not** delete
+  categories removed from Brandwatch — `bw_query_metrics_daily`/
+  `bw_query_topics`/`bw_query_top_authors` all cascade-delete on
+  `bw_categories`, and `narratives.bw_category_id` has no cascade at all
+  (a delete would FK-error once a Category became a Narrativa) — so a
+  renamed/removed Category leaves an orphaned row instead of silently
+  destroying metric history. If `categoriesCount` is still `0` after this,
+  the next thing to check is whether `BRANDWATCH_PROJECT_ID` actually
+  points at the Brandwatch Project where the Categories were created.
+- **Topic engagement/reach — real API ceiling, not a gap** (added
+  2026-07-10, user request: "Importante que nos tópicos também tenha o
+  engajamento e o alcance de cada tópico"). Verified directly against
+  Brandwatch's `data-topics` docs: `metrics` only accepts `volume,
+  percentageVolume, sentiment, gender, trending, timeSeries` — reach and
+  engagement are not offered at all for this endpoint. The only accurate
+  proxy is a local join against `mentions`, and it's only reliable for
+  `topic_type = 'hashtags'` (`mentions.insights_hashtag @> array[label]`,
+  exact containment, GIN-indexed) — `words`/`phrases`/`entities`/`people`/
+  `places`/`organisations` have no exact match without fuzzy `ilike` text
+  search (same accuracy problem already documented for
+  `narrative_signals`' `keyword` type), so those stay `null` rather than
+  guessed. New `refresh_topic_engagement_reach()` SQL function does this
+  as one batched `UPDATE` (not one call per topic), invoked via RPC right
+  after `syncTopicsData()`'s upsert.
 - **Data scope is deliberately bounded**: `foundation`/`bw-sync` covers all
   *pull* data later sprints need (projects, queries, query groups,
   categories, mentions, daily/weekly/monthly metrics, Query Group SOV).

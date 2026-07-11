@@ -281,7 +281,7 @@ async function needsMetadataRefresh(supabase: SupabaseClient, projectId: number)
   // como esse primeiro refresh cacheou "zero Categories" e o throttle de
   // 24h não reconsidera isso, narratives ficaria vazia por até 24h mesmo
   // com Categories já existindo do lado da Brandwatch). Zero linhas em
-  // bw_categories força um refresh mesmo dentro da janela de 24h — é
+  // bw_categories força um refresh mesmo dentro da janela de staleness — é
   // autocorretivo: para de forçar assim que categorias existirem de
   // verdade, sem precisar de intervenção manual/env var.
   const { count: categoriesCount, error: categoriesError } = await supabase
@@ -291,8 +291,24 @@ async function needsMetadataRefresh(supabase: SupabaseClient, projectId: number)
   if (categoriesError) throw new Error(`Erro checando bw_categories: ${categoriesError.message}`);
   if (!categoriesCount) return true;
 
+  // Correção 2026-07-10, mesmo dia (relatado pelo usuário: "em categorias,
+  // não está refletindo as categorias existentes na brandwatch" — o
+  // projeto ainda está em configuração ativa na Brandwatch, então esperar
+  // 24h pra qualquer Category nova/editada aparecer era tempo demais).
+  // Reduzido de 24h pra 1h — ainda barato de rate limit (no máximo ~4
+  // chamadas extras/hora por Project, bem dentro do orçamento de 30/10min)
+  // e reflete mudanças de configuração muito mais rápido. Não deleta
+  // Categories que sumiram da Brandwatch (só adiciona/atualiza) — deletar
+  // é arriscado aqui, já que bw_query_metrics_daily/bw_query_topics/
+  // bw_query_top_authors têm FK `on delete cascade` pra bw_categories (uma
+  // Category removida da Brandwatch apagaria o histórico de métricas
+  // dela) e `narratives.bw_category_id` não tem `on delete cascade`
+  // nenhum (deletar quebraria com violação de FK se a Category já virou
+  // Narrativa). Se uma Category for removida/renomeada na Brandwatch, a
+  // linha antiga fica órfã em bw_categories até uma limpeza manual — mais
+  // seguro que apagar dado histórico às cegas.
   const syncedAt = new Date(data.synced_at as string).getTime();
-  return Date.now() - syncedAt > 24 * 60 * 60 * 1000;
+  return Date.now() - syncedAt > 60 * 60 * 1000;
 }
 
 async function refreshMetadata(
@@ -1158,6 +1174,25 @@ async function syncTopicsData(
     .from("bw_query_topics")
     .upsert(rows, { onConflict: "project_id,query_id,category_id_key,topic_type,label,metric_week" });
   if (error) throw new Error(`Erro upsertando bw_query_topics: ${error.message}`);
+
+  // Correção 2026-07-10 (pedido do usuário: "Importante que nos tópicos
+  // também tenha o engajamento e o alcance de cada tópico") — data/topics
+  // não expõe reach/engajamento como métrica (confirmado contra a doc
+  // real da Brandwatch, `metrics` só aceita volume/percentageVolume/
+  // sentiment/gender/trending/timeSeries). Só dá pra cruzar com precisão
+  // contra `mentions` pra topic_type='hashtags' (containment exato via
+  // `insights_hashtag`) — a função faz isso em lote (1 UPDATE, não uma
+  // chamada por tópico). Fica null pros demais tipos (words/phrases/
+  // entities/...), deliberadamente — não tem correspondência exata e
+  // barata contra mentions pra esses.
+  const { error: engagementError } = await supabase.rpc("refresh_topic_engagement_reach", {
+    p_project_id: projectId,
+    p_query_id: queryId,
+    p_category_id: categoryId,
+  });
+  if (engagementError) {
+    throw new Error(`Erro calculando engagement/reach de bw_query_topics: ${engagementError.message}`);
+  }
 
   log("syncTopicsData:done", { projectId, queryId, categoryId, rows: rows.length });
 }
