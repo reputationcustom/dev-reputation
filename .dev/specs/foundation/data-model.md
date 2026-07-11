@@ -393,6 +393,26 @@ security` em ambas, **sem nenhuma policy** (deny-all para `anon`/
 > sobre o identificador público do projeto), então a migration é
 > autossuficiente, sem passo manual pós-deploy.
 
+> ⚠️ **`next_step` adicionado (2026-07-11, migration `20260711030000`,
+> bug de produção: "CPU Time exceeded")**: `sync_cursors` ganha `next_step
+> text not null default 'metadata'`, com check constraint restringindo aos
+> 7 valores de `SYNC_STEPS` em `bw-sync/index.ts` (`metadata`, `mentions`,
+> `daily_metrics`, `weekly_monthly`, `topics`, `top_authors`, `sov`). Uma
+> única invocação processando um par "devido" de ponta a ponta (mentions +
+> todas as métricas diárias/semanais/mensais/temas/top-authors/SOV)
+> processava dezenas de milhares de objetos JSON sincronamente e estourava
+> o orçamento de CPU do runtime. Com `next_step`, cada invocação executa só
+> uma fase e avança o cursor — o ciclo completo (7 fases) se espalha por
+> várias invocações (heartbeat de 15min ou clique manual no Dashboard, já
+> que o estado vive inteiro nesta coluna, nunca em memória). `last_synced_at`
+> só avança quando a última fase (`sov`) fecha o ciclo — até lá o par
+> continua "devido" (ver nota acima) e é escolhido de novo a cada tick, o
+> que garante que o ciclo termine antes de outro par começar. Ver
+> "Execução em fases" em `sync-brandwatch.md` pro mapeamento fase↔passo e o
+> trade-off aceito (categoryTargets de fases throttled — `weekly_monthly`/
+> `topics`/`top_authors`/`sov` — podem levar vários ciclos completos pra
+> cobrir todos, em vez de um só).
+
 ---
 
 ## 5. Agregados oficiais da Brandwatch (sampling-safe)
@@ -1061,7 +1081,9 @@ revoke all on schema public from bi_reader;
       `sync-brandwatch.md` passos 6.4b e 5
       → heartbeat `pg_cron`/`pg_net` pra `bw-sync` a cada 15min (URL
       hardcoded, não é segredo), gated por `BW_SYNC_INTERVAL_HOURS`
-      (migration `20260711020000`)
+      (migration `20260711020000`) → `sync_cursors.next_step` (execução em
+      fases, corrige bug de produção "CPU Time exceeded" — migration
+      `20260711030000`, ver §4 e `sync-brandwatch.md` "Execução em fases")
 - [ ] Triggers `set_updated_at` em `organizations`, `brandwatch_credentials`, `narratives`
 - [ ] RLS habilitada em **todas** as tabelas deste módulo (inclusive
       `sync_cursors`/`sync_log`, deny-all)

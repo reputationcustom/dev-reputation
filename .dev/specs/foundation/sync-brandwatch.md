@@ -35,6 +35,64 @@ mentions para números de volume (ver nota de sampling).
 Nenhum usuário final interage diretamente — é um job de backend. Analistas e
 o Executive Overview consomem o resultado (tabelas já sincronizadas).
 
+## Execução em fases (2026-07-11)
+
+⚠️ **Bug de produção corrigido**: `HTTP 546`-adjacent (`CPU Time exceeded`,
+não o `WORKER_RESOURCE_LIMIT` de memória já corrigido antes) — uma única
+invocação, ao processar um par "devido", encadeava mentions (paginado) +
+sentimento diário (5 chamadas) + reach/engagement por Category (2 chamadas,
+uma delas com **4825 linhas numa resposta só**) + plataforma + (quando
+"stale") semanal/mensal + temas + top authors (até 1000 linhas ×
+categoryTarget) + SOV — dezenas de milhares de objetos JSON processados
+sincronamente, estourando o orçamento de CPU do runtime Deno (tempo de
+computação síncrona, diferente de esperar rede).
+
+**Correção**: o trabalho de um par "devido" foi quebrado em fases
+(`sync_cursors.next_step`), uma por invocação:
+
+| Fase (`next_step`) | Cobre os passos numerados abaixo |
+|---|---|
+| `metadata` | Passo 3 (bootstrap/refresh condicional) |
+| `mentions` | Passo 5 (polling paginado) |
+| `daily_metrics` | Passos 6, 6.3, 6.3b (sentimento diário + reach/engagement + plataforma — sempre rodam, não são "stale-gated") |
+| `weekly_monthly` | Passo 6.1 (semanal/mensal, throttle 7/30 dias) |
+| `topics` | Passo 6.4 (temas, throttle 7 dias) |
+| `top_authors` | Passo 6.5 (ranking de autores, throttle 7 dias) |
+| `sov` | Passo 6.2 (Share of Voice de Query Group, throttle 7 dias) |
+
+Cada invocação lê `next_step` do par escolhido, executa **só essa fase**, e
+avança o cursor pra próxima. Fases "stale-gated" (`weekly_monthly`,
+`topics`, `top_authors`, `sov`) percorrem os `categoryTargets` e param no
+**primeiro** que precisar de trabalho real — os demais continuam "stale" e
+são retomados numa invocação futura da mesma fase, não na mesma invocação
+(é isso que limita o pico de CPU; verificações de frescor que não acham
+nada pra fazer são baratas e não avançam por si só o "orçamento" de CPU, só
+avançam pra próxima fase dentro da mesma invocação). O ciclo completo (as 7
+fases) só fecha — e só então `sync_cursors.last_synced_at` avança,
+rearmando o gate de `BW_SYNC_INTERVAL_HOURS` do passo 0.5b — quando a
+última fase (`sov`) roda (ou é pulada por não ter trabalho).
+
+⚠️ **Trade-off aceito**: como `weekly_monthly`/`topics`/`top_authors`/`sov`
+agora processam no máximo um `categoryTarget`/grupo por invocação (em vez
+de todos numa passada), popular **todos** os `categoryTargets` de uma
+Narrativa recém-criada pode levar vários ciclos completos (cada ciclo =
+`BW_SYNC_INTERVAL_HOURS`) em vez de um só. Aceito em troca de nunca mais
+estourar o orçamento de CPU — ver `data-model.md` §4 (`sync_cursors`).
+
+**Estado vive inteiro no Postgres, nunca em memória do isolate** — por
+isso uma invocação **manual** (clique em "Invoke" no Dashboard do
+Supabase, útil durante testes) se comporta exatamente como um tick do
+heartbeat de 15min: lê `next_step` do par mais "devido", roda essa fase,
+grava o próximo passo. Não há modo de teste separado nem estado
+in-memory que se perca entre invocações — clicar várias vezes seguidas
+avança o ciclo normalmente, uma fase por clique.
+
+**Complementar**: `syncCategoryDailyAggregate()` (reach/engagement, a
+chamada que devolveu 4825 linhas) também passou a fazer upsert em lotes de
+1000 linhas (`chunkArray()`) em vez de uma única chamada com todas as
+linhas — reduz o pico de serialização síncrona de um corpo de requisição
+gigante, complementar à quebra em fases.
+
 ## Fluxo principal
 
 0. **Semeadura inicial de `sync_cursors`** (⚠️ correção 2026-07-07 — gap
@@ -491,9 +549,14 @@ o Executive Overview consomem o resultado (tabelas já sincronizadas).
    aplicada preventivamente em `syncTopicsData()` (passo 6.4, dedup por
    `topic_type::label`) — mesma classe de risco, ainda não observada em
    produção mas estruturalmente idêntica.
-7. Atualiza `sync_cursors` (`last_added_cursor`, `last_synced_at`,
-   `status = 'idle'`, `last_error = null`) e insere uma linha em `sync_log`
-   (`status = 'success'`, `rows_processed` = mentions upsertadas).
+7. Atualiza `sync_cursors` ao final de **cada fase** (não só ao final de
+   tudo — ver "Execução em fases" acima): sempre `next_step` (avança pra
+   próxima fase) + `status = 'idle'` + `last_error = null`; `last_added_cursor`/
+   `backfill_completed_at` só quando a fase é `mentions`; `last_synced_at`
+   só quando a fase que rodou era a última do ciclo (`sov`) — é isso que
+   rearma o gate do passo 0.5b. Insere uma linha em `sync_log` por fase
+   executada (`status = 'success'`, `rows_processed` = mentions upsertadas
+   nesta fase, `0` nas demais).
 8. Se qualquer chamada retornar `429`: aplica backoff (usa `retry-after` ou
    fallback de 20s), tenta até 3 vezes, e se ainda falhar marca
    `sync_cursors.status = 'error'` + `last_error` e `sync_log.status = 'error'`

@@ -112,21 +112,41 @@ duplicating `organization_id`.
 
 ### Brandwatch sync model
 
-`bw-sync` (`supabase/functions/bw-sync/index.ts`, ~1500 lines) is Sprint 1's
+`bw-sync` (`supabase/functions/bw-sync/index.ts`, ~1950 lines) is Sprint 1's
 core deliverable and is substantially built out as of 2026-07-10 — well
-past the "not a skeleton" milestone from 2026-07-07. One invocation
-processes one `(project_id, query_id)` pair end-to-end: seed → token →
-metadata bootstrap (conditional, also auto-creates `narratives` from
-top-level Categories) → mentions poll (paginated, backfill-aware) → daily
-metrics incl. non-sampled reach/engagement (always) → weekly/monthly
-metrics + platform breakdown + topics + top-authors (per Narrativa) + Query
-Group SOV (throttled). ✅ **`bw-sync` is now scheduled via `pg_cron`
-(2026-07-11, migration `20260711020000`)** — see "Scheduled cadence
-(`BW_SYNC_INTERVAL_HOURS`)" below for the mechanism; this replaces the
-"invoked manually" state from 2026-07-07/10. (`refresh_narrative_metrics()`,
-the SQL-only function that computes `narrative_metrics`, has been on
-`pg_cron` since 2026-07-10 — it doesn't call Brandwatch, so it was never
-blocked by the same prerequisite that used to apply to `bw-sync`.)
+past the "not a skeleton" milestone from 2026-07-07. ✅ **`bw-sync` is now
+scheduled via `pg_cron` (2026-07-11, migration `20260711020000`)** — see
+"Scheduled cadence (`BW_SYNC_INTERVAL_HOURS`)" below for the mechanism;
+this replaces the "invoked manually" state from 2026-07-07/10.
+(`refresh_narrative_metrics()`, the SQL-only function that computes
+`narrative_metrics`, has been on `pg_cron` since 2026-07-10 — it doesn't
+call Brandwatch, so it was never blocked by the same prerequisite that
+used to apply to `bw-sync`.)
+
+- **Phased execution per pair (2026-07-11, migration `20260711030000`)** —
+  fixes a production "CPU Time exceeded" crash (Deno's synchronous-compute
+  budget, distinct from the `WORKER_RESOURCE_LIMIT` memory crash fixed
+  earlier): one invocation used to process one `(project_id, query_id)`
+  pair end-to-end — seed → token → metadata bootstrap (conditional) →
+  mentions poll (paginated, backfill-aware) → daily metrics incl.
+  non-sampled reach/engagement (always) → weekly/monthly metrics +
+  platform breakdown + topics + top-authors (per Narrativa) + Query Group
+  SOV (throttled) — chaining tens of thousands of JSON objects processed
+  synchronously in one invocation (one `reachEstimate` call alone returned
+  4825 rows in one response in production). Now each invocation executes
+  exactly one phase from `SYNC_STEPS` (`metadata → mentions →
+  daily_metrics → weekly_monthly → topics → top_authors → sov`, tracked in
+  `sync_cursors.next_step`) and advances the cursor; `last_synced_at` (and
+  the `BW_SYNC_INTERVAL_HOURS` gate) only advances once the last phase
+  closes the cycle. Since all state lives in Postgres, not the isolate's
+  memory, a manual invocation (Dashboard "Invoke" button, used heavily
+  during testing) behaves identically to a heartbeat tick — same cursor,
+  same next-phase logic. Trade-off: `weekly_monthly`/`topics`/
+  `top_authors`/`sov` now advance at most one `categoryTarget` per
+  invocation, so fully covering every `categoryTarget` for a newly-created
+  Narrativa can take several full cycles instead of one. Complementary fix:
+  `syncCategoryDailyAggregate()` (the 4825-row case) now upserts in
+  1000-row chunks instead of one giant batch.
 
 - **Rate limit budget (30 calls/10min per Client)**: every Brandwatch call
   goes through `callBrandwatch()`, which is sequential (never parallel —

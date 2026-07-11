@@ -1149,10 +1149,21 @@ async function syncCategoryDailyAggregate(
   // pras colunas enviadas), então isso nunca zera total_mentions/sentiment
   // já sincronizados por syncSentimentMetrics pro mesmo
   // (project_id, query_id, category_id, metric_date).
-  const { error } = await supabase
-    .from("bw_query_metrics_daily")
-    .upsert(rows, { onConflict: "project_id,query_id,category_id_key,metric_date" });
-  if (error) throw new Error(`Erro upsertando bw_query_metrics_daily (${column}): ${error.message}`);
+  //
+  // Corrigido 2026-07-11 (parte da correção de "CPU Time exceeded" em
+  // produção): a dimensão `categories` cobre todas as Categories × todo o
+  // histórico numa resposta só (~4825 linhas observadas em produção) — um
+  // único `.upsert()` com todas as linhas de uma vez serializa um corpo de
+  // requisição gigante numa só passada síncrona. Chunka em lotes de 1000
+  // (mesmo tamanho de página já usado pra mentions) — mesmo total de
+  // trabalho, mas espalhado em várias chamadas menores em vez de um pico
+  // só de CPU.
+  for (const chunk of chunkArray(rows, 1000)) {
+    const { error } = await supabase
+      .from("bw_query_metrics_daily")
+      .upsert(chunk, { onConflict: "project_id,query_id,category_id_key,metric_date" });
+    if (error) throw new Error(`Erro upsertando bw_query_metrics_daily (${column}): ${error.message}`);
+  }
 
   log("syncCategoryDailyAggregate:done", { projectId, queryId, aggregate, rows: rows.length });
 }
@@ -1175,6 +1186,18 @@ function dedupeByKey<T>(rows: T[], keyFn: (row: T) => string): T[] {
     if (!seen.has(key)) seen.set(key, row);
   }
   return [...seen.values()];
+}
+
+// Parte da correção de "CPU Time exceeded" (2026-07-11) — quebra upserts
+// grandes (ex: reach/engagement via dimensão `categories`, ~4825 linhas
+// observadas em produção numa resposta só) em lotes menores, em vez de
+// serializar um corpo de requisição gigante numa única chamada síncrona.
+function chunkArray<T>(rows: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let i = 0; i < rows.length; i += size) {
+    chunks.push(rows.slice(i, i + size));
+  }
+  return chunks;
 }
 
 // =========================================================================
@@ -1514,6 +1537,261 @@ Deno.serve(async (_req: Request) => {
   }
 });
 
+// =========================================================================
+// Execução em fases — corrige "CPU Time exceeded" em produção (2026-07-11):
+// uma única invocação encadeava mentions + sentimento diário + reach/
+// engagement (uma resposta com 4825 linhas) + plataforma + semanal/mensal +
+// temas + top authors (até 1000 linhas × categoryTarget) + SOV, processando
+// dezenas de milhares de objetos JSON sincronamente. Cada invocação agora
+// executa só UMA fase de `SYNC_STEPS` para o par escolhido, e avança
+// `sync_cursors.next_step` pra próxima — o heartbeat de 15min empurra o
+// ciclo adiante ao longo de várias invocações. Como o estado vive inteiro
+// no Postgres (nunca em memória do isolate), uma invocação manual (clique
+// no Dashboard, usado bastante em teste) se comporta exatamente como um
+// tick do heartbeat: lê `next_step`, roda essa fase, grava o próximo passo.
+// O ciclo só fecha (rearma o gate de BW_SYNC_INTERVAL_HOURS via
+// `last_synced_at`) quando a última fase (`sov`) termina.
+// =========================================================================
+
+const SYNC_STEPS = [
+  "metadata",
+  "mentions",
+  "daily_metrics",
+  "weekly_monthly",
+  "topics",
+  "top_authors",
+  "sov",
+] as const;
+type SyncStep = typeof SYNC_STEPS[number];
+
+function nextSyncStep(step: SyncStep): { next: SyncStep; cycleComplete: boolean } {
+  const idx = SYNC_STEPS.indexOf(step);
+  const isLast = idx === SYNC_STEPS.length - 1;
+  return { next: SYNC_STEPS[isLast ? 0 : idx + 1], cycleComplete: isLast };
+}
+
+interface StepResult {
+  // true = esta fase fez trabalho real (chamou a Brandwatch) — é o ponto
+  // onde a invocação para, pra limitar o CPU gasto por invocação. false =
+  // não havia nada "stale" pra fazer nesta fase — barato, a invocação
+  // continua direto pra próxima fase (não é isso que causa o estouro de
+  // CPU, só checagens de frescor no Postgres).
+  didWork: boolean;
+  mentionsCount?: number;
+  lastAddedCursor?: string | null;
+  backfillCompletedAt?: string | null;
+}
+
+async function runMetadataStep(
+  supabase: SupabaseClient,
+  token: string,
+  projectId: number,
+  organizationId: string,
+): Promise<StepResult> {
+  if (await needsMetadataRefresh(supabase, projectId)) {
+    await refreshMetadata(supabase, token, projectId, organizationId);
+    return { didWork: true };
+  }
+  log("invocation:metadata_fresh", { projectId });
+  return { didWork: false };
+}
+
+async function runMentionsStep(
+  supabase: SupabaseClient,
+  token: string,
+  projectId: number,
+  queryId: number,
+  organizationId: string,
+  cursor: { last_added_cursor: string | null; backfill_completed_at: string | null },
+  invocationStartedAt: number,
+): Promise<StepResult> {
+  // Pagina dentro da mesma invocação até alcançar o presente ou esgotar o
+  // orçamento de páginas/tempo — mesmo padrão já existente, só extraído
+  // pra fase própria. `sourceType=new` só entra quando o walk já alcançou
+  // o presente pelo menos uma vez antes (ver resolveMentionsSinceAdded).
+  const { sinceAdded: initialSinceAdded, useSourceTypeNew } = await resolveMentionsSinceAdded(supabase, queryId, cursor);
+  let sinceAdded = initialSinceAdded;
+
+  let mentionsCount = 0;
+  let maxAdded: string | null = null;
+  let pagesFetched = 0;
+  let reachedNow = false;
+  let stoppedByTimeBudget = false;
+  while (pagesFetched < MAX_MENTIONS_PAGES_PER_INVOCATION) {
+    // Segunda rede de segurança (além do limite de páginas): para
+    // voluntariamente antes de estourar o timeout/CPU do runtime, em vez
+    // de deixar o Supabase matar a invocação à força (o que puxaria um
+    // HTTP 546 WORKER_RESOURCE_LIMIT e pularia a atualização de
+    // sync_cursors, já que um kill do isolate não é capturável pelo
+    // try/catch do handler).
+    if (Date.now() - invocationStartedAt > MENTIONS_LOOP_BUDGET_MS) {
+      stoppedByTimeBudget = true;
+      break;
+    }
+    if (!hasBrandwatchCallBudget()) {
+      log("invocation:mentions_stopped_by_call_budget", { projectId, queryId, brandwatchCallCount });
+      break;
+    }
+    const page = await fetchMentions(projectId, queryId, token, sinceAdded, useSourceTypeNew);
+    const upserted = await upsertMentions(supabase, organizationId, projectId, queryId, page);
+    mentionsCount += upserted.count;
+    pagesFetched++;
+    if (upserted.maxAdded) {
+      maxAdded = upserted.maxAdded;
+      sinceAdded = new Date(upserted.maxAdded);
+    }
+    log("invocation:mentions_page", { projectId, queryId, page: pagesFetched, count: upserted.count });
+    if (page.length < MENTIONS_PAGE_SIZE) {
+      reachedNow = true;
+      break; // alcançou o presente
+    }
+  }
+  log("invocation:mentions_synced", {
+    projectId,
+    queryId,
+    mentionsCount,
+    pagesFetched,
+    reachedNow,
+    stoppedByTimeBudget,
+  });
+
+  return {
+    didWork: true,
+    mentionsCount,
+    lastAddedCursor: maxAdded ?? cursor.last_added_cursor,
+    // backfill_completed_at só é setado na primeira vez que o walk alcança
+    // o presente, e nunca mais é limpo depois disso (mesmo padrão de "flag
+    // que só liga uma vez").
+    backfillCompletedAt: reachedNow && !cursor.backfill_completed_at
+      ? new Date().toISOString()
+      : cursor.backfill_completed_at,
+  };
+}
+
+async function runDailyMetricsStep(
+  supabase: SupabaseClient,
+  token: string,
+  projectId: number,
+  queryId: number,
+  categoryTargets: (number | null)[],
+  metricsStartDate: Date,
+  now: Date,
+): Promise<StepResult> {
+  // Sempre roda (não é throttled) — query inteira (category=null) + cada
+  // Category vinculada a alguma Narrativa deste projeto.
+  for (const categoryId of categoryTargets) {
+    await syncSentimentMetrics(supabase, token, "days", projectId, queryId, categoryId, metricsStartDate, now);
+  }
+  // Reach/engajamento por Narrativa não amostrados: 2 chamadas cobrindo
+  // TODAS as Categories de uma vez (dimensão `categories`) — é aqui que a
+  // resposta de ~4825 linhas observada no crash de produção é processada;
+  // isolar esta fase das demais é o que reduz o pico de CPU por invocação.
+  await syncCategoryDailyAggregate(
+    supabase, token, projectId, queryId, "reachEstimate", "reach_estimate", metricsStartDate, now,
+  );
+  await syncCategoryDailyAggregate(
+    supabase, token, projectId, queryId, "engagementScore", "engagement_score", metricsStartDate, now,
+  );
+  // Breakdown de plataforma — sempre roda, query inteira (sem quebra por
+  // Narrativa).
+  await syncPlatformMetrics(supabase, token, projectId, queryId, metricsStartDate, now);
+  return { didWork: true };
+}
+
+async function runWeeklyMonthlyStep(
+  supabase: SupabaseClient,
+  token: string,
+  projectId: number,
+  queryId: number,
+  categoryTargets: (number | null)[],
+  metricsStartDate: Date,
+  now: Date,
+): Promise<StepResult> {
+  // Throttle por frescor (7 dias/30 dias) — para no primeiro categoryTarget
+  // que precisar de trabalho real, em vez de percorrer todos numa só
+  // invocação (o que reintroduziria o mesmo estouro de CPU que esta fase
+  // existe pra evitar). categoryTargets restantes continuam "stale" e são
+  // retomados numa invocação futura desta mesma fase, sem lógica extra.
+  for (const categoryId of categoryTargets) {
+    if (!hasBrandwatchCallBudget()) break;
+    let didWork = false;
+    if (await isGrainStale(supabase, "weeks", projectId, queryId, categoryId, 7 * 24 * 60 * 60 * 1000)) {
+      await syncSentimentMetrics(supabase, token, "weeks", projectId, queryId, categoryId, metricsStartDate, now);
+      didWork = true;
+    }
+    if (await isGrainStale(supabase, "months", projectId, queryId, categoryId, 30 * 24 * 60 * 60 * 1000)) {
+      await syncSentimentMetrics(supabase, token, "months", projectId, queryId, categoryId, metricsStartDate, now);
+      didWork = true;
+    }
+    if (didWork) return { didWork: true };
+  }
+  return { didWork: false };
+}
+
+async function runTopicsStep(
+  supabase: SupabaseClient,
+  token: string,
+  projectId: number,
+  queryId: number,
+  categoryTargets: (number | null)[],
+  metricsStartDate: Date,
+  now: Date,
+): Promise<StepResult> {
+  for (const categoryId of categoryTargets) {
+    if (!hasBrandwatchCallBudget()) break;
+    if (await isTopicsStale(supabase, projectId, queryId, categoryId, 7 * 24 * 60 * 60 * 1000)) {
+      await syncTopicsData(supabase, token, projectId, queryId, categoryId, metricsStartDate, now);
+      return { didWork: true };
+    }
+  }
+  return { didWork: false };
+}
+
+async function runTopAuthorsStep(
+  supabase: SupabaseClient,
+  token: string,
+  projectId: number,
+  queryId: number,
+  categoryTargets: (number | null)[],
+  metricsStartDate: Date,
+  now: Date,
+): Promise<StepResult> {
+  for (const categoryId of categoryTargets) {
+    if (!hasBrandwatchCallBudget()) break;
+    if (await isTopAuthorsStale(supabase, projectId, queryId, categoryId, 7 * 24 * 60 * 60 * 1000)) {
+      await syncTopAuthors(supabase, token, projectId, queryId, categoryId, metricsStartDate, now);
+      return { didWork: true };
+    }
+  }
+  return { didWork: false };
+}
+
+async function runSovStep(
+  supabase: SupabaseClient,
+  token: string,
+  projectId: number,
+  queryId: number,
+  metricsStartDate: Date,
+  now: Date,
+): Promise<StepResult> {
+  const { data: queryGroups, error: queryGroupsError } = await supabase
+    .from("bw_query_groups")
+    .select("id")
+    .eq("project_id", projectId)
+    .contains("query_ids", [queryId]);
+  if (queryGroupsError) throw new Error(`Erro lendo bw_query_groups: ${queryGroupsError.message}`);
+
+  for (const group of queryGroups ?? []) {
+    if (!hasBrandwatchCallBudget()) break;
+    const queryGroupId = (group as { id: number }).id;
+    if (await isQueryGroupSovStale(supabase, queryGroupId, 7 * 24 * 60 * 60 * 1000)) {
+      await syncQueryGroupSov(supabase, token, projectId, queryGroupId, metricsStartDate, now);
+      return { didWork: true };
+    }
+  }
+  return { didWork: false };
+}
+
 async function runSyncInvocation(supabase: SupabaseClient, invocationStartedAt: number): Promise<Response> {
   // Passo 1: resolver o próximo par (project_id, query_id) "devido" — mesmo
   // corte de BW_SYNC_INTERVAL_HOURS já checado no gate barato do handler
@@ -1521,12 +1799,16 @@ async function runSyncInvocation(supabase: SupabaseClient, invocationStartedAt: 
   // conjunto de pares devidos não muda dentro da mesma invocação — mas o
   // filtro precisa estar presente aqui também, senão o round-robin voltaria
   // a pegar qualquer par pelo simples critério de "mais antigo", ignorando
-  // o intervalo de negócio).
+  // o intervalo de negócio). Um par "em ciclo" (next_step != 'metadata')
+  // continua com `last_synced_at` antigo até o ciclo fechar, então
+  // naturalmente permanece o mais "devido" e é escolhido de novo antes de
+  // qualquer par que acabou de vencer o intervalo — o ciclo em andamento
+  // termina antes de outro começar.
   const intervalHours = getSyncIntervalHours();
   const dueCutoffIso = new Date(Date.now() - intervalHours * 3_600_000).toISOString();
   const { data: cursor, error: cursorError } = await supabase
     .from("sync_cursors")
-    .select("id, project_id, query_id, last_added_cursor, last_synced_at, backfill_completed_at")
+    .select("id, project_id, query_id, last_added_cursor, last_synced_at, backfill_completed_at, next_step")
     .or(`last_synced_at.is.null,last_synced_at.lt.${dueCutoffIso}`)
     .order("last_synced_at", { ascending: true, nullsFirst: true })
     .limit(1)
@@ -1548,7 +1830,11 @@ async function runSyncInvocation(supabase: SupabaseClient, invocationStartedAt: 
   }
 
   const { project_id: projectId, query_id: queryId } = cursor as { project_id: number; query_id: number };
-  log("invocation:next_pair", { projectId, queryId, lastSyncedAt: cursor.last_synced_at });
+  const rawStep = (cursor as { next_step?: string | null }).next_step;
+  const startStep: SyncStep = (SYNC_STEPS as readonly string[]).includes(rawStep ?? "")
+    ? (rawStep as SyncStep)
+    : "metadata";
+  log("invocation:next_pair", { projectId, queryId, lastSyncedAt: cursor.last_synced_at, step: startStep });
 
   // Passo 2: resolver o access token. TODO (ver CLAUDE.md): ainda minta um
   // token novo por invocação em vez de reusar o cache em
@@ -1593,177 +1879,91 @@ async function runSyncInvocation(supabase: SupabaseClient, invocationStartedAt: 
     if (projectRowError) throw new Error(`Erro lendo organization_id de bw_projects: ${projectRowError.message}`);
     const organizationId = projectRow.organization_id as string;
 
-    // Passo 3: bootstrap de metadata (condicional).
-    if (await needsMetadataRefresh(supabase, projectId)) {
-      await refreshMetadata(supabase, token, projectId, organizationId);
-    } else {
-      log("invocation:metadata_fresh", { projectId });
-    }
-
-    // Passo 4: polling de mentions — pagina dentro da mesma invocação até
-    // alcançar o presente ou esgotar o orçamento de páginas, em vez de
-    // avançar só uma página por invocação (correção 2026-07-10, pedido do
-    // usuário: "a tabela de menções só conta pouco mais de 100 menções, o
-    // que não condiz com a realidade" — com invocações manuais/espaçadas,
-    // uma página por invocação levaria muito tempo pra cobrir um
-    // trimestre de histórico). `sourceType=new` só entra quando o walk já
-    // alcançou o presente pelo menos uma vez antes (ver
-    // resolveMentionsSinceAdded) — antes disso, sempre queremos backfill.
-    const { sinceAdded: initialSinceAdded, useSourceTypeNew } = await resolveMentionsSinceAdded(supabase, queryId, {
-      last_added_cursor: cursor.last_added_cursor as string | null,
-      backfill_completed_at: cursor.backfill_completed_at as string | null,
-    });
-    let sinceAdded = initialSinceAdded;
-
-    let mentionsCount = 0;
-    let maxAdded: string | null = null;
-    let mentionsPagesFetched = 0;
-    let reachedNow = false;
-    let stoppedByTimeBudget = false;
-    while (mentionsPagesFetched < MAX_MENTIONS_PAGES_PER_INVOCATION) {
-      // Segunda rede de segurança (além do limite de páginas): para
-      // voluntariamente antes de estourar o timeout/CPU do runtime, em vez
-      // de deixar o Supabase matar a invocação à força (o que puxaria um
-      // HTTP 546 WORKER_RESOURCE_LIMIT e pularia a atualização de
-      // sync_cursors, já que um kill do isolate não é capturável pelo
-      // try/catch do handler).
-      if (Date.now() - invocationStartedAt > MENTIONS_LOOP_BUDGET_MS) {
-        stoppedByTimeBudget = true;
-        break;
-      }
-      // Correção 2026-07-10/11: também respeita o orçamento global de
-      // chamadas da invocação (compartilhado com bootstrap/métricas/
-      // temas/top-authors abaixo) — sem isso, uma Query com muito
-      // histórico sozinha já esgotaria o orçamento antes de qualquer
-      // outro passo rodar.
-      if (!hasBrandwatchCallBudget()) {
-        log("invocation:mentions_stopped_by_call_budget", { projectId, queryId, brandwatchCallCount });
-        break;
-      }
-      const page = await fetchMentions(projectId, queryId, token, sinceAdded, useSourceTypeNew);
-      const upserted = await upsertMentions(supabase, organizationId, projectId, queryId, page);
-      mentionsCount += upserted.count;
-      mentionsPagesFetched++;
-      if (upserted.maxAdded) {
-        maxAdded = upserted.maxAdded;
-        sinceAdded = new Date(upserted.maxAdded);
-      }
-      log("invocation:mentions_page", { projectId, queryId, page: mentionsPagesFetched, count: upserted.count });
-      if (page.length < MENTIONS_PAGE_SIZE) {
-        reachedNow = true;
-        break; // alcançou o presente
-      }
-    }
-    log("invocation:mentions_synced", {
-      projectId,
-      queryId,
-      mentionsCount,
-      pagesFetched: mentionsPagesFetched,
-      reachedNow,
-      stoppedByTimeBudget,
-    });
-
-    // Passo 5: métricas diárias — sempre roda, query inteira (category=null)
-    // + cada Category vinculada a alguma Narrativa deste projeto.
     const narrativeCategoryIds = await fetchNarrativeCategoryIds(supabase, projectId);
     const categoryTargets: (number | null)[] = [null, ...narrativeCategoryIds];
+    const cursorMentionsMeta = {
+      last_added_cursor: cursor.last_added_cursor as string | null,
+      backfill_completed_at: cursor.backfill_completed_at as string | null,
+    };
 
-    for (const categoryId of categoryTargets) {
-      await syncSentimentMetrics(supabase, token, "days", projectId, queryId, categoryId, metricsStartDate, now);
+    // Passo 3: dispatcher de fases. Uma invocação avança por quantas fases
+    // não tiverem trabalho real a fazer (checagem de frescor é barata —
+    // não é isso que estoura CPU), mas para assim que uma fase fizer
+    // alguma chamada à Brandwatch. Limite de iterações = número de fases,
+    // então mesmo um ciclo inteiro sem trabalho nenhum termina sozinho.
+    let currentStep: SyncStep = startStep;
+    let mentionsCount = 0;
+    for (let i = 0; i < SYNC_STEPS.length; i++) {
+      log("invocation:step_start", { projectId, queryId, step: currentStep });
+
+      let result: StepResult;
+      switch (currentStep) {
+        case "metadata":
+          result = await runMetadataStep(supabase, token, projectId, organizationId);
+          break;
+        case "mentions":
+          result = await runMentionsStep(
+            supabase, token, projectId, queryId, organizationId, cursorMentionsMeta, invocationStartedAt,
+          );
+          break;
+        case "daily_metrics":
+          result = await runDailyMetricsStep(supabase, token, projectId, queryId, categoryTargets, metricsStartDate, now);
+          break;
+        case "weekly_monthly":
+          result = await runWeeklyMonthlyStep(supabase, token, projectId, queryId, categoryTargets, metricsStartDate, now);
+          break;
+        case "topics":
+          result = await runTopicsStep(supabase, token, projectId, queryId, categoryTargets, metricsStartDate, now);
+          break;
+        case "top_authors":
+          result = await runTopAuthorsStep(supabase, token, projectId, queryId, categoryTargets, metricsStartDate, now);
+          break;
+        case "sov":
+          result = await runSovStep(supabase, token, projectId, queryId, metricsStartDate, now);
+          break;
+        default:
+          // Inalcançável (SYNC_STEPS é exaustivo) — só pra satisfazer o
+          // compilador quanto à atribuição definida de `result`.
+          throw new Error(`Fase desconhecida: ${currentStep}`);
+      }
+
+      const { next, cycleComplete } = nextSyncStep(currentStep);
+      const cursorUpdate: Record<string, unknown> = { next_step: next, status: "idle", last_error: null };
+      if (result.lastAddedCursor !== undefined) cursorUpdate.last_added_cursor = result.lastAddedCursor;
+      if (result.backfillCompletedAt !== undefined) cursorUpdate.backfill_completed_at = result.backfillCompletedAt;
+      // last_synced_at só avança quando o ciclo inteiro (todas as 7 fases)
+      // fecha — é isso que rearma o gate de BW_SYNC_INTERVAL_HOURS. Antes
+      // disso, o par continua "devido" e será escolhido de novo no próximo
+      // heartbeat (ou clique manual) pra continuar de onde parou.
+      if (cycleComplete) cursorUpdate.last_synced_at = new Date().toISOString();
+
+      const { error: updateCursorError } = await supabase.from("sync_cursors").update(cursorUpdate).eq("id", cursor.id);
+      if (updateCursorError) throw new Error(`Erro atualizando sync_cursors: ${updateCursorError.message}`);
+
+      if (result.mentionsCount) mentionsCount += result.mentionsCount;
+
+      await supabase.from("sync_log").insert({
+        project_id: projectId,
+        query_id: queryId,
+        status: "success",
+        rows_processed: result.mentionsCount ?? 0,
+      });
+
+      log("invocation:step_done", {
+        projectId, queryId, step: currentStep, didWork: result.didWork, nextStep: next, cycleComplete,
+      });
+
+      if (result.didWork || cycleComplete) break;
+      currentStep = next;
     }
-
-    // Correção 2026-07-10 (pedido do usuário: reach/engajamento por
-    // Narrativa não amostrados): 2 chamadas cobrindo TODAS as Categories
-    // de uma vez (dimensão `categories`), não uma por Narrativa — roda
-    // toda invocação, mesmo throttle do diário acima.
-    await syncCategoryDailyAggregate(
-      supabase, token, projectId, queryId, "reachEstimate", "reach_estimate", metricsStartDate, now,
-    );
-    await syncCategoryDailyAggregate(
-      supabase, token, projectId, queryId, "engagementScore", "engagement_score", metricsStartDate, now,
-    );
-
-    // Passo 6c: breakdown de plataforma — sempre roda, mesmo throttle do
-    // diário (query inteira, sem quebra por Narrativa).
-    await syncPlatformMetrics(supabase, token, projectId, queryId, metricsStartDate, now);
-
-    // Passo 6: semanal/mensal — throttle por frescor (evita gastar rate
-    // limit em dado que muda bem mais devagar que a cada 20-30s).
-    // Correção 2026-07-10/11: cada iteração também respeita o orçamento
-    // global de chamadas — categoryTargets restantes ficam pro próximo
-    // ciclo (continuam "stale", então são retomados naturalmente na
-    // próxima invocação, sem lógica extra de retomada).
-    for (const categoryId of categoryTargets) {
-      if (!hasBrandwatchCallBudget()) {
-        log("invocation:category_targets_stopped_by_call_budget", { projectId, queryId, brandwatchCallCount });
-        break;
-      }
-      if (await isGrainStale(supabase, "weeks", projectId, queryId, categoryId, 7 * 24 * 60 * 60 * 1000)) {
-        await syncSentimentMetrics(supabase, token, "weeks", projectId, queryId, categoryId, metricsStartDate, now);
-      }
-      if (await isGrainStale(supabase, "months", projectId, queryId, categoryId, 30 * 24 * 60 * 60 * 1000)) {
-        await syncSentimentMetrics(supabase, token, "months", projectId, queryId, categoryId, metricsStartDate, now);
-      }
-      // Passo 6d: temas (data/topics) — mesmo throttle semanal, por
-      // categoryTarget (query inteira + cada Narrativa).
-      if (await isTopicsStale(supabase, projectId, queryId, categoryId, 7 * 24 * 60 * 60 * 1000)) {
-        await syncTopicsData(supabase, token, projectId, queryId, categoryId, metricsStartDate, now);
-      }
-      // Passo 6e: ranking de autores — mesmo throttle semanal. Correção
-      // 2026-07-10 (pedido do usuário: influência do autor também por
-      // Narrativa): agora por categoryTarget, não só a Query inteira.
-      if (await isTopAuthorsStale(supabase, projectId, queryId, categoryId, 7 * 24 * 60 * 60 * 1000)) {
-        await syncTopAuthors(supabase, token, projectId, queryId, categoryId, metricsStartDate, now);
-      }
-    }
-
-    // Passo 6b: SOV de Query Group, se a query pertence a algum grupo.
-    const { data: queryGroups, error: queryGroupsError } = await supabase
-      .from("bw_query_groups")
-      .select("id")
-      .eq("project_id", projectId)
-      .contains("query_ids", [queryId]);
-    if (queryGroupsError) throw new Error(`Erro lendo bw_query_groups: ${queryGroupsError.message}`);
-
-    for (const group of queryGroups ?? []) {
-      if (!hasBrandwatchCallBudget()) {
-        log("invocation:sov_stopped_by_call_budget", { projectId, brandwatchCallCount });
-        break;
-      }
-      const queryGroupId = (group as { id: number }).id;
-      if (await isQueryGroupSovStale(supabase, queryGroupId, 7 * 24 * 60 * 60 * 1000)) {
-        await syncQueryGroupSov(supabase, token, projectId, queryGroupId, metricsStartDate, now);
-      }
-    }
-
-    // Passo 7: fechar o ciclo. backfill_completed_at só é setado na
-    // primeira vez que o walk alcança o presente, e nunca mais é limpo
-    // depois disso (mesmo padrão de "flag que só liga uma vez").
-    const { error: updateCursorError } = await supabase
-      .from("sync_cursors")
-      .update({
-        last_added_cursor: maxAdded ?? cursor.last_added_cursor,
-        last_synced_at: new Date().toISOString(),
-        status: "idle",
-        last_error: null,
-        ...(reachedNow && !cursor.backfill_completed_at
-          ? { backfill_completed_at: new Date().toISOString() }
-          : {}),
-      })
-      .eq("id", cursor.id);
-    if (updateCursorError) throw new Error(`Erro atualizando sync_cursors: ${updateCursorError.message}`);
-
-    await supabase.from("sync_log").insert({
-      project_id: projectId,
-      query_id: queryId,
-      status: "success",
-      rows_processed: mentionsCount,
-    });
 
     log("invocation:done", { durationMs: Date.now() - invocationStartedAt, projectId, queryId, mentionsCount });
 
     return new Response(
-      JSON.stringify({ ok: true, projectId, queryId, mentionsCount, tokenExpiresAt: brandwatchToken.expiresAt.toISOString() }),
+      JSON.stringify({
+        ok: true, projectId, queryId, mentionsCount, step: currentStep,
+        tokenExpiresAt: brandwatchToken.expiresAt.toISOString(),
+      }),
       { headers: { "Content-Type": "application/json" } },
     );
   } catch (err) {
@@ -1771,7 +1971,8 @@ async function runSyncInvocation(supabase: SupabaseClient, invocationStartedAt: 
     logError("invocation:failed", err);
 
     // Falha isolada por par — marca erro no cursor, mas não derruba a fila
-    // (a próxima invocação pega outro par ou tenta este de novo).
+    // (a próxima invocação pega outro par ou tenta este de novo). Não
+    // avança next_step nem last_synced_at — a mesma fase é retentada.
     await supabase
       .from("sync_cursors")
       .update({ status: "error", last_error: message })
