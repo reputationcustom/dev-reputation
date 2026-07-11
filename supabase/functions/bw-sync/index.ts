@@ -1444,6 +1444,122 @@ async function isTopAuthorsStale(
 }
 
 // =========================================================================
+// Passo 6.7 — Enriquecimento por autor: impressões e temas (2026-07-11,
+// pedido do usuário: "impressões por autor e temas por autor. Incluir no
+// MVP e garantir que temos informações suficientes"). Ver data-model.md
+// §5 (bw_query_top_authors.impressions, bw_query_author_topics) e
+// sync-brandwatch.md passo 6.7 pro racional completo — resumindo: `author`
+// é um filtro documentado (available-filters.md) válido em chamadas de
+// Data Retrieval, e `impressions` é um agregado de chart oficial
+// confirmado (chart-dimensions-and-aggregates.md, mesma tabela que já
+// confirmou reachEstimate/engagementScore) — combinar os dois dá dado
+// oficial não amostrado filtrado por autor, sem violar a premissa de
+// nunca agregar localmente sobre `mentions`.
+// =========================================================================
+
+async function syncAuthorImpressions(
+  projectId: number,
+  queryId: number,
+  author: string,
+  token: string,
+  startDate: Date,
+  endDate: Date,
+): Promise<number> {
+  const params = new URLSearchParams({
+    queryId: String(queryId),
+    author,
+    startDate: formatBrandwatchDate(startDate),
+    endDate: formatBrandwatchDate(endDate),
+    timezone: TIMEZONE,
+  });
+
+  // Mesmo padrão de dimensão `queries` já usado em syncQueryGroupSov()
+  // (data/volume/queries/weeks?queryGroupId=X), só trocando o agregado
+  // (impressions) e o filtro de escopo (author em vez de queryGroupId).
+  // ⚠️ Não confirmado com um payload de exemplo específico combinando
+  // impressions/queries/author — mesma categoria de risco já aceita pras
+  // demais combinações de filtro análogas neste projeto.
+  const json = await callBrandwatch(`/projects/${projectId}/data/impressions/queries/days?${params.toString()}`, token);
+  const results = (json.results ?? []) as { id: string | number; values?: { id: string; value: number }[] }[];
+
+  let total = 0;
+  for (const series of results) {
+    for (const point of series.values ?? []) {
+      total += point.value ?? 0;
+    }
+  }
+  log("syncAuthorImpressions:done", { projectId, queryId, author, total });
+  return total;
+}
+
+async function syncAuthorTopics(
+  supabase: SupabaseClient,
+  token: string,
+  projectId: number,
+  queryId: number,
+  author: string,
+  startDate: Date,
+  endDate: Date,
+): Promise<void> {
+  const params = new URLSearchParams({
+    queryId: String(queryId),
+    author,
+    startDate: formatBrandwatchDate(startDate),
+    endDate: formatBrandwatchDate(endDate),
+    extract: "words,phrases,hashtags,entities,people,places,organisations",
+    metrics: "volume,percentageVolume,sentiment,trending",
+    limit: "50",
+  });
+
+  const json = await callBrandwatch(`/projects/${projectId}/data/topics?${params.toString()}`, token);
+  const topics = (json.topics ?? []) as any[];
+
+  const metricWeek = toDateOnly(new Date().toISOString());
+  const rows = topics
+    .map((t) => {
+      const sentiment = t.sentiment ?? {};
+      return {
+        project_id: projectId,
+        query_id: queryId,
+        author,
+        topic_type: String(t.type ?? "unknown"),
+        label: String(t.label ?? t.id ?? ""),
+        volume: t.volume ?? 0,
+        percentage_volume: t.percentageVolume ?? null,
+        sentiment_positive: sentiment.positive ?? 0,
+        sentiment_neutral: sentiment.neutral ?? 0,
+        sentiment_negative: sentiment.negative ?? 0,
+        trending: t.trending ?? null,
+        metric_week: metricWeek,
+        synced_at: new Date().toISOString(),
+      };
+    })
+    .filter((r) => r.label.length > 0);
+
+  if (rows.length === 0) {
+    log("syncAuthorTopics:empty", { projectId, queryId, author });
+    return;
+  }
+
+  // Mesma correção de "ON CONFLICT DO UPDATE" já aplicada em
+  // syncTopicsData()/syncTopAuthors() — a Brandwatch pode devolver o
+  // mesmo tema mais de uma vez na mesma resposta.
+  const uniqueRows = dedupeByKey(rows, (r) => `${r.topic_type}::${r.label}`);
+  if (uniqueRows.length !== rows.length) {
+    log("syncAuthorTopics:duplicates_removed", {
+      projectId, queryId, author, removed: rows.length - uniqueRows.length,
+    });
+  }
+
+  const { error } = await supabase
+    .from("bw_query_author_topics")
+    .upsert(uniqueRows, { onConflict: "project_id,query_id,author,topic_type,label,metric_week" });
+  if (error) throw new Error(`Erro upsertando bw_query_author_topics: ${error.message}`);
+
+  log("syncAuthorTopics:done", { projectId, queryId, author, rows: uniqueRows.length });
+}
+
+// =========================================================================
 // Handler principal
 // =========================================================================
 
@@ -1560,6 +1676,7 @@ const SYNC_STEPS = [
   "weekly_monthly",
   "topics",
   "top_authors",
+  "author_enrichment",
   "sov",
 ] as const;
 type SyncStep = typeof SYNC_STEPS[number];
@@ -1766,6 +1883,56 @@ async function runTopAuthorsStep(
   return { didWork: false };
 }
 
+async function runAuthorEnrichmentStep(
+  supabase: SupabaseClient,
+  token: string,
+  projectId: number,
+  queryId: number,
+  metricsStartDate: Date,
+  now: Date,
+): Promise<StepResult> {
+  // Escopo inicial: só os top 10 autores por volume da Query inteira
+  // (category_id is null), não todo autor já visto nem quebra por
+  // Narrativa — salvaguarda de orçamento (2 chamadas extras por autor
+  // enriquecido). Ver data-model.md §5.
+  const metricWeek = toDateOnly(now.toISOString());
+  const { data: candidates, error: candidatesError } = await supabase
+    .from("bw_query_top_authors")
+    .select("author, impressions")
+    .eq("project_id", projectId)
+    .eq("query_id", queryId)
+    .is("category_id", null)
+    .eq("metric_week", metricWeek)
+    .order("volume", { ascending: false })
+    .limit(10);
+  if (candidatesError) {
+    throw new Error(`Erro lendo bw_query_top_authors pra enriquecimento: ${candidatesError.message}`);
+  }
+
+  const pending = (candidates ?? []).find((c) => c.impressions === null);
+  if (!pending) {
+    log("runAuthorEnrichmentStep:all_enriched", { projectId, queryId, candidates: candidates?.length ?? 0 });
+    return { didWork: false };
+  }
+  if (!hasBrandwatchCallBudget()) return { didWork: false };
+
+  const author = pending.author as string;
+  const impressions = await syncAuthorImpressions(projectId, queryId, author, token, metricsStartDate, now);
+  const { error: updateError } = await supabase
+    .from("bw_query_top_authors")
+    .update({ impressions })
+    .eq("project_id", projectId)
+    .eq("query_id", queryId)
+    .is("category_id", null)
+    .eq("author", author)
+    .eq("metric_week", metricWeek);
+  if (updateError) throw new Error(`Erro atualizando bw_query_top_authors.impressions: ${updateError.message}`);
+
+  await syncAuthorTopics(supabase, token, projectId, queryId, author, metricsStartDate, now);
+
+  return { didWork: true };
+}
+
 async function runSovStep(
   supabase: SupabaseClient,
   token: string,
@@ -1917,6 +2084,9 @@ async function runSyncInvocation(supabase: SupabaseClient, invocationStartedAt: 
           break;
         case "top_authors":
           result = await runTopAuthorsStep(supabase, token, projectId, queryId, categoryTargets, metricsStartDate, now);
+          break;
+        case "author_enrichment":
+          result = await runAuthorEnrichmentStep(supabase, token, projectId, queryId, metricsStartDate, now);
           break;
         case "sov":
           result = await runSovStep(supabase, token, projectId, queryId, metricsStartDate, now);

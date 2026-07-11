@@ -201,13 +201,17 @@ deve ser conferido contra esta lista antes de ser considerado pronto.
 >   padrão oferece, incl. série diária/breakdown por canal por tópico),
 >   `bw_query_top_authors` (ranking de autores por Query e por Narrativa,
 >   não amostrado, incl. `tweets`/`retweets` por autor — ⚠️ dado já
->   capturado em `platform_stats`, só falta extrair como coluna),
->   `bw_query_x_insights` (hashtags/emojis/URLs/autores citados específicos
->   de X com sentimento próprio, via os 4 endpoints de "X (Twitter)
->   Insights"), `bw_query_demographics_daily` (gender/tipo de conta/
->   interesse/profissão — só X — e localização, via dimensões de chart
->   oficiais não amostradas) — os três últimos ⚠️ identificados em revisão
->   de spec 2026-07-11, ainda sem migration/código.
+>   capturado em `platform_stats`, só falta extrair como coluna — e
+>   `impressions` por autor via `data/impressions/queries/days?author=`,
+>   ✅ implementado nesta leva pros top 10 autores da Query),
+>   `bw_query_author_topics` (temas por autor via `data/topics?author=`, ✅
+>   implementado nesta leva, mesmo escopo top 10), `bw_query_x_insights`
+>   (hashtags/emojis/URLs/autores citados específicos de X com sentimento
+>   próprio, via os 4 endpoints de "X (Twitter) Insights"),
+>   `bw_query_demographics_daily` (gender/tipo de conta/interesse/profissão
+>   — só X — e localização, via dimensões de chart oficiais não
+>   amostradas) — os dois últimos ⚠️ identificados em revisão de spec
+>   2026-07-11, ainda sem migration/código.
 >
 > Isso já cobre o que `entities` (via `mentions.author`),
 > `threshold-engine`/`intelligent-feed` (via `mentions`/`bw_categories`/
@@ -269,21 +273,30 @@ deve ser conferido contra esta lista antes de ser considerado pronto.
   autor. `data/topics` (Consumer Research API) é o mecanismo mais próximo
   de tematização automática disponível hoje — ver `sync-brandwatch.md`
   passo 6.4.
-- **Impressões por autor e temas por autor (X)** — pedido do usuário
-  2026-07-11 junto com a revisão que deu origem a `bw_query_x_insights`/
-  `bw_query_demographics_daily`. Confirmado que **não têm fonte oficial
-  não amostrada**, diferente dos outros itens desta leva:
-  - `data/volume/topauthors/queries` (Top Authors) não devolve impressões
-    por autor (confirmado no payload real) — só existe `impressions` por
-    mention individual (campo de X); agregar isso por autor localmente
-    sobre `mentions` violaria a premissa de nunca somar sobre a amostra
-    (ver `narrative_metrics`).
-  - `data/topics` é agregado por Query/Category inteira, não quebra por
-    autor — não existe endpoint da Brandwatch pra tematização por autor
-    específico.
-  Sem alternativa oficial pra nenhum dos dois — ficam fora do MVP até a
-  Brandwatch (ou uma mudança de escopo, ex: aceitar estimativa amostrada
-  rotulada como tal) mudar esse cenário.
+- ✅ **Impressões por autor e temas por autor (X) — conclusão revertida
+  2026-07-11, mesmo dia**: a primeira leitura (linha acima nesta mesma
+  revisão) tinha concluído "sem fonte oficial" — **corrigido** após
+  pesquisa mais a fundo, a pedido do usuário ("incluir no MVP e garantir
+  que temos informações suficientes"). Achado: `impressions` **é** um
+  agregado de chart oficial documentado (`developers.brandwatch.com/docs/
+  chart-dimensions-and-aggregates`, mesma tabela que já confirmou
+  `reachEstimate`/`engagementScore`), e o filtro `author=<handle>`
+  (`available-filters.md`) é documentado como válido em "Mention ou Data
+  Retrieval calls" — mesmo nível de evidência genérica já aceito neste
+  projeto pro filtro `category=<id>` em `data/volume/sentiment/days`/
+  `data/topics`/`data/volume/topauthors/queries`. Combinando os dois:
+  `data/impressions/queries/days?queryId=X&author=<handle>` (mesmo padrão
+  de dimensão `queries` já usado em `syncQueryGroupSov()`,
+  `data/volume/queries/weeks?queryGroupId=X`) dá impressões oficiais **não
+  amostradas** de um autor específico, e `data/topics?queryId=X&author=<handle>`
+  dá temas oficiais **não amostrados** desse mesmo autor — sem violar a
+  premissa de nunca agregar localmente sobre `mentions`, porque quem agrega
+  é o próprio motor de agregados da Brandwatch, só filtrado por autor (não
+  um cálculo nosso sobre a amostra). Ver `data-model.md` §5
+  (`bw_query_top_authors.impressions`, `bw_query_author_topics`) e
+  `sync-brandwatch.md` passo 6.7 — implementado nesta leva, escopo inicial
+  limitado aos top 10 autores da Query inteira (sem quebra por Narrativa
+  ainda, ver ressalva de orçamento no passo 6.7).
 
 ## Decisões pendentes globais
 

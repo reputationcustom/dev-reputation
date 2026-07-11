@@ -58,6 +58,7 @@ computação síncrona, diferente de esperar rede).
 | `weekly_monthly` | Passo 6.1 (semanal/mensal, throttle 7/30 dias) |
 | `topics` | Passo 6.4 (temas, throttle 7 dias) |
 | `top_authors` | Passo 6.5 (ranking de autores, throttle 7 dias) |
+| `author_enrichment` | ✅ Passo 6.7 (impressões + temas dos top 10 autores, throttle 7 dias) |
 | `demographics` | ⚠️ Passo 6.6 (demografia — gender/localização, throttle 7 dias) — **pendente de implementação**, ver `data-model.md` §5 |
 | `sov` | Passo 6.2 (Share of Voice de Query Group, throttle 7 dias) |
 
@@ -568,6 +569,47 @@ gigante, complementar à quebra em fases.
    estouro de CPU corrigido na "Execução em fases" acima. Escopo inicial:
    só nível de Query inteira, sem quebra por Narrativa (mesmo escopo hoje
    de `bw_query_metrics_daily_by_platform`).
+6.7. ✅ **Enriquecimento por autor — impressões e temas (2026-07-11,
+   pedido do usuário: "incluir no MVP e garantir que temos informações
+   suficientes")**. Roda logo após o passo 6.5 (`author_enrichment` vem
+   antes de `demographics`/`sov` em `SYNC_STEPS`) — depende de
+   `bw_query_top_authors` já ter os top autores da Query inteira
+   (`category_id is null`) da semana corrente.
+   **Conclusão revertida no mesmo dia**: a primeira leitura desta spec
+   tinha marcado "impressões por autor" e "temas por autor" como sem fonte
+   oficial — corrigido após pesquisa mais a fundo. Achado: `impressions` é
+   um agregado de chart oficial confirmado em
+   `developers.brandwatch.com/docs/chart-dimensions-and-aggregates` (mesma
+   tabela que já confirmou `reachEstimate`/`engagementScore`), e o filtro
+   `author=<handle>` é documentado em `available-filters.md` como válido
+   em "Mention ou Data Retrieval calls" — mesmo nível de evidência
+   genérica já aceito neste projeto pro filtro `category=<id>` usado nos
+   passos 6.1/6.4/6.5.
+   Pega os **top 10 autores por `volume`** de `bw_query_top_authors`
+   (`category_id is null`, `metric_week` corrente) ainda sem
+   `impressions` preenchido para a semana, itera **um autor por
+   invocação** (para no primeiro que precisar de trabalho — mesmo padrão
+   das demais fases stale-gated) e, pra esse autor:
+   - `data/impressions/queries/days?queryId=<id>&author=<handle>&startDate&endDate`
+     — mesmo padrão de dimensão `queries` já usado em `syncQueryGroupSov()`
+     (`data/volume/queries/weeks?queryGroupId=X`), só trocando o agregado
+     (`impressions`) e o filtro de escopo (`author` em vez de
+     `queryGroupId`). Soma os valores diários da série (cada um já um
+     número oficial não-amostrado da Brandwatch) e grava em
+     `bw_query_top_authors.impressions` pra aquele autor/semana — **não**
+     é o mesmo tipo de cálculo que a premissa de sampling proíbe, porque
+     quem agrega é o motor de agregados da própria Brandwatch, filtrado
+     por autor, não uma soma nossa sobre `mentions`.
+   - `data/topics?queryId=<id>&author=<handle>&extract=...&metrics=...`
+     (mesmos parâmetros do passo 6.4, só com `author` adicionado) — upsert
+     em `bw_query_author_topics` (dedup por `topic_type::label`, mesma
+     correção do passo 6.5).
+   ⚠️ Não confirmado com um payload de exemplo específico combinando
+   `impressions`/`queries`/`author`, nem `topics`/`author` — mesma
+   categoria de risco já aceita pras demais combinações de filtro análogas
+   neste projeto. **Salvaguarda de orçamento**: 2 chamadas por autor
+   enriquecido, só top 10 da Query inteira (não todo autor já visto, sem
+   quebra por Narrativa ainda) — ver `data-model.md` §5.
 7. Atualiza `sync_cursors` ao final de **cada fase** (não só ao final de
    tudo — ver "Execução em fases" acima): sempre `next_step` (avança pra
    próxima fase) + `status = 'idle'` + `last_error = null`; `last_added_cursor`/
@@ -628,7 +670,7 @@ gigante, complementar à quebra em fases.
 ## Dados envolvidos
 
 - **Lê**: `brandwatch_credentials`, `sync_cursors`, `bw_projects`, `bw_queries`, `bw_query_groups`, `bw_categories`, `narratives` (para saber quais `bw_category_id` merecem chart por categoria).
-- **Escreve**: `bw_projects`, `bw_queries`, `bw_query_groups`, `bw_categories`, `mentions`, `bw_query_metrics_daily`/`weekly`/`monthly`, `bw_query_metrics_daily_by_platform`, `bw_query_topics`, `bw_query_top_authors`, `bw_query_x_insights` (⚠️ pendente de implementação, ver passo 6.4b), `bw_query_demographics_daily` (⚠️ pendente de implementação, ver passo 6.6), `bw_query_group_metrics_weekly`, `sync_cursors`, `sync_log`.
+- **Escreve**: `bw_projects`, `bw_queries`, `bw_query_groups`, `bw_categories`, `mentions`, `bw_query_metrics_daily`/`weekly`/`monthly`, `bw_query_metrics_daily_by_platform`, `bw_query_topics`, `bw_query_top_authors`, `bw_query_author_topics` (✅ implementado, ver passo 6.7), `bw_query_x_insights` (⚠️ pendente de implementação, ver passo 6.4b), `bw_query_demographics_daily` (⚠️ pendente de implementação, ver passo 6.6), `bw_query_group_metrics_weekly`, `sync_cursors`, `sync_log`.
 - Detalhes de schema: ver [data-model.md](data-model.md).
 
 ## Permissões

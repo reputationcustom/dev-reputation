@@ -396,15 +396,18 @@ security` em ambas, **sem nenhuma policy** (deny-all para `anon`/
 > ⚠️ **`next_step` adicionado (2026-07-11, migration `20260711030000`,
 > bug de produção: "CPU Time exceeded")**: `sync_cursors` ganha `next_step
 > text not null default 'metadata'`, com check constraint restringindo aos
-> 7 valores de `SYNC_STEPS` em `bw-sync/index.ts` (`metadata`, `mentions`,
-> `daily_metrics`, `weekly_monthly`, `topics`, `top_authors`, `sov`). Uma
+> valores de `SYNC_STEPS` em `bw-sync/index.ts` — originalmente 7
+> (`metadata`, `mentions`, `daily_metrics`, `weekly_monthly`, `topics`,
+> `top_authors`, `sov`), ampliado pra 8 na mesma revisão (migration
+> `20260711040000`) com `author_enrichment` inserido entre `top_authors` e
+> `sov` (ver `bw_query_top_authors`/`bw_query_author_topics` acima). Uma
 > única invocação processando um par "devido" de ponta a ponta (mentions +
 > todas as métricas diárias/semanais/mensais/temas/top-authors/SOV)
 > processava dezenas de milhares de objetos JSON sincronamente e estourava
 > o orçamento de CPU do runtime. Com `next_step`, cada invocação executa só
-> uma fase e avança o cursor — o ciclo completo (7 fases) se espalha por
-> várias invocações (heartbeat de 15min ou clique manual no Dashboard, já
-> que o estado vive inteiro nesta coluna, nunca em memória). `last_synced_at`
+> uma fase e avança o cursor — o ciclo completo se espalha por várias
+> invocações (heartbeat de 15min ou clique manual no Dashboard, já que o
+> estado vive inteiro nesta coluna, nunca em memória). `last_synced_at`
 > só avança quando a última fase (`sov`) fecha o ciclo — até lá o par
 > continua "devido" (ver nota acima) e é escolhido de novo a cada tick, o
 > que garante que o ciclo termine antes de outro par começar. Ver
@@ -672,6 +675,7 @@ ver nota de sampling em §5 acima). Adicionada em `20260710010000`.
 | `is_influential` | `boolean` | sim | gerada, `coalesce(followers, 0) >= 100000` — adicionado `20260710050000`, pedido do usuário ("mais de 100000 seguidores... os mais influentes") |
 | `tweets` | `integer` | não | de `twitterTweets` — contagem de posts do autor. ⚠️ Pendente de implementação (revisão de spec 2026-07-11, pedido do usuário: "qtde de post... por autor") |
 | `retweets` | `integer` | não | de `twitterRetweets` — contagem de reposts do autor. Mesmo pedido/status pendente que `tweets` acima |
+| `impressions` | `integer` | não | soma das impressões diárias do autor, via `data/impressions/queries/days?queryId=<id>&author=<handle>` — agregado oficial da Brandwatch (não `Top Authors`, que não expõe isso), filtrado por autor, **não** somado localmente sobre `mentions`. Ver nota abaixo. ✅ Implementado 2026-07-11, migration `20260711040000` |
 | `sentiment_positive`/`neutral`/`negative` | `integer` | sim | default `0` |
 | `platform_stats` | `jsonb` | sim | objeto `data` inteiro devolvido pelo endpoint por autor (twitter*/facebook*/reddit* etc.) — mesmo raciocínio de `mentions.engagement`, sem coluna por campo |
 | `metric_week` | `date` | sim | mesmo caráter de snapshot que `bw_query_topics.metric_week` |
@@ -689,17 +693,39 @@ acelera consultas de "só os influentes".
 > inclui `twitterTweets`/`twitterRetweets` — ou seja, **esse dado já é
 > capturado hoje**, só vive dentro de `platform_stats` (jsonb), sem coluna
 > própria. Extrair como colunas tipadas é só mapear 2 campos já presentes
-> na resposta, sem chamada nova à Brandwatch. O mesmo payload **não**
-> inclui impressões por autor (confirmado contra a doc) — `impressions`
-> só existe por mention individual (campo de X), então "impressões por
-> autor" não tem fonte oficial não-amostrada; somar isso localmente sobre
-> `mentions` violaria a premissa de nunca agregar sobre a amostra (ver
-> `narrative_metrics`). Sem alternativa: fica de fora.
-> ⚠️ **"Temas do X por autor" — sem fonte oficial, não implementável sem
-> violar a premissa de sampling**: `data/topics` é agregado por
-> Query/Category inteira, não quebra por autor — não existe endpoint da
-> Brandwatch pra tematização por autor específico. Não há caminho oficial
-> não-amostrado pra essa pergunta.
+> na resposta, sem chamada nova à Brandwatch.
+>
+> ✅ **`impressions` por autor — conclusão revertida no mesmo dia
+> (2026-07-11)**: a primeira leitura desta spec (Top Authors não expõe
+> impressões, confirmado) tinha concluído que não havia fonte oficial e
+> que "fica de fora". **Corrigido** após o usuário pedir explicitamente
+> pra incluir no MVP e pesquisa mais a fundo: `impressions` é um
+> **agregado de chart oficial documentado** (confirmado em
+> `developers.brandwatch.com/docs/chart-dimensions-and-aggregates`, mesma
+> tabela que já confirmou `reachEstimate`/`engagementScore`), e o filtro
+> `author=<handle>` (`available-filters.md`) é documentado como válido em
+> "Mention ou Data Retrieval calls" — mesmo nível de evidência genérica já
+> aceito neste projeto pro filtro `category=<id>`. Combinando os dois:
+> `data/impressions/queries/days?queryId=<id>&author=<handle>&startDate&endDate`
+> — mesmo padrão de dimensão `queries` já usado em `syncQueryGroupSov()`
+> (`data/volume/queries/weeks?queryGroupId=X`), só trocando o agregado e o
+> filtro de escopo. A resposta é uma série diária (`results[].values[]`,
+> mesmo shape geral já usado em outros charts); `bw-sync` **soma os
+> valores diários** (cada um já um número oficial não-amostrado da
+> Brandwatch) pro total do período — isso **não** é o mesmo tipo de
+> cálculo que a premissa de sampling proíbe: quem agrega é o motor de
+> agregados da própria Brandwatch (filtrado por autor), não uma soma
+> nossa sobre `mentions` (amostrada). ⚠️ Não confirmado com um payload de
+> exemplo específico combinando `impressions` + `queries` + `author` — 
+> mesma categoria de risco já aceita pra outras combinações análogas neste
+> projeto (`category=<id>` em `data/volume/topauthors/queries`, dimensão
+> `categories` em `data/reachEstimate/...`). Revisar contra logs reais.
+>
+> **Escopo inicial**: só os **top 10 autores por `volume`** da Query
+> inteira (`category_id is null`), não todo autor já visto nem quebra por
+> Narrativa — salvaguarda de orçamento (cada autor enriquecido custa 2
+> chamadas extras: impressões + temas, ver `bw_query_author_topics`
+> abaixo). Ampliar pra Narrativas específicas fica como ampliação futura.
 
 > ✅ **Ampliação (2026-07-10, migration `20260710040000`)**: pedido do
 > usuário — "influência do autor" também precisa ser por Narrativa, não
@@ -749,6 +775,41 @@ acelera consultas de "só os influentes".
 > volume/relevância). Mesma correção aplicada em `bw_query_topics`
 > (`syncTopicsData()`, dedup por `topic_type::label`) — mesma classe de
 > risco, ainda não observada em produção mas estruturalmente idêntica.
+
+### `bw_query_author_topics`
+
+✅ **Implementado 2026-07-11** (mesma revisão que corrigiu a conclusão de
+`impressions` acima) — pedido do usuário: "principais temas do X por
+autor". Mesmo raciocínio: `data/topics` é agregado por Query/Category
+inteira por padrão, **mas aceita o filtro `author=<handle>`** (mesma
+evidência genérica de `available-filters.md` já usada acima), então
+`data/topics?queryId=<id>&author=<handle>&extract=...&metrics=...`
+devolve temas oficiais **não amostrados**, restritos às mentions daquele
+autor — sem violar a premissa de sampling, pelo mesmo motivo do
+`impressions` acima (quem agrega é a Brandwatch, filtrado por autor).
+
+| Campo | Tipo | Obrigatório | Descrição |
+|---|---|---|---|
+| `id` | `uuid` | sim | PK |
+| `project_id` | `bigint` | sim | FK → `bw_projects(id)` ON DELETE CASCADE |
+| `query_id` | `bigint` | sim | FK → `bw_queries(id)` ON DELETE CASCADE |
+| `author` | `text` | sim | mesmo autor de `bw_query_top_authors.author` — sem FK formal (autor não é uma entidade própria no MVP, só uma string) |
+| `topic_type` | `text` | sim | mesmo domínio de `bw_query_topics.topic_type` (`words`/`phrases`/`hashtags`/`entities`/`people`/`places`/`organisations`) |
+| `label` | `text` | sim | o termo/tema em si |
+| `volume` | `integer` | sim | |
+| `percentage_volume` | `numeric` | não | |
+| `sentiment_positive`/`neutral`/`negative` | `integer` | sim | default `0` |
+| `trending` | `numeric` | não | |
+| `metric_week` | `date` | sim | mesmo caráter de snapshot que `bw_query_topics.metric_week` |
+| `synced_at` | `timestamptz` | sim | |
+
+**Índices**: unique `(project_id, query_id, author, topic_type, label, metric_week)`.
+**Políticas RLS**: select-only via `project_id`, mesmo padrão de
+`bw_query_topics`. Throttle semanal, iterando os mesmos top 10 autores de
+`bw_query_top_authors` (escopo inicial: Query inteira, sem quebra por
+Narrativa — mesma ressalva de orçamento do `impressions` acima).
+Upsert deduplicado por `dedupeByKey()` (`topic_type::label`), mesma
+correção de "ON CONFLICT DO UPDATE" já aplicada em `bw_query_topics`.
 
 ### `bw_query_demographics_daily`
 
@@ -802,11 +863,12 @@ documentada, rodam para qualquer Query.
 **Throttle/fase sugeridos**: throttle semanal (composição demográfica muda
 devagar), mesmo padrão de `bw_query_topics`/`bw_query_top_authors`. Na
 arquitetura de fases de `sync-brandwatch.md` ("Execução em fases"), isso
-vira uma 8ª fase (`demographics`) — inserida entre `top_authors` e `sov` em
-`SYNC_STEPS` — que itera **uma dimensão por invocação** (mesmo padrão de
-"para no primeiro que precisar de trabalho real" já usado em
-`weekly_monthly`/`topics`/`top_authors`), não todas as 8 de uma vez —
-evita reintroduzir o mesmo risco de estouro de CPU corrigido em
+vira uma nova fase (`demographics`) — inserida entre `author_enrichment` e
+`sov` em `SYNC_STEPS` (`author_enrichment` já ocupa o slot logo após
+`top_authors`, ver abaixo) — que itera **uma dimensão por invocação**
+(mesmo padrão de "para no primeiro que precisar de trabalho real" já
+usado em `weekly_monthly`/`topics`/`top_authors`), não todas as 8 de uma
+vez — evita reintroduzir o mesmo risco de estouro de CPU corrigido em
 `20260711030000`.
 
 ⚠️ Formato de resposta inferido pelo padrão geral já confirmado pra outras
@@ -1170,10 +1232,16 @@ revoke all on schema public from bi_reader;
       (migration `20260711020000`) → `sync_cursors.next_step` (execução em
       fases, corrige bug de produção "CPU Time exceeded" — migration
       `20260711030000`, ver §4 e `sync-brandwatch.md` "Execução em fases")
+      → ✅ **implementado nesta mesma revisão** (migration `20260711040000`):
+      `bw_query_top_authors.impressions` + nova tabela
+      `bw_query_author_topics` + nova fase `author_enrichment` em
+      `SYNC_STEPS` (§5, ver `sync-brandwatch.md` passo 6.7) — top 10
+      autores da Query inteira, via `data/impressions/queries/days?author=`
+      e `data/topics?author=`
       → ⚠️ **pendente de implementação** (revisão de spec 2026-07-11, sem
       migration ainda): `bw_query_top_authors.tweets`/`retweets` (§5, dado
       já capturado em `platform_stats`, só falta extrair como coluna), nova
-      tabela `bw_query_demographics_daily` + 8ª fase `demographics` em
+      tabela `bw_query_demographics_daily` + fase `demographics` em
       `SYNC_STEPS` (§5, ver `sync-brandwatch.md`)
 - [ ] Triggers `set_updated_at` em `organizations`, `brandwatch_credentials`, `narratives`
 - [ ] RLS habilitada em **todas** as tabelas deste módulo (inclusive

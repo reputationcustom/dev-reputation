@@ -135,18 +135,42 @@ used to apply to `bw-sync`.)
   synchronously in one invocation (one `reachEstimate` call alone returned
   4825 rows in one response in production). Now each invocation executes
   exactly one phase from `SYNC_STEPS` (`metadata → mentions →
-  daily_metrics → weekly_monthly → topics → top_authors → sov`, tracked in
-  `sync_cursors.next_step`) and advances the cursor; `last_synced_at` (and
-  the `BW_SYNC_INTERVAL_HOURS` gate) only advances once the last phase
-  closes the cycle. Since all state lives in Postgres, not the isolate's
-  memory, a manual invocation (Dashboard "Invoke" button, used heavily
-  during testing) behaves identically to a heartbeat tick — same cursor,
-  same next-phase logic. Trade-off: `weekly_monthly`/`topics`/
-  `top_authors`/`sov` now advance at most one `categoryTarget` per
-  invocation, so fully covering every `categoryTarget` for a newly-created
-  Narrativa can take several full cycles instead of one. Complementary fix:
-  `syncCategoryDailyAggregate()` (the 4825-row case) now upserts in
-  1000-row chunks instead of one giant batch.
+  daily_metrics → weekly_monthly → topics → top_authors →
+  author_enrichment → sov`, tracked in `sync_cursors.next_step`) and
+  advances the cursor; `last_synced_at` (and the `BW_SYNC_INTERVAL_HOURS`
+  gate) only advances once the last phase closes the cycle. Since all
+  state lives in Postgres, not the isolate's memory, a manual invocation
+  (Dashboard "Invoke" button, used heavily during testing) behaves
+  identically to a heartbeat tick — same cursor, same next-phase logic.
+  Trade-off: `weekly_monthly`/`topics`/`top_authors`/`sov` now advance at
+  most one `categoryTarget` per invocation, so fully covering every
+  `categoryTarget` for a newly-created Narrativa can take several full
+  cycles instead of one. Complementary fix: `syncCategoryDailyAggregate()`
+  (the 4825-row case) now upserts in 1000-row chunks instead of one giant
+  batch.
+
+- **Per-author impressions and themes (2026-07-11, migration
+  `20260711040000`)** — user request: "impressões por autor e temas por
+  autor. Incluir no MVP". First read of this same review had concluded
+  neither had an official non-sampled source (Top Authors doesn't expose
+  impressions; `data/topics` is aggregated at Query/Category level, not
+  per author) — **reversed** after deeper research: `impressions` is a
+  documented chart aggregate (`chart-dimensions-and-aggregates`, same
+  table that already confirmed `reachEstimate`/`engagementScore`), and the
+  `author` filter is documented (`available-filters.md`) as valid on
+  "Mention or Data Retrieval calls" — same generic evidence already
+  accepted in this project for the `category` filter. Combining both:
+  `data/impressions/queries/days?queryId=X&author=<handle>` (same
+  `queries`-dimension pattern already used by `syncQueryGroupSov()`) and
+  `data/topics?queryId=X&author=<handle>` give official, non-sampled,
+  author-scoped aggregates — Brandwatch's own aggregation engine filtered
+  by author, not a local sum over sampled `mentions`, so this doesn't
+  violate the sampling premise. New `author_enrichment` phase (between
+  `top_authors` and `sov`) enriches, one at a time, the top 10 authors by
+  volume for the whole-query scope (`bw_query_top_authors.impressions`
+  column + new `bw_query_author_topics` table) — scoped to top 10 as a
+  budget safeguard (2 extra calls per author), no per-Narrativa breakdown
+  yet.
 
 - **Rate limit budget (30 calls/10min per Client)**: every Brandwatch call
   goes through `callBrandwatch()`, which is sequential (never parallel —
