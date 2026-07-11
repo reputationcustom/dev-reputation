@@ -326,6 +326,34 @@ yet (no migration sets it up) — for now the function is invoked manually.
   were only ever written by the `mentions_sample` path, which no current
   Narrativa uses since all are auto-seeded with a `bw_category_id`) — now
   both paths populate all of it.
+- **Reach/engagement/author-influence per Narrativa moved off the sampled
+  `mentions` table** (fixed 2026-07-10, same day as the bullet above —
+  user correctly pushed back: "como as menções trazidas na integração são
+  apenas amostras, é importante que... reach/engajamento/influência do
+  autor... sejam buscados diferentemente"). The engagement/repost/comment
+  work above still summed `mentions.engagement`, and `mentions` **is**
+  sampled on high-volume Queries (same caveat that already applied to
+  `total_mentions`, which is why `bw_query_metrics_daily` exists in the
+  first place). Fixed the two pieces that *do* have a non-sampled source:
+  `bw_query_metrics_daily` gains `reach_estimate`/`engagement_score`
+  columns via `data/reachEstimate/categories/days` and
+  `data/engagementScore/categories/days` (the `categories` **dimension**
+  gets every Narrativa's numbers in one call each, not one call per
+  Narrativa) — `refresh_narrative_metrics()` now reads
+  `reach_estimated`/`engagement_total` from there via `coalesce(...)`,
+  falling back to the old local sum only for historical rows not yet
+  resynced. `bw_query_top_authors` gains `category_id` — `syncTopAuthors()`
+  now loops per `categoryTarget` with `category=<id>` as a filter (same
+  convention as sentiment), giving non-sampled author-influence rankings
+  per Narrativa instead of only per-Query. `repost_count`/`comment_count`/
+  `unique_authors`/`top_domain` still have **no** non-sampled alternative —
+  Brandwatch doesn't expose those broken down by Category at all — so they
+  remain local/sampled, now documented explicitly as the exception rather
+  than assumed accurate. ⚠️ Neither the `categories`-dimension combination
+  with `reachEstimate`/`engagementScore` nor the `category` filter on
+  `data/volume/topauthors/queries` has a confirmed example payload — both
+  follow the same pattern already proven for sentiment, flagged the same
+  way `syncPlatformMetrics` was.
 - **Data scope is deliberately bounded**: `foundation`/`bw-sync` covers all
   *pull* data later sprints need (projects, queries, query groups,
   categories, mentions, daily/weekly/monthly metrics, Query Group SOV).

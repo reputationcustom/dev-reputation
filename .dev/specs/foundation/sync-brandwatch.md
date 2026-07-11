@@ -240,6 +240,22 @@ o Executive Overview consomem o resultado (tabelas já sincronizadas).
    `bw_query_metrics_daily_by_platform`. Roda em **toda** invocação, mesmo
    throttle do passo 6 (só query inteira, sem quebra por Narrativa).
    Adicionado 2026-07-10.
+6.3b. Alcance e engajamento por Narrativa, **não amostrados**: busca
+   `data/reachEstimate/categories/days` e `data/engagementScore/
+   categories/days` — a dimensão `categories` devolve o breakdown de
+   **todas** as Categories numa única chamada por aggregate (2 chamadas
+   totais, não uma por Narrativa), e faz upsert parcial (só essas 2
+   colunas) em `bw_query_metrics_daily`. Roda em **toda** invocação, mesmo
+   throttle do diário. ⚠️ Correção 2026-07-10 (pedido do usuário: "como as
+   menções trazidas na integração são apenas amostras, é importante que...
+   o alcance [e] o engajamento... sejam buscados diferentemente na
+   brandwatch") — antes, `reach_estimated`/`engagement_total` em
+   `narrative_metrics` vinham de somar `mentions.reach_estimate`/
+   `engagement` localmente, que é amostrado em Queries de alto volume.
+   Formato de resposta inferido pelo padrão geral (`results[].id`/
+   `values[]`, mesmo shape de `data/volume/sentiment/days`), não
+   confirmado com um payload de exemplo específico pra esses 2 aggregates
+   — mesma categoria de risco já assumida pra `syncPlatformMetrics`.
 6.4. Temas: se não existir linha "fresca" (7 dias) em `bw_query_topics`
    para o par (e cada `categoryTarget`, mesmo padrão do passo 6.1): busca
    `data/topics?extract=words,phrases,hashtags,entities,people,places,
@@ -254,15 +270,26 @@ o Executive Overview consomem o resultado (tabelas já sincronizadas).
    `results`, diferente dos outros endpoints de chart) — confirmado.
    Adicionado 2026-07-10.
 6.5. Ranking de autores: se não existir linha "fresca" (7 dias) em
-   `bw_query_top_authors` para o par (só nível de Query inteira, o
-   endpoint não filtra por Category): busca `data/volume/
-   topauthors/queries?limit=100` e faz upsert. Endpoint nativo de "Top
-   Authors" — melhor do que calcular localmente por SQL sobre a amostra de
-   `mentions` sincronizada (que a skill `brandwatch-api` recomendava como
-   fallback, mas fica sujeito ao sampling de Queries de alto volume).
-   Envelope de resposta confirmado: `results[].data.{authorName,
-   authorGender, authorVolume, reachEstimate, impact, sentiment, twitter*/
-   facebook*/reddit* fields}`. Adicionado 2026-07-10.
+   `bw_query_top_authors` para o par **e `categoryTarget`** (query inteira
+   + cada Narrativa — ver correção abaixo): busca `data/volume/
+   topauthors/queries?limit=100` (com `category=<id>` quando aplicável) e
+   faz upsert. Endpoint nativo de "Top Authors" — melhor do que calcular
+   localmente por SQL sobre a amostra de `mentions` sincronizada (que a
+   skill `brandwatch-api` recomendava como fallback, mas fica sujeito ao
+   sampling de Queries de alto volume). Envelope de resposta confirmado:
+   `results[].data.{authorName, authorGender, authorVolume, reachEstimate,
+   impact, sentiment, twitter*/facebook*/reddit* fields}`. Adicionado
+   2026-07-10.
+   ⚠️ **Correção 2026-07-10, mesmo dia** (pedido do usuário: "influência do
+   autor" também precisa ser por Narrativa): passou de uma chamada única
+   por invocação (só query inteira) pra uma chamada por `categoryTarget`,
+   usando `category=<id>` como filtro — mesma convenção já comprovada em
+   `data/volume/sentiment/days`. ⚠️ Não há exemplo específico confirmando
+   esse filtro **neste** endpoint — apoiado na afirmação genérica de
+   `filters.md` de que filtros valem pra qualquer chamada de Data
+   Retrieval (charts). `bw_query_top_authors` ganhou `category_id`/
+   `category_id_key` (migration `20260710040000`) pra não colidir a linha
+   por Narrativa com a linha da Query inteira.
 7. Atualiza `sync_cursors` (`last_added_cursor`, `last_synced_at`,
    `status = 'idle'`, `last_error = null`) e insere uma linha em `sync_log`
    (`status = 'success'`, `rows_processed` = mentions upsertadas).

@@ -320,9 +320,26 @@ security` em ambas, **sem nenhuma policy** (deny-all para `anon`/
 | `sentiment_positive`     | `integer`     | sim | default `0` |
 | `sentiment_neutral`      | `integer`     | sim | default `0` |
 | `sentiment_negative`     | `integer`     | sim | default `0` |
+| `reach_estimate`         | `integer`     | não | agregado oficial, `data/reachEstimate/categories/days` — adicionado `20260710040000` |
+| `engagement_score`       | `numeric`     | não | agregado oficial, `data/engagementScore/categories/days` — adicionado `20260710040000` |
 | `synced_at`              | `timestamptz` | sim | `now()` |
 
 **Índices**: unique `(project_id, query_id, category_id_key, metric_date)`.
+
+> ✅ **Ampliação (2026-07-10, migration `20260710040000`)**: pedido do
+> usuário — "como as menções trazidas na integração são apenas amostras, é
+> importante que... o alcance [e] o engajamento... sejam buscados
+> diferentemente na brandwatch". `reach_estimate`/`engagement_score` vêm da
+> dimensão de chart `categories` (confirmada em
+> `chart-dimensions-and-aggregates`, mesma família de `data/volume/
+> sentiment/days` já usada pra `total_mentions`/sentimento) — **uma
+> chamada cobre todas as Categories de uma vez**, não amostrada. Substitui
+> o que antes era soma local sobre `mentions` (amostrada em Queries de alto
+> volume) em `refresh_narrative_metrics()` — ver `narrative_metrics`
+> abaixo. `bw-sync` faz upsert **parcial** nessas 2 colunas (só elas no
+> payload — o upsert do Supabase só atualiza as colunas presentes no
+> conflito, nunca zera `total_mentions`/sentimento já sincronizados por
+> outra chamada pro mesmo `(project_id, query_id, category_id, metric_date)`).
 
 > ⚠️ **Correção (2026-07-07)**: a unique constraint original era
 > `(project_id, query_id, category_id, metric_date)` — mas `category_id` é
@@ -467,6 +484,8 @@ sujeita ao sampling de Queries de alto volume — ver nota de sampling em
 | `id` | `uuid` | sim | PK |
 | `project_id` | `bigint` | sim | FK → `bw_projects(id)` ON DELETE CASCADE |
 | `query_id` | `bigint` | sim | FK → `bw_queries(id)` ON DELETE CASCADE |
+| `category_id` | `bigint` | não | FK → `bw_categories(id)`; `null` = ranking da Query inteira, preenchido = ranking por Narrativa — adicionado `20260710040000` |
+| `category_id_key` | `bigint` | sim | gerada, `coalesce(category_id, 0)` — mesmo padrão de `bw_query_metrics_daily` |
 | `author` | `text` | sim | |
 | `volume` | `integer` | sim | default `0` |
 | `reach_estimate` | `integer` | não | |
@@ -476,9 +495,19 @@ sujeita ao sampling de Queries de alto volume — ver nota de sampling em
 | `metric_week` | `date` | sim | mesmo caráter de snapshot que `bw_query_topics.metric_week` |
 | `synced_at` | `timestamptz` | sim | |
 
-**Índices**: unique `(project_id, query_id, author, metric_week)`.
-**Políticas RLS**: select-only via `project_id`. Throttle semanal, só no
-nível de Query inteira (endpoint não filtra por Category).
+**Índices**: unique `(project_id, query_id, category_id_key, author, metric_week)`.
+**Políticas RLS**: select-only via `project_id`. Throttle semanal, agora por
+`categoryTarget` (query inteira + cada Narrativa).
+
+> ✅ **Ampliação (2026-07-10, migration `20260710040000`)**: pedido do
+> usuário — "influência do autor" também precisa ser por Narrativa, não
+> amostrada. `bw-sync` passa `category=<id>` como filtro em
+> `data/volume/topauthors/queries` (mesma convenção já comprovada em
+> `data/volume/sentiment/days`) e itera por `categoryTarget`. ⚠️ Não há um
+> exemplo específico confirmando o filtro `category` **neste** endpoint —
+> apoiado na afirmação genérica de `filters.md` de que filtros valem pra
+> "qualquer chamada de Mentions ou Data Retrieval (charts)". Revisar contra
+> logs reais.
 
 ---
 
@@ -591,6 +620,22 @@ narrative_id in (
 > `_reposts`/`_comments(jsonb) returns integer`) somam os campos de
 > engajamento por plataforma (ver `mentions.engagement` em §3) — Brandwatch
 > não tem um campo genérico de engajamento.
+
+> ✅ **Correção (2026-07-10, migration `20260710040000`, mesmo dia)**:
+> usuário apontou corretamente que a agregação local acima ainda é sobre
+> `mentions`, que **é amostrada** em Queries de alto volume — "como as
+> menções trazidas na integração são apenas amostras... reach/engajamento/
+> influência do autor precisam ser buscados diferentemente". Corrigido:
+> `reach_estimated`/`engagement_total` (via `bw_aggregate`) passam a vir de
+> `bw_query_metrics_daily.reach_estimate`/`engagement_score` (agregado
+> oficial não-amostrado, ver §5) via `coalesce(...)`, com fallback pro
+> cálculo local só enquanto o histórico ainda não tiver sido resincronizado
+> com as 2 colunas novas. `unique_authors`/`top_domain`/`repost_count`/
+> `comment_count` **continuam** locais/amostrados — não há aggregate da
+> Brandwatch pra esses quebrados por Category (nem repost/comment count
+> quebram por nenhum critério, só existem por mention individual). Ranking
+> de autores (`bw_query_top_authors`) também ganhou `category_id` na mesma
+> leva — ver tabela acima.
 
 > ✅ **`refresh_narrative_metrics()` finalmente agendada (2026-07-10)**:
 > a função existe desde a migration inicial mas **nunca teve um
@@ -817,6 +862,10 @@ revoke all on schema public from bi_reader;
       → colunas de engajamento em `narrative_metrics` +
       `refresh_narrative_metrics()` reescrita (range + engagement) +
       `pg_cron` agendado pela primeira vez (migration `20260710030000`)
+      → `reach_estimate`/`engagement_score` não-amostrados em
+      `bw_query_metrics_daily` + `category_id` em `bw_query_top_authors` +
+      `refresh_narrative_metrics()` lendo da fonte não-amostrada (migration
+      `20260710040000`)
 - [ ] Triggers `set_updated_at` em `organizations`, `brandwatch_credentials`, `narratives`
 - [ ] RLS habilitada em **todas** as tabelas deste módulo (inclusive
       `sync_cursors`/`sync_log`, deny-all)

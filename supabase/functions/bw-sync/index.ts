@@ -990,6 +990,83 @@ async function syncPlatformMetrics(
 }
 
 // =========================================================================
+// Correção 2026-07-10 (pedido do usuário: "as menções trazidas na
+// integração são apenas amostras... reach/engajamento/influência do autor
+// precisam ser buscados diferentemente"): reach_estimate/engagement_score
+// por Narrativa deixam de ser soma local sobre `mentions` (amostrada em
+// Queries de alto volume) e passam a vir de `data/{aggregate}/categories/
+// {grain}` — a dimensão `categories` (confirmada em
+// chart-dimensions-and-aggregates) devolve o breakdown de TODAS as
+// Categories numa única chamada, mesmo mecanismo não-amostrado que já
+// alimenta `bw_query_metrics_daily.total_mentions`/sentimento. ⚠️ Não
+// confirmado um payload de exemplo específico com aggregate=reachEstimate/
+// engagementScore + dimension=categories (só a validade genérica da
+// combinação aggregate×dimension) — mesmo tratamento de risco já dado a
+// `syncPlatformMetrics` acima. Roda toda invocação (mesmo throttle
+// "diário sempre"), 1 chamada por aggregate — 2 chamadas totais cobrindo
+// todas as Narrativas, não 1 por Narrativa.
+// =========================================================================
+
+async function syncCategoryDailyAggregate(
+  supabase: SupabaseClient,
+  token: string,
+  projectId: number,
+  queryId: number,
+  aggregate: "reachEstimate" | "engagementScore",
+  column: "reach_estimate" | "engagement_score",
+  startDate: Date,
+  endDate: Date,
+): Promise<void> {
+  const params = new URLSearchParams({
+    queryId: String(queryId),
+    startDate: formatBrandwatchDate(startDate),
+    endDate: formatBrandwatchDate(endDate),
+    timezone: TIMEZONE,
+  });
+
+  const json = await callBrandwatch(`/projects/${projectId}/data/${aggregate}/categories/days?${params.toString()}`, token);
+  const results = (json.results ?? []) as { id: string | number; values?: { id: string; value: number }[] }[];
+
+  const rows: Record<string, unknown>[] = [];
+  for (const series of results) {
+    const categoryId = Number(series.id);
+    if (!Number.isFinite(categoryId)) {
+      // Pode incluir um item pra mentions sem nenhuma Category — não temos
+      // onde guardar isso em bw_query_metrics_daily (category_id sempre se
+      // refere a uma Category real), então pula em vez de quebrar.
+      continue;
+    }
+    for (const point of series.values ?? []) {
+      rows.push({
+        project_id: projectId,
+        query_id: queryId,
+        category_id: categoryId,
+        metric_date: toDateOnly(point.id),
+        [column]: point.value,
+        synced_at: new Date().toISOString(),
+      });
+    }
+  }
+
+  if (rows.length === 0) {
+    log("syncCategoryDailyAggregate:empty", { projectId, queryId, aggregate });
+    return;
+  }
+
+  // Upsert parcial — só as colunas presentes no payload são atualizadas em
+  // caso de conflito (PostgREST gera "on conflict ... do update set" só
+  // pras colunas enviadas), então isso nunca zera total_mentions/sentiment
+  // já sincronizados por syncSentimentMetrics pro mesmo
+  // (project_id, query_id, category_id, metric_date).
+  const { error } = await supabase
+    .from("bw_query_metrics_daily")
+    .upsert(rows, { onConflict: "project_id,query_id,category_id_key,metric_date" });
+  if (error) throw new Error(`Erro upsertando bw_query_metrics_daily (${column}): ${error.message}`);
+
+  log("syncCategoryDailyAggregate:done", { projectId, queryId, aggregate, rows: rows.length });
+}
+
+// =========================================================================
 // Passo 6d — Temas (data/topics) — mecanismo nativo da Brandwatch mais
 // próximo de "clusters temáticos com sentimento/volume/trending" (ver
 // investigação sobre "Iris" no plano desta leva — não há uma Iris API
@@ -1092,6 +1169,16 @@ async function isTopicsStale(
 // authorGender, authorVolume, reachEstimate, impact, sentiment, twitter*/
 // facebook*/reddit* fields} — via developers.brandwatch.com/docs/
 // top-authors.
+//
+// Correção 2026-07-10 (pedido do usuário: "influência do autor" também
+// precisa ser buscada por Narrativa, não amostrada): ganha `categoryId`
+// opcional, passado como filtro `category=<id>` — mesma convenção usada em
+// `data/volume/sentiment/days&category=<id>` (já comprovada em produção).
+// ⚠️ Não confirmado um exemplo específico do filtro `category` combinado
+// com este endpoint (`data/volume/topauthors/queries`), mas `filters.md`
+// da skill descreve filtros como aplicáveis a "qualquer chamada de
+// Mentions ou Data Retrieval (charts)" — mesma categoria de risco já
+// assumida em `syncPlatformMetrics`/`syncCategoryDailyAggregate` acima.
 // =========================================================================
 
 async function syncTopAuthors(
@@ -1099,6 +1186,7 @@ async function syncTopAuthors(
   token: string,
   projectId: number,
   queryId: number,
+  categoryId: number | null,
   startDate: Date,
   endDate: Date,
 ): Promise<void> {
@@ -1108,6 +1196,7 @@ async function syncTopAuthors(
     endDate: formatBrandwatchDate(endDate),
     limit: "100",
   });
+  if (categoryId) params.set("category", String(categoryId));
 
   const json = await callBrandwatch(`/projects/${projectId}/data/volume/topauthors/queries?${params.toString()}`, token);
   const results = (json.results ?? []) as { id: string; name?: string; data?: Record<string, any> }[];
@@ -1121,6 +1210,7 @@ async function syncTopAuthors(
       return {
         project_id: projectId,
         query_id: queryId,
+        category_id: categoryId,
         author,
         volume: d.authorVolume ?? d.volume ?? 0,
         reach_estimate: d.reachEstimate ?? null,
@@ -1138,32 +1228,35 @@ async function syncTopAuthors(
     .filter((r) => r.author.length > 0);
 
   if (rows.length === 0) {
-    log("syncTopAuthors:empty", { projectId, queryId });
+    log("syncTopAuthors:empty", { projectId, queryId, categoryId });
     return;
   }
 
   const { error } = await supabase
     .from("bw_query_top_authors")
-    .upsert(rows, { onConflict: "project_id,query_id,author,metric_week" });
+    .upsert(rows, { onConflict: "project_id,query_id,category_id_key,author,metric_week" });
   if (error) throw new Error(`Erro upsertando bw_query_top_authors: ${error.message}`);
 
-  log("syncTopAuthors:done", { projectId, queryId, rows: rows.length });
+  log("syncTopAuthors:done", { projectId, queryId, categoryId, rows: rows.length });
 }
 
 async function isTopAuthorsStale(
   supabase: SupabaseClient,
   projectId: number,
   queryId: number,
+  categoryId: number | null,
   maxAgeMs: number,
 ): Promise<boolean> {
-  const { data, error } = await supabase
+  let query = supabase
     .from("bw_query_top_authors")
     .select("synced_at")
     .eq("project_id", projectId)
     .eq("query_id", queryId)
     .order("synced_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+    .limit(1);
+  query = categoryId ? query.eq("category_id", categoryId) : query.is("category_id", null);
+
+  const { data, error } = await query.maybeSingle();
   if (error) throw new Error(`Erro checando frescor de bw_query_top_authors: ${error.message}`);
   if (!data) return true;
 
@@ -1327,6 +1420,17 @@ Deno.serve(async (_req: Request) => {
       await syncSentimentMetrics(supabase, token, "days", projectId, queryId, categoryId, metricsStartDate, now);
     }
 
+    // Correção 2026-07-10 (pedido do usuário: reach/engajamento por
+    // Narrativa não amostrados): 2 chamadas cobrindo TODAS as Categories
+    // de uma vez (dimensão `categories`), não uma por Narrativa — roda
+    // toda invocação, mesmo throttle do diário acima.
+    await syncCategoryDailyAggregate(
+      supabase, token, projectId, queryId, "reachEstimate", "reach_estimate", metricsStartDate, now,
+    );
+    await syncCategoryDailyAggregate(
+      supabase, token, projectId, queryId, "engagementScore", "engagement_score", metricsStartDate, now,
+    );
+
     // Passo 6c: breakdown de plataforma — sempre roda, mesmo throttle do
     // diário (query inteira, sem quebra por Narrativa).
     await syncPlatformMetrics(supabase, token, projectId, queryId, metricsStartDate, now);
@@ -1345,12 +1449,12 @@ Deno.serve(async (_req: Request) => {
       if (await isTopicsStale(supabase, projectId, queryId, categoryId, 7 * 24 * 60 * 60 * 1000)) {
         await syncTopicsData(supabase, token, projectId, queryId, categoryId, metricsStartDate, now);
       }
-    }
-
-    // Passo 6e: ranking de autores — mesmo throttle semanal, só no nível de
-    // Query inteira (o endpoint não filtra por Category).
-    if (await isTopAuthorsStale(supabase, projectId, queryId, 7 * 24 * 60 * 60 * 1000)) {
-      await syncTopAuthors(supabase, token, projectId, queryId, metricsStartDate, now);
+      // Passo 6e: ranking de autores — mesmo throttle semanal. Correção
+      // 2026-07-10 (pedido do usuário: influência do autor também por
+      // Narrativa): agora por categoryTarget, não só a Query inteira.
+      if (await isTopAuthorsStale(supabase, projectId, queryId, categoryId, 7 * 24 * 60 * 60 * 1000)) {
+        await syncTopAuthors(supabase, token, projectId, queryId, categoryId, metricsStartDate, now);
+      }
     }
 
     // Passo 6b: SOV de Query Group, se a query pertence a algum grupo.
