@@ -195,23 +195,26 @@ deve ser conferido contra esta lista antes de ser considerado pronto.
 > - Agregados oficiais (sampling-safe): `bw_query_metrics_daily`/`weekly`/
 >   `monthly` (sentiment/volume + `reach_estimate`/`engagement_score` por
 >   Category), `bw_query_metrics_daily_by_platform` (breakdown por
->   plataforma), `bw_query_group_metrics_weekly` (Share of Voice),
->   `bw_query_topics` (temas/hashtags/entidades com sentimento, via
->   `data/topics` — o mecanismo mais próximo de "clusterização" que a API
->   padrão oferece, incl. série diária/breakdown por canal por tópico),
->   `bw_query_top_authors` (ranking de autores por Query e por Narrativa,
->   não amostrado, incl. `tweets`/`retweets` por autor — ⚠️ dado já
->   capturado em `platform_stats`, só falta extrair como coluna — e
->   `impressions` por autor via `data/impressions/queries/days?author=`,
->   ✅ implementado nesta leva pros top 10 autores da Query),
->   `bw_query_author_topics` (temas por autor via `data/topics?author=`, ✅
->   implementado nesta leva, mesmo escopo top 10), `bw_query_x_insights`
->   (hashtags/emojis/URLs/autores citados específicos de X com sentimento
->   próprio, via os 4 endpoints de "X (Twitter) Insights"),
->   `bw_query_demographics_daily` (gender/tipo de conta/interesse/profissão
->   — só X — e localização, via dimensões de chart oficiais não
->   amostradas) — os dois últimos ⚠️ identificados em revisão de spec
->   2026-07-11, ainda sem migration/código.
+>   plataforma), `bw_query_group_metrics_weekly` (Share of Voice + reach por
+>   candidato dentro do Query Group), `bw_query_topics` (temas/hashtags/
+>   entidades com sentimento, via `data/topics` — o mecanismo mais próximo
+>   de "clusterização" que a API padrão oferece, incl. série diária/
+>   breakdown por canal por tópico), `bw_query_top_authors` (ranking de
+>   autores por Query e por Narrativa, não amostrado, incl. `tweets`/
+>   `retweets`/`account_type`/país/`impressions` por autor),
+>   `bw_query_author_topics` (temas por autor via `data/topics?author=`),
+>   `bw_query_x_insights` (hashtags/emojis/URLs/autores citados específicos
+>   de X com sentimento próprio, via os 4 endpoints de "X (Twitter)
+>   Insights"), `bw_query_demographics_daily` (gender/tipo de conta/
+>   interesse/profissão — só X — e localização, via dimensões de chart
+>   oficiais não amostradas), `bw_query_top_sites` (ranking de domínios/
+>   sites, via `data/volume/topsites/queries`). Todos ✅ implementados —
+>   os últimos 5 (`bw_query_author_topics` em diante) foram priorizados em
+>   2026-07-11 depois de validar o modelo de dados contra um export real de
+>   dashboard Brandwatch (ver `sync-brandwatch.md`, "Validação contra
+>   dashboard real", inclusive o achado de que o painel "Iris detected N
+>   peaks" — picos de volume com driver nomeado — **não tem endpoint
+>   público**, é recurso só do dashboard BWX, não replicável via API).
 >
 > Isso já cobre o que `entities` (via `mentions.author`),
 > `threshold-engine`/`intelligent-feed` (via `mentions`/`bw_categories`/
@@ -258,12 +261,11 @@ deve ser conferido contra esta lista antes de ser considerado pronto.
   documentado pra um módulo futuro (candidato natural: `executive-reports`,
   Sprint 4, já que a prosa/síntese do relatório é geração de conteúdo, não
   sync de dados). `foundation` cobre só a captura de dados brutos que esse
-  módulo futuro vai precisar (mentions enriquecidas, `bw_query_topics`
-  incl. `daily_series`/`page_type_breakdown`, `bw_query_top_authors`,
-  `bw_query_x_insights` — ver `data-model.md` §5, migration
-  `20260710010000` para o que já existe; `bw_query_x_insights` e as duas
-  colunas novas de `bw_query_topics` são ampliação identificada em revisão
-  de spec 2026-07-11, ainda sem migration própria).
+  módulo futuro vai precisar (mentions enriquecidas, `bw_query_topics`,
+  `bw_query_top_authors`, `bw_query_author_topics`, `bw_query_x_insights`,
+  `bw_query_demographics_daily`, `bw_query_top_sites` — ver `data-model.md`
+  §5). ⚠️ `bw_query_topics.daily_series`/`page_type_breakdown` ainda sem
+  migration própria.
   **Investigação sobre "Iris"** (a IA da Brandwatch — teria uma API
   própria que resolvesse isso?): pesquisa direta em
   `developers.brandwatch.com` (índice `llms.txt` + páginas individuais)
@@ -297,6 +299,29 @@ deve ser conferido contra esta lista antes de ser considerado pronto.
   `sync-brandwatch.md` passo 6.7 — implementado nesta leva, escopo inicial
   limitado aos top 10 autores da Query inteira (sem quebra por Narrativa
   ainda, ver ressalva de orçamento no passo 6.7).
+- **"Iris detected N peaks" (picos de volume com driver nomeado)** —
+  validado 2026-07-11 contra um export real de dashboard Brandwatch que
+  mostra esse recurso funcionando ("540% aumento, causado por: 10 reposts
+  deste Post"). Pesquisa a fundo (`chart-dimensions-and-aggregates`,
+  `basic-charts`, índice completo da doc — sem menção a "Iris"/"peak"/
+  "spike"/"anomaly"/"driver") confirma que **não existe endpoint público**
+  pra isso — é a mesma camada de IA Iris já investigada (ver item acima),
+  só que rodando dentro do produto BWX/dashboard, não exposta via Consumer
+  Research API. Esse card específico não é replicável por `bw-sync`.
+- **"Post Type" agregado por candidato (retweet/reply/original)** —
+  identificado na mesma validação. Não existe dimensão de chart oficial
+  equivalente (só `mentions.mention_role`, por mention individual).
+  Replicar um painel comparando candidatos por tipo de post exigiria somar
+  `mention_role` localmente sobre `mentions` (amostrada), o que conflita
+  com a premissa do projeto. Fica como ⚠️ DECISÃO PENDENTE (mesmo padrão
+  já usado pra `emotion` em `data-model.md` §3) — não implementar sem
+  decisão explícita do usuário sobre aceitar essa aproximação amostrada.
+- **"Análise de Imagem"** — o único recurso da API parecido é "Objects &
+  Logos" (`images/objects`/`images/logos`), mas é um mecanismo de lookup
+  pra **configurar filtro de Query** (achar IDs de logo/objeto pra usar
+  como filtro), não um analytics de conteúdo visual das mentions. Não
+  implementar sem um pedido concreto que esclareça o que essa visão
+  precisaria mostrar.
 
 ## Decisões pendentes globais
 

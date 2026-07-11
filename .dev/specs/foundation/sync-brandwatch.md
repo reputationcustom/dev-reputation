@@ -57,26 +57,36 @@ computação síncrona, diferente de esperar rede).
 | `daily_metrics` | Passos 6, 6.3, 6.3b (sentimento diário + reach/engagement + plataforma — sempre rodam, não são "stale-gated") |
 | `weekly_monthly` | Passo 6.1 (semanal/mensal, throttle 7/30 dias) |
 | `topics` | Passo 6.4 (temas, throttle 7 dias) |
+| `x_insights` | Passo 6.4b (hashtags/emojis/URLs/autores citados de X, throttle 7 dias) |
 | `top_authors` | Passo 6.5 (ranking de autores, throttle 7 dias) |
-| `author_enrichment` | ✅ Passo 6.7 (impressões + temas dos top 10 autores, throttle 7 dias) |
-| `demographics` | ⚠️ Passo 6.6 (demografia — gender/localização, throttle 7 dias) — **pendente de implementação**, ver `data-model.md` §5 |
-| `sov` | Passo 6.2 (Share of Voice de Query Group, throttle 7 dias) |
+| `author_enrichment` | Passo 6.7 (impressões + temas dos top 10 autores, throttle 7 dias) |
+| `top_sites` | Passo 6.8 (ranking de sites/domínios, throttle 7 dias) |
+| `demographics` | Passo 6.6 (demografia — gender/localização, throttle 7 dias) |
+| `sov` | Passo 6.2 (Share of Voice de Query Group + reach por candidato, throttle 7 dias) |
+
+Todas as fases acima estão ✅ **implementadas** (2026-07-11) — as últimas 5
+(`x_insights`, `top_sites`, `demographics`, mais `reach_estimate` em `sov`)
+foram priorizadas depois de validar o modelo de dados contra um export
+real de dashboard Brandwatch (ver "Validação contra dashboard real" mais
+abaixo).
 
 Cada invocação lê `next_step` do par escolhido, executa **só essa fase**, e
 avança o cursor pra próxima. Fases "stale-gated" (`weekly_monthly`,
-`topics`, `top_authors`, `sov`) percorrem os `categoryTargets` e param no
-**primeiro** que precisar de trabalho real — os demais continuam "stale" e
-são retomados numa invocação futura da mesma fase, não na mesma invocação
-(é isso que limita o pico de CPU; verificações de frescor que não acham
-nada pra fazer são baratas e não avançam por si só o "orçamento" de CPU, só
-avançam pra próxima fase dentro da mesma invocação). O ciclo completo (as 7
-fases) só fecha — e só então `sync_cursors.last_synced_at` avança,
-rearmando o gate de `BW_SYNC_INTERVAL_HOURS` do passo 0.5b — quando a
-última fase (`sov`) roda (ou é pulada por não ter trabalho).
+`topics`, `x_insights`, `top_authors`, `author_enrichment`, `top_sites`,
+`demographics`, `sov`) percorrem os `categoryTargets`/candidatos/dimensões
+e param no **primeiro** que precisar de trabalho real — os demais
+continuam "stale" e são retomados numa invocação futura da mesma fase, não
+na mesma invocação (é isso que limita o pico de CPU; verificações de
+frescor que não acham nada pra fazer são baratas e não avançam por si só o
+"orçamento" de CPU, só avançam pra próxima fase dentro da mesma
+invocação). O ciclo completo (as 11 fases) só fecha — e só então
+`sync_cursors.last_synced_at` avança, rearmando o gate de
+`BW_SYNC_INTERVAL_HOURS` do passo 0.5b — quando a última fase (`sov`) roda
+(ou é pulada por não ter trabalho).
 
-⚠️ **Trade-off aceito**: como `weekly_monthly`/`topics`/`top_authors`/`sov`
-agora processam no máximo um `categoryTarget`/grupo por invocação (em vez
-de todos numa passada), popular **todos** os `categoryTargets` de uma
+⚠️ **Trade-off aceito**: como as fases "stale-gated" agora processam no
+máximo um `categoryTarget`/grupo/dimensão por invocação (em vez de todos
+numa passada), popular **todos** os `categoryTargets`/dimensões de uma
 Narrativa recém-criada pode levar vários ciclos completos (cada ciclo =
 `BW_SYNC_INTERVAL_HOURS`) em vez de um só. Aceito em troca de nunca mais
 estourar o orçamento de CPU — ver `data-model.md` §4 (`sync_cursors`).
@@ -94,6 +104,57 @@ chamada que devolveu 4825 linhas) também passou a fazer upsert em lotes de
 1000 linhas (`chunkArray()`) em vez de uma única chamada com todas as
 linhas — reduz o pico de serialização síncrona de um corpo de requisição
 gigante, complementar à quebra em fases.
+
+## Validação contra dashboard real (2026-07-11)
+
+O usuário forneceu um export real em PDF de um dashboard Brandwatch
+("Candidatos | Overview") comparando 6 candidatos dentro de um Query
+Group, com paineis de volume/reach/sentimento/demografia/temas/autores/
+sites. Usado para validar o modelo de dados deste módulo contra o que a
+Brandwatch realmente entrega, painel a painel — resultado:
+
+- **A maior parte já era coberta** pelo que `foundation` já sincronizava
+  ou já estava spec'd (`bw_query_metrics_daily`/`by_platform`,
+  `bw_query_group_metrics_weekly`, `bw_query_top_authors`,
+  `bw_query_topics`) — sem gap novo.
+- **Achado mais importante**: o painel "Iris detected N peaks" (picos de
+  volume com driver nomeado — "540% aumento, causado por: 10 reposts
+  deste Post") **não tem endpoint público documentado** (pesquisado a
+  fundo: `chart-dimensions-and-aggregates`, `basic-charts`, índice
+  completo da doc — sem menção a "Iris", "peak", "spike", "anomaly",
+  "driver"). Confirma e reforça a investigação já registrada em
+  `_index.md` ("Fora de escopo do MVP") — Iris é a camada de IA que roda
+  **dentro do produto BWX/dashboard** da Brandwatch, não uma API que
+  `bw-sync` possa consumir. **Esse card específico não é replicável** via
+  Consumer Research API — limitação estrutural, não gap de implementação.
+- **Gaps novos confirmados e priorizados nesta leva**: `bw_query_x_insights`,
+  `bw_query_demographics_daily` (ambos já spec'd antes, mas sem migration
+  até esta validação confirmar o valor real pra UI), `bw_query_top_sites`
+  (novo), `reach_estimate` em `bw_query_group_metrics_weekly` (novo),
+  `tweets`/`retweets`/`account_type`/`country_code`/`country_name` em
+  `bw_query_top_authors` (extração de campos já capturados).
+- **Itens em aberto, sem conclusão ainda**:
+  - **"Post Type" por candidato** (retweet/reply/original, como painel
+    agregado comparando candidatos): não encontrada dimensão de chart
+    oficial equivalente — só `mentions.mention_role` por mention
+    individual. Replicar esse painel exigiria somar localmente sobre
+    `mentions` (amostrada), o que conflita com a premissa do projeto.
+    Decisão de produto pendente (mesmo padrão da decisão já tomada pra
+    `emotion` em `data-model.md` §3).
+  - **"Most Karma" (Reddit)** em Top Authors: não confirmado um campo de
+    karma no payload de `data/volume/topauthors/queries` que pesquisamos
+    — pode estar em `platform_stats` (guardamos o objeto bruto inteiro)
+    sem termos confirmado o nome exato do campo pra Reddit. Checar contra
+    payload real sincronizado antes de expor na UI.
+  - **"Análise de Imagem"**: o único recurso parecido na API é "Objects &
+    Logos" (`images/objects`/`images/logos`) — mas isso é um mecanismo de
+    **lookup pra configurar filtro de Query** (achar IDs de logo/objeto
+    pra usar como filtro na criação de uma Query), não um analytics de "o
+    que aparece nas imagens das mentions". Não é o mesmo tipo de dado
+    sincronizável que as demais tabelas deste módulo — precisa de decisão
+    de produto sobre se isso é relevante antes de investir mais.
+  - **Painel "Custom"**: sem conteúdo visível no export fornecido, não dá
+    pra saber o que cobre.
 
 ## Fluxo principal
 
@@ -410,6 +471,13 @@ gigante, complementar à quebra em fases.
    grupo como filtro/escopo. Ainda não 100% confirmado contra um payload
    real (a doc não mostra um exemplo com os dois parâmetros juntos) — ver
    ressalva em `bw-sync/index.ts`, `syncQueryGroupSov()`.
+   ✅ **Ampliação 2026-07-11** (validação contra export real de dashboard
+   Brandwatch — "Reach Over Time" comparando candidatos dentro do mesmo
+   Query Group): mesma chamada ganha um segundo aggregate,
+   `data/reachEstimate/queries/weeks?queryGroupId=...` — upsert parcial
+   (só `reach_estimate`) na mesma linha de `bw_query_group_metrics_weekly`.
+   Mesma dimensão `queries` já usada acima, só trocando `volume` por
+   `reachEstimate` — herda a mesma ressalva de "não 100% confirmado".
 6.3. Breakdown diário de volume por plataforma: busca `data/volume/
    pageTypes/days` (dimensão de chart `pageTypes`, plural — distinta do
    campo de mention `pageType`, deprecated) e faz upsert em
@@ -473,11 +541,14 @@ gigante, complementar à quebra em fases.
    custo extra de rate limit — é o insumo que falta pra reconstruir picos
    de volume por Narrativa (ex: "03/02 · Operação policial na Baixada
    Santista" do mockup de referência) sem violar a premissa acima.
-6.4b. **X (Twitter) Insights**, sinal textual específico de X que
-   complementa os Temas do passo 6.4 (tematização geral, mas sem o
-   componente de hashtag/emoji/URL/autor citado com sentimento próprio):
-   se não existir linha "fresca" (7 dias) em `bw_query_x_insights` para o
-   par e `categoryTarget` — busca em sequência os 4 endpoints de "X
+6.4b. ✅ **X (Twitter) Insights** (implementado 2026-07-11, priorizado
+   depois de validar contra um export real de dashboard Brandwatch — "X
+   Themes": Top Stories/Hashtags/Posters/Emojis, exatamente este shape de
+   dado), sinal textual específico de X que complementa os Temas do passo
+   6.4 (tematização geral, mas sem o componente de hashtag/emoji/URL/autor
+   citado com sentimento próprio): na fase `x_insights` (ver "Execução em
+   fases"), para o primeiro `categoryTarget` sem linha "fresca" (7 dias) em
+   `bw_query_x_insights` — busca em sequência os 4 endpoints de "X
    (Twitter) Insights" confirmados em
    `developers.brandwatch.com/docs/twitter-insights` (`data/hashtags`,
    `data/emoticons`, `data/urls`, `data/mentionedauthors` — todos exigem
@@ -485,16 +556,14 @@ gigante, complementar à quebra em fases.
    `bw_query_x_insights` com `insight_type` correspondente
    (`hashtag`/`emoticon`/`url`/`mentioned_author`). Não amostrado —
    mesma família sampling-safe de `bw_query_topics`/`bw_query_top_authors`.
-   ⚠️ Ainda não implementado (revisão de spec pré-implementação, sem
-   migration/código correspondente).
    **Salvaguarda de orçamento**: só roda para `categoryTarget`s com volume
    relevante em `page_type = 'twitter'` (já disponível em
    `bw_query_metrics_daily_by_platform`, passo 6.3, sem chamada extra pra
    checar isso) — Narrativa/Query sem presença relevante em X não gasta as
-   4 chamadas à toa. Mesmo padrão de "para quando o orçamento acaba
-   (`BRANDWATCH_CALL_BUDGET`), retoma na invocação seguinte" dos passos 6.1
-   e 6.5 — o loop de `categoryTargets` verifica orçamento antes de cada um
-   dos 4 endpoints, não só entre `categoryTargets`.
+   4 chamadas à toa, e para no primeiro `categoryTarget` que precisar de
+   trabalho (mesmo padrão de `weekly_monthly`/`topics`/`top_authors` na
+   arquitetura de fases — os demais continuam "stale" pra próxima
+   invocação desta mesma fase).
 6.5. Ranking de autores: se não existir linha "fresca" (7 dias) em
    `bw_query_top_authors` para o par **e `categoryTarget`** (query inteira
    + cada Narrativa — ver correção abaixo): busca `data/volume/
@@ -551,11 +620,20 @@ gigante, complementar à quebra em fases.
    aplicada preventivamente em `syncTopicsData()` (passo 6.4, dedup por
    `topic_type::label`) — mesma classe de risco, ainda não observada em
    produção mas estruturalmente idêntica.
-6.6. ⚠️ **Demografia — pendente de implementação (2026-07-11, revisão de
-   spec, pedido do usuário: "análise demográfica de tudo que vem do X")**:
-   mesmo throttle semanal dos passos acima, buscando `data/volume/
-   {dimension}/days` para cada uma das 8 dimensões demográficas
-   confirmadas em `developers.brandwatch.com/docs/chart-dimensions-and-aggregates`
+   ✅ **Ampliação 2026-07-11** (validação contra export real de dashboard
+   Brandwatch — "Top X Authors | Government Verification"/"Business
+   Verification", "Top Authors | Estados"/"Cidades"): `tweets`/`retweets`/
+   `account_type`/`country_code`/`country_name` extraídos como colunas
+   tipadas de `platform_stats` (campos já presentes na resposta —
+   `twitterTweets`/`twitterRetweets`/`authorAccountType`/`countryCode`/
+   `countryName` — nenhuma chamada nova).
+6.6. ✅ **Demografia** (implementado 2026-07-11, pedido do usuário: "análise
+   demográfica de tudo que vem do X" — priorizado depois de validar contra
+   um export real de dashboard Brandwatch, "X Demographics": gender split
+   + trend diário, top interests, top professions, top countries): mesmo
+   throttle semanal dos passos acima, buscando `data/volume/{dimension}/days`
+   para cada uma das 8 dimensões demográficas confirmadas em
+   `developers.brandwatch.com/docs/chart-dimensions-and-aggregates`
    (`gender`, `accountTypes`, `interest`, `profession` — só X/Twitter;
    `countries`, `continents`, `cities`, `regions` — sem restrição de
    plataforma) e upsert em `bw_query_demographics_daily` (ver
@@ -610,6 +688,15 @@ gigante, complementar à quebra em fases.
    neste projeto. **Salvaguarda de orçamento**: 2 chamadas por autor
    enriquecido, só top 10 da Query inteira (não todo autor já visto, sem
    quebra por Narrativa ainda) — ver `data-model.md` §5.
+6.8. ✅ **Ranking de sites/domínios** (implementado 2026-07-11, gap
+   identificado validando o modelo de dados contra um export real de
+   dashboard Brandwatch, "Top Site" — distinto de "Top Authors": rankeia
+   domínios/sites, não contas de redes sociais): mesmo throttle semanal
+   por `categoryTarget` de `bw_query_top_authors`, busca `data/volume/
+   topsites/queries?limit=1000` (mesmo `limit` máximo já usado em Top
+   Authors) e faz upsert em `bw_query_top_sites` (ver `data-model.md` §5).
+   Mesma correção de dedup (`dedupeByKey()` por `domain`) aplicada
+   preventivamente, mesma classe de risco de Top Authors/Temas.
 7. Atualiza `sync_cursors` ao final de **cada fase** (não só ao final de
    tudo — ver "Execução em fases" acima): sempre `next_step` (avança pra
    próxima fase) + `status = 'idle'` + `last_error = null`; `last_added_cursor`/
@@ -670,7 +757,7 @@ gigante, complementar à quebra em fases.
 ## Dados envolvidos
 
 - **Lê**: `brandwatch_credentials`, `sync_cursors`, `bw_projects`, `bw_queries`, `bw_query_groups`, `bw_categories`, `narratives` (para saber quais `bw_category_id` merecem chart por categoria).
-- **Escreve**: `bw_projects`, `bw_queries`, `bw_query_groups`, `bw_categories`, `mentions`, `bw_query_metrics_daily`/`weekly`/`monthly`, `bw_query_metrics_daily_by_platform`, `bw_query_topics`, `bw_query_top_authors`, `bw_query_author_topics` (✅ implementado, ver passo 6.7), `bw_query_x_insights` (⚠️ pendente de implementação, ver passo 6.4b), `bw_query_demographics_daily` (⚠️ pendente de implementação, ver passo 6.6), `bw_query_group_metrics_weekly`, `sync_cursors`, `sync_log`.
+- **Escreve**: `bw_projects`, `bw_queries`, `bw_query_groups`, `bw_categories`, `mentions`, `bw_query_metrics_daily`/`weekly`/`monthly`, `bw_query_metrics_daily_by_platform`, `bw_query_topics`, `bw_query_top_authors`, `bw_query_author_topics`, `bw_query_x_insights`, `bw_query_demographics_daily`, `bw_query_top_sites`, `bw_query_group_metrics_weekly`, `sync_cursors`, `sync_log`.
 - Detalhes de schema: ver [data-model.md](data-model.md).
 
 ## Permissões

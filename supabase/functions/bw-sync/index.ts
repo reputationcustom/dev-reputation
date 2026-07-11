@@ -984,15 +984,51 @@ async function syncQueryGroupSov(
 
   if (rows.length === 0) {
     log("syncQueryGroupSov:empty", { projectId, queryGroupId });
+  } else {
+    const { error } = await supabase
+      .from("bw_query_group_metrics_weekly")
+      .upsert(rows, { onConflict: "query_group_id,query_id,metric_week" });
+    if (error) throw new Error(`Erro upsertando bw_query_group_metrics_weekly: ${error.message}`);
+    log("syncQueryGroupSov:done", { projectId, queryGroupId, rows: rows.length });
+  }
+
+  // Ampliação 2026-07-11 (validação contra export real de dashboard
+  // Brandwatch — "Reach Over Time" comparando candidatos dentro do mesmo
+  // Query Group): mesma dimensão `queries`, trocando o agregado por
+  // `reachEstimate` — upsert parcial (só essa coluna) na mesma linha.
+  const reachJson = await callBrandwatch(`/projects/${projectId}/data/reachEstimate/queries/weeks?${params.toString()}`, token);
+  const reachResults = (reachJson.results ?? []) as { id: string | number; values?: { id: string; value: number }[] }[];
+
+  const reachRows: Record<string, unknown>[] = [];
+  for (const series of reachResults) {
+    const queryId = Number(series.id);
+    if (!Number.isFinite(queryId)) {
+      logError("syncQueryGroupSov:unexpected_reach_series_id", `queryGroupId=${queryGroupId} id=${series.id}`);
+      continue;
+    }
+    for (const point of series.values ?? []) {
+      reachRows.push({
+        project_id: projectId,
+        query_group_id: queryGroupId,
+        query_id: queryId,
+        metric_week: toDateOnly(point.id),
+        reach_estimate: point.value,
+        synced_at: new Date().toISOString(),
+      });
+    }
+  }
+
+  if (reachRows.length === 0) {
+    log("syncQueryGroupSov:reach_empty", { projectId, queryGroupId });
     return;
   }
 
-  const { error } = await supabase
+  const { error: reachError } = await supabase
     .from("bw_query_group_metrics_weekly")
-    .upsert(rows, { onConflict: "query_group_id,query_id,metric_week" });
-  if (error) throw new Error(`Erro upsertando bw_query_group_metrics_weekly: ${error.message}`);
+    .upsert(reachRows, { onConflict: "query_group_id,query_id,metric_week" });
+  if (reachError) throw new Error(`Erro upsertando bw_query_group_metrics_weekly (reach): ${reachError.message}`);
 
-  log("syncQueryGroupSov:done", { projectId, queryGroupId, rows: rows.length });
+  log("syncQueryGroupSov:reach_done", { projectId, queryGroupId, rows: reachRows.length });
 }
 
 // =========================================================================
@@ -1381,6 +1417,19 @@ async function syncTopAuthors(
         reach_estimate: d.reachEstimate ?? null,
         impact: d.impact ?? null,
         followers: d.twitterFollowers ?? null,
+        // Validação 2026-07-11 contra export real de dashboard Brandwatch
+        // ("Government Verification"/"Business Verification", "Estados"/
+        // "Cidades" dos autores) — campos já presentes neste payload
+        // (confirmado contra developers.brandwatch.com/docs/top-tweeters),
+        // sem chamada nova. Nunca inclui `impressions` aqui — essa coluna é
+        // exclusiva da fase `author_enrichment` (upsert parcial, ver
+        // runAuthorEnrichmentStep()), incluí-la aqui zeraria o valor já
+        // enriquecido a cada refresh semanal deste passo.
+        tweets: d.twitterTweets ?? null,
+        retweets: d.twitterRetweets ?? null,
+        account_type: d.authorAccountType ?? null,
+        country_code: d.countryCode ?? null,
+        country_name: d.countryName ?? null,
         sentiment_positive: sentiment.positive ?? 0,
         sentiment_neutral: sentiment.neutral ?? 0,
         sentiment_negative: sentiment.negative ?? 0,
@@ -1560,6 +1609,396 @@ async function syncAuthorTopics(
 }
 
 // =========================================================================
+// Salvaguarda de orçamento compartilhada por x_insights/demographics —
+// ambos são específicos de X em parte ou no todo, então checam se a Query
+// tem presença relevante em X antes de gastar chamadas à toa. Reusa
+// bw_query_metrics_daily_by_platform (passo 6.3, já sincronizado toda
+// invocação) — sem chamada nova só pra essa checagem. Nível Query inteira
+// (essa tabela não quebra por Category), não por categoryTarget.
+// =========================================================================
+
+async function queryHasTwitterVolume(supabase: SupabaseClient, projectId: number, queryId: number): Promise<boolean> {
+  const { data, error } = await supabase
+    .from("bw_query_metrics_daily_by_platform")
+    .select("total_mentions")
+    .eq("project_id", projectId)
+    .eq("query_id", queryId)
+    .eq("page_type", "twitter")
+    .gt("total_mentions", 0)
+    .limit(1)
+    .maybeSingle();
+  if (error) throw new Error(`Erro checando volume de X em bw_query_metrics_daily_by_platform: ${error.message}`);
+  return !!data;
+}
+
+// =========================================================================
+// Passo 6.4b — X (Twitter) Insights (2026-07-11, priorizado depois de
+// validar contra um export real de dashboard Brandwatch — "X Themes": Top
+// Stories/Hashtags/Posters/Emojis). 4 endpoints confirmados em
+// developers.brandwatch.com/docs/twitter-insights, agregados oficiais não
+// amostrados específicos de X. Ver data-model.md §5/sync-brandwatch.md
+// passo 6.4b pro racional completo.
+// =========================================================================
+
+const X_INSIGHT_ENDPOINTS: { type: "hashtag" | "emoticon" | "url" | "mentioned_author"; path: string }[] = [
+  { type: "hashtag", path: "hashtags" },
+  { type: "emoticon", path: "emoticons" },
+  { type: "url", path: "urls" },
+  { type: "mentioned_author", path: "mentionedauthors" },
+];
+
+async function syncXInsights(
+  supabase: SupabaseClient,
+  token: string,
+  projectId: number,
+  queryId: number,
+  categoryId: number | null,
+  startDate: Date,
+  endDate: Date,
+): Promise<void> {
+  const metricWeek = toDateOnly(new Date().toISOString());
+
+  for (const { type, path } of X_INSIGHT_ENDPOINTS) {
+    const params = new URLSearchParams({
+      queryId: String(queryId),
+      startDate: formatBrandwatchDate(startDate),
+      endDate: formatBrandwatchDate(endDate),
+    });
+    if (categoryId) params.set("category", String(categoryId));
+
+    const json = await callBrandwatch(`/projects/${projectId}/data/${path}?${params.toString()}`, token);
+    const results = (json.results ?? []) as Record<string, any>[];
+
+    const rows = results
+      .map((r) => {
+        const sentiment = r.sentiment ?? {};
+        return {
+          project_id: projectId,
+          query_id: queryId,
+          category_id: categoryId,
+          insight_type: type,
+          name: String(r.name ?? ""),
+          label: r.label ?? null,
+          volume: r.volume ?? 0,
+          tweets: r.tweets ?? null,
+          retweets: r.retweets ?? null,
+          impressions: r.impressions ?? null,
+          reach_estimate: r.reachEstimate ?? null,
+          sentiment_positive: sentiment.positive ?? 0,
+          sentiment_neutral: sentiment.neutral ?? 0,
+          sentiment_negative: sentiment.negative ?? 0,
+          metric_week: metricWeek,
+          synced_at: new Date().toISOString(),
+        };
+      })
+      .filter((r) => r.name.length > 0);
+
+    if (rows.length === 0) {
+      log("syncXInsights:empty", { projectId, queryId, categoryId, type });
+      continue;
+    }
+
+    // Mesma correção de "ON CONFLICT DO UPDATE" já aplicada em
+    // syncTopicsData()/syncTopAuthors()/syncAuthorTopics().
+    const uniqueRows = dedupeByKey(rows, (r) => r.name);
+    if (uniqueRows.length !== rows.length) {
+      log("syncXInsights:duplicates_removed", {
+        projectId, queryId, categoryId, type, removed: rows.length - uniqueRows.length,
+      });
+    }
+
+    const { error } = await supabase
+      .from("bw_query_x_insights")
+      .upsert(uniqueRows, { onConflict: "project_id,query_id,category_id_key,insight_type,name,metric_week" });
+    if (error) throw new Error(`Erro upsertando bw_query_x_insights (${type}): ${error.message}`);
+
+    log("syncXInsights:done", { projectId, queryId, categoryId, type, rows: uniqueRows.length });
+  }
+}
+
+async function isXInsightsStale(
+  supabase: SupabaseClient,
+  projectId: number,
+  queryId: number,
+  categoryId: number | null,
+  maxAgeMs: number,
+): Promise<boolean> {
+  let query = supabase
+    .from("bw_query_x_insights")
+    .select("synced_at")
+    .eq("project_id", projectId)
+    .eq("query_id", queryId)
+    .order("synced_at", { ascending: false })
+    .limit(1);
+  query = categoryId ? query.eq("category_id", categoryId) : query.is("category_id", null);
+
+  const { data, error } = await query.maybeSingle();
+  if (error) throw new Error(`Erro checando frescor de bw_query_x_insights: ${error.message}`);
+  if (!data) return true;
+
+  return Date.now() - new Date(data.synced_at as string).getTime() > maxAgeMs;
+}
+
+async function runXInsightsStep(
+  supabase: SupabaseClient,
+  token: string,
+  projectId: number,
+  queryId: number,
+  categoryTargets: (number | null)[],
+  metricsStartDate: Date,
+  now: Date,
+): Promise<StepResult> {
+  if (!(await queryHasTwitterVolume(supabase, projectId, queryId))) {
+    log("runXInsightsStep:no_twitter_volume", { projectId, queryId });
+    return { didWork: false };
+  }
+  for (const categoryId of categoryTargets) {
+    if (!hasBrandwatchCallBudget()) break;
+    if (await isXInsightsStale(supabase, projectId, queryId, categoryId, 7 * 24 * 60 * 60 * 1000)) {
+      await syncXInsights(supabase, token, projectId, queryId, categoryId, metricsStartDate, now);
+      return { didWork: true };
+    }
+  }
+  return { didWork: false };
+}
+
+// =========================================================================
+// Passo 6.8 — Ranking de sites/domínios (2026-07-11, gap identificado
+// validando o modelo de dados contra um export real de dashboard
+// Brandwatch — "Top Site", distinto de "Top Authors": rankeia domínios,
+// não contas de redes sociais). data/volume/topsites/queries (doc
+// top-sites), mesmo padrão de syncTopAuthors().
+// =========================================================================
+
+async function syncTopSites(
+  supabase: SupabaseClient,
+  token: string,
+  projectId: number,
+  queryId: number,
+  categoryId: number | null,
+  startDate: Date,
+  endDate: Date,
+): Promise<void> {
+  const params = new URLSearchParams({
+    queryId: String(queryId),
+    startDate: formatBrandwatchDate(startDate),
+    endDate: formatBrandwatchDate(endDate),
+    limit: "1000",
+  });
+  if (categoryId) params.set("category", String(categoryId));
+
+  const json = await callBrandwatch(`/projects/${projectId}/data/volume/topsites/queries?${params.toString()}`, token);
+  const results = (json.results ?? []) as { id: string; name?: string; data?: Record<string, any> }[];
+
+  const metricWeek = toDateOnly(new Date().toISOString());
+  const rows = results
+    .map((r) => {
+      const d = r.data ?? {};
+      const sentiment = d.sentiment ?? {};
+      const domain = String(d.domain ?? r.name ?? r.id ?? "");
+      return {
+        project_id: projectId,
+        query_id: queryId,
+        category_id: categoryId,
+        domain,
+        volume: d.volume ?? 0,
+        monthly_visitors: d.monthlyVisitors ?? null,
+        reach_estimate: d.reachEstimate ?? null,
+        impact: d.impact ?? null,
+        author_name: d.authorName ?? null,
+        account_type: d.authorAccountType ?? null,
+        country_code: d.countryCode ?? null,
+        country_name: d.countryName ?? null,
+        sentiment_positive: sentiment.positive ?? 0,
+        sentiment_neutral: sentiment.neutral ?? 0,
+        sentiment_negative: sentiment.negative ?? 0,
+        platform_stats: d,
+        metric_week: metricWeek,
+        synced_at: new Date().toISOString(),
+      };
+    })
+    .filter((r) => r.domain.length > 0);
+
+  if (rows.length === 0) {
+    log("syncTopSites:empty", { projectId, queryId, categoryId });
+    return;
+  }
+
+  const uniqueRows = dedupeByKey(rows, (r) => r.domain);
+  if (uniqueRows.length !== rows.length) {
+    log("syncTopSites:duplicates_removed", {
+      projectId, queryId, categoryId, removed: rows.length - uniqueRows.length,
+    });
+  }
+
+  const { error } = await supabase
+    .from("bw_query_top_sites")
+    .upsert(uniqueRows, { onConflict: "project_id,query_id,category_id_key,domain,metric_week" });
+  if (error) throw new Error(`Erro upsertando bw_query_top_sites: ${error.message}`);
+
+  log("syncTopSites:done", { projectId, queryId, categoryId, rows: uniqueRows.length });
+}
+
+async function isTopSitesStale(
+  supabase: SupabaseClient,
+  projectId: number,
+  queryId: number,
+  categoryId: number | null,
+  maxAgeMs: number,
+): Promise<boolean> {
+  let query = supabase
+    .from("bw_query_top_sites")
+    .select("synced_at")
+    .eq("project_id", projectId)
+    .eq("query_id", queryId)
+    .order("synced_at", { ascending: false })
+    .limit(1);
+  query = categoryId ? query.eq("category_id", categoryId) : query.is("category_id", null);
+
+  const { data, error } = await query.maybeSingle();
+  if (error) throw new Error(`Erro checando frescor de bw_query_top_sites: ${error.message}`);
+  if (!data) return true;
+
+  return Date.now() - new Date(data.synced_at as string).getTime() > maxAgeMs;
+}
+
+async function runTopSitesStep(
+  supabase: SupabaseClient,
+  token: string,
+  projectId: number,
+  queryId: number,
+  categoryTargets: (number | null)[],
+  metricsStartDate: Date,
+  now: Date,
+): Promise<StepResult> {
+  for (const categoryId of categoryTargets) {
+    if (!hasBrandwatchCallBudget()) break;
+    if (await isTopSitesStale(supabase, projectId, queryId, categoryId, 7 * 24 * 60 * 60 * 1000)) {
+      await syncTopSites(supabase, token, projectId, queryId, categoryId, metricsStartDate, now);
+      return { didWork: true };
+    }
+  }
+  return { didWork: false };
+}
+
+// =========================================================================
+// Passo 6.6 — Demografia (2026-07-11, priorizado depois de validar contra
+// um export real de dashboard Brandwatch — "X Demographics": gender split
+// + trend diário, top interests, top professions, top countries). 8
+// dimensões confirmadas em chart-dimensions-and-aggregates — 4 restritas a
+// X/Twitter, 4 de localização sem restrição de plataforma documentada.
+// Escopo inicial: só nível de Query inteira, sem quebra por Narrativa.
+// =========================================================================
+
+const DEMOGRAPHIC_DIMENSIONS: { type: string; path: string; xOnly: boolean }[] = [
+  { type: "gender", path: "gender", xOnly: true },
+  { type: "account_type", path: "accountTypes", xOnly: true },
+  { type: "interest", path: "interest", xOnly: true },
+  { type: "profession", path: "profession", xOnly: true },
+  { type: "country", path: "countries", xOnly: false },
+  { type: "continent", path: "continents", xOnly: false },
+  { type: "city", path: "cities", xOnly: false },
+  { type: "region", path: "regions", xOnly: false },
+];
+
+async function syncDemographicDimension(
+  supabase: SupabaseClient,
+  token: string,
+  projectId: number,
+  queryId: number,
+  dimensionType: string,
+  dimensionPath: string,
+  startDate: Date,
+  endDate: Date,
+): Promise<void> {
+  const params = new URLSearchParams({
+    queryId: String(queryId),
+    startDate: formatBrandwatchDate(startDate),
+    endDate: formatBrandwatchDate(endDate),
+    timezone: TIMEZONE,
+  });
+
+  const json = await callBrandwatch(`/projects/${projectId}/data/volume/${dimensionPath}/days?${params.toString()}`, token);
+  const results = (json.results ?? []) as { id: string; values?: { id: string; value: number }[] }[];
+
+  const rows: Record<string, unknown>[] = [];
+  for (const bucket of results) {
+    const value = String(bucket.id ?? "");
+    if (!value) continue;
+    for (const point of bucket.values ?? []) {
+      rows.push({
+        project_id: projectId,
+        query_id: queryId,
+        dimension_type: dimensionType,
+        value,
+        metric_date: toDateOnly(point.id),
+        total_mentions: point.value ?? 0,
+        synced_at: new Date().toISOString(),
+      });
+    }
+  }
+
+  if (rows.length === 0) {
+    log("syncDemographicDimension:empty", { projectId, queryId, dimensionType });
+    return;
+  }
+
+  // Mesma correção de chunking já aplicada em syncCategoryDailyAggregate()
+  // — dimensões com muitos buckets (ex: cities) × todo o histórico podem
+  // gerar bastante linhas numa resposta só.
+  for (const chunk of chunkArray(rows, 1000)) {
+    const { error } = await supabase
+      .from("bw_query_demographics_daily")
+      .upsert(chunk, { onConflict: "project_id,query_id,dimension_type,value,metric_date" });
+    if (error) throw new Error(`Erro upsertando bw_query_demographics_daily (${dimensionType}): ${error.message}`);
+  }
+
+  log("syncDemographicDimension:done", { projectId, queryId, dimensionType, rows: rows.length });
+}
+
+async function isDemographicDimensionStale(
+  supabase: SupabaseClient,
+  projectId: number,
+  queryId: number,
+  dimensionType: string,
+  maxAgeMs: number,
+): Promise<boolean> {
+  const { data, error } = await supabase
+    .from("bw_query_demographics_daily")
+    .select("synced_at")
+    .eq("project_id", projectId)
+    .eq("query_id", queryId)
+    .eq("dimension_type", dimensionType)
+    .order("synced_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw new Error(`Erro checando frescor de bw_query_demographics_daily: ${error.message}`);
+  if (!data) return true;
+
+  return Date.now() - new Date(data.synced_at as string).getTime() > maxAgeMs;
+}
+
+async function runDemographicsStep(
+  supabase: SupabaseClient,
+  token: string,
+  projectId: number,
+  queryId: number,
+  metricsStartDate: Date,
+  now: Date,
+): Promise<StepResult> {
+  const hasTwitter = await queryHasTwitterVolume(supabase, projectId, queryId);
+  for (const { type, path, xOnly } of DEMOGRAPHIC_DIMENSIONS) {
+    if (xOnly && !hasTwitter) continue;
+    if (!hasBrandwatchCallBudget()) break;
+    if (await isDemographicDimensionStale(supabase, projectId, queryId, type, 7 * 24 * 60 * 60 * 1000)) {
+      await syncDemographicDimension(supabase, token, projectId, queryId, type, path, metricsStartDate, now);
+      return { didWork: true };
+    }
+  }
+  return { didWork: false };
+}
+
+// =========================================================================
 // Handler principal
 // =========================================================================
 
@@ -1675,8 +2114,11 @@ const SYNC_STEPS = [
   "daily_metrics",
   "weekly_monthly",
   "topics",
+  "x_insights",
   "top_authors",
   "author_enrichment",
+  "top_sites",
+  "demographics",
   "sov",
 ] as const;
 type SyncStep = typeof SYNC_STEPS[number];
@@ -2082,11 +2524,20 @@ async function runSyncInvocation(supabase: SupabaseClient, invocationStartedAt: 
         case "topics":
           result = await runTopicsStep(supabase, token, projectId, queryId, categoryTargets, metricsStartDate, now);
           break;
+        case "x_insights":
+          result = await runXInsightsStep(supabase, token, projectId, queryId, categoryTargets, metricsStartDate, now);
+          break;
         case "top_authors":
           result = await runTopAuthorsStep(supabase, token, projectId, queryId, categoryTargets, metricsStartDate, now);
           break;
         case "author_enrichment":
           result = await runAuthorEnrichmentStep(supabase, token, projectId, queryId, metricsStartDate, now);
+          break;
+        case "top_sites":
+          result = await runTopSitesStep(supabase, token, projectId, queryId, categoryTargets, metricsStartDate, now);
+          break;
+        case "demographics":
+          result = await runDemographicsStep(supabase, token, projectId, queryId, metricsStartDate, now);
           break;
         case "sov":
           result = await runSovStep(supabase, token, projectId, queryId, metricsStartDate, now);

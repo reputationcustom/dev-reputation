@@ -501,6 +501,7 @@ tabela.
 | `query_id`         | `bigint`      | sim | FK → `bw_queries(id)` ON DELETE CASCADE — uma linha por Query **dentro** do grupo, não um agregado do grupo inteiro |
 | `metric_week`      | `date`        | sim | |
 | `total_mentions`   | `integer`     | sim | default `0` |
+| `reach_estimate`   | `integer`     | não | ✅ adicionado 2026-07-11 (validação contra export real de dashboard Brandwatch — "Reach Over Time" comparado entre candidatos dentro de um Query Group). Via `data/reachEstimate/queries/weeks?queryGroupId=...` — mesmo agregado `reachEstimate` já confirmado em `bw_query_metrics_daily`, mesma dimensão `queries` já usada nesta tabela pro volume, só trocando o agregado |
 | `synced_at`        | `timestamptz` | sim | `now()` |
 
 **Índices**: unique `(query_group_id, query_id, metric_week)` — sem o
@@ -512,6 +513,17 @@ problema de `category_id` nullable acima (`query_id` aqui nunca é null).
 Populada por `data/volume/queries/weeks?queryGroupId=...` — grão de
 comparação entre candidato/concorrentes (ver exemplo de Query Group em
 `brandwatch-setup.md` §4).
+
+> ✅ **`reach_estimate` adicionado (2026-07-11, migration `20260711050000`)**:
+> pedido do usuário após validar contra um export real de dashboard
+> Brandwatch — "Reach Over Time" comparando candidatos dentro do mesmo
+> Query Group não tinha equivalente nesta tabela (só `total_mentions`).
+> Mesma chamada extra de `data/reachEstimate/queries/weeks?queryGroupId=...`
+> (dimensão `queries`, já usada acima pro volume) — upsert parcial (só essa
+> coluna), mesmo racional de `bw_query_metrics_daily.reach_estimate`. ⚠️
+> Mesma categoria de risco da correção de dimensão acima (`queries` +
+> `queryGroupId` juntos, sem exemplo de payload específico) — herda a
+> mesma ressalva, não uma nova.
 
 > ⚠️ **Correção (2026-07-10)**: originalmente populada via
 > `data/volume/queryGroups/weeks?queryGroupId=...`, assumindo (sem
@@ -620,8 +632,10 @@ insumo textual que dá sinal a narrativas exclusivas de X, já que a
 Brandwatch redige o texto de mentions de X mention a mention (ver
 `overview.md`, "Validação de viabilidade"), mas estes 4 aggregates
 **não são redigidos** — trazem sentimento por hashtag/emoji/URL/autor
-citado sem depender de reler texto restrito. Adicionado 2026-07-11
-(revisão de spec pré-implementação — ainda sem migration correspondente).
+citado sem depender de reler texto restrito. ✅ **Implementado 2026-07-11**
+(migration `20260711070000`) — priorizado depois de validar contra um
+export real de dashboard Brandwatch ("X Themes": Top Stories/Hashtags/
+Posters/Emojis, exatamente este shape de dado).
 
 | Campo | Tipo | Obrigatório | Descrição |
 |---|---|---|---|
@@ -673,11 +687,13 @@ ver nota de sampling em §5 acima). Adicionada em `20260710010000`.
 | `impact` | `numeric` | não | |
 | `followers` | `integer` | não | de `twitterFollowers` — único campo de seguidores confirmado no envelope deste endpoint (Facebook/Reddit não têm campo de seguidores documentado aqui). Adicionado `20260710050000` |
 | `is_influential` | `boolean` | sim | gerada, `coalesce(followers, 0) >= 100000` — adicionado `20260710050000`, pedido do usuário ("mais de 100000 seguidores... os mais influentes") |
-| `tweets` | `integer` | não | de `twitterTweets` — contagem de posts do autor. ⚠️ Pendente de implementação (revisão de spec 2026-07-11, pedido do usuário: "qtde de post... por autor") |
-| `retweets` | `integer` | não | de `twitterRetweets` — contagem de reposts do autor. Mesmo pedido/status pendente que `tweets` acima |
+| `tweets` | `integer` | não | de `twitterTweets` — contagem de posts do autor. ✅ Implementado 2026-07-11, migration `20260711060000` |
+| `retweets` | `integer` | não | de `twitterRetweets` — contagem de reposts do autor. Mesmo migration que `tweets` acima |
 | `impressions` | `integer` | não | soma das impressões diárias do autor, via `data/impressions/queries/days?queryId=<id>&author=<handle>` — agregado oficial da Brandwatch (não `Top Authors`, que não expõe isso), filtrado por autor, **não** somado localmente sobre `mentions`. Ver nota abaixo. ✅ Implementado 2026-07-11, migration `20260711040000` |
+| `account_type` | `text` | não | de `authorAccountType` — confirmado no envelope do endpoint (ex: valores tipo governo/empresa/pessoal, exatos ainda não catalogados). ✅ Implementado 2026-07-11, migration `20260711060000` — habilita filtros tipo "Government Verification"/"Business Verification" já vistos num dashboard real da Brandwatch |
+| `country_code` / `country_name` | `text` | não | de `countryCode`/`countryName` — país do autor (não do conteúdo da mention). Mesma migration que `account_type`, habilita "distribuição geográfica dos autores" (distinto de §5's demografia por *mention*) |
 | `sentiment_positive`/`neutral`/`negative` | `integer` | sim | default `0` |
-| `platform_stats` | `jsonb` | sim | objeto `data` inteiro devolvido pelo endpoint por autor (twitter*/facebook*/reddit* etc.) — mesmo raciocínio de `mentions.engagement`, sem coluna por campo |
+| `platform_stats` | `jsonb` | sim | objeto `data` inteiro devolvido pelo endpoint por autor (twitter*/facebook*/reddit* etc.) — mesmo raciocínio de `mentions.engagement`, sem coluna por campo. `account_type`/`country_code`/`country_name` acima são extrações de campos que já vivem aqui, não chamada nova |
 | `metric_week` | `date` | sim | mesmo caráter de snapshot que `bw_query_topics.metric_week` |
 | `synced_at` | `timestamptz` | sim | |
 
@@ -687,13 +703,17 @@ acelera consultas de "só os influentes".
 **Políticas RLS**: select-only via `project_id`. Throttle semanal, agora por
 `categoryTarget` (query inteira + cada Narrativa).
 
-> ⚠️ **`tweets`/`retweets` — pendente de implementação (2026-07-11, revisão
-> de spec, pedido do usuário)**: confirmado direto contra
-> `developers.brandwatch.com/docs/top-tweeters` que o payload por autor já
-> inclui `twitterTweets`/`twitterRetweets` — ou seja, **esse dado já é
-> capturado hoje**, só vive dentro de `platform_stats` (jsonb), sem coluna
-> própria. Extrair como colunas tipadas é só mapear 2 campos já presentes
-> na resposta, sem chamada nova à Brandwatch.
+> ✅ **`tweets`/`retweets`/`account_type`/`country_code`/`country_name`
+> implementados (2026-07-11, migration `20260711060000`)**: confirmado
+> direto contra `developers.brandwatch.com/docs/top-tweeters` que o
+> payload por autor já inclui `twitterTweets`/`twitterRetweets`/
+> `authorAccountType`/`countryCode`/`countryName` — ou seja, esse dado já
+> era capturado, só vivia dentro de `platform_stats` (jsonb), sem coluna
+> própria. Extraído como colunas tipadas (mapeamento de campos já
+> presentes na resposta, sem chamada nova à Brandwatch) depois de validar
+> contra um export real de dashboard Brandwatch mostrando "Top X Authors |
+> Government Verification"/"Business Verification" e distribuição
+> geográfica de autores por Estado/Cidade.
 >
 > ✅ **`impressions` por autor — conclusão revertida no mesmo dia
 > (2026-07-11)**: a primeira leitura desta spec (Top Authors não expõe
@@ -776,6 +796,46 @@ acelera consultas de "só os influentes".
 > (`syncTopicsData()`, dedup por `topic_type::label`) — mesma classe de
 > risco, ainda não observada em produção mas estruturalmente idêntica.
 
+### `bw_query_top_sites`
+
+✅ **Implementado 2026-07-11** — gap identificado validando o modelo de
+dados contra um export real de dashboard Brandwatch (páginas "Top Site" —
+ranking de domínios/sites, distinto de "Top Authors" que rankeia contas de
+redes sociais). Confirmado endpoint próprio,
+`data/volume/topsites/queries` (doc `top-sites`), agregado oficial não
+amostrado, mesma família de `Top Authors` — payload por site quase
+idêntico: `domain`, `volume`, `monthlyVisitors`, `countryName`/`countryCode`,
+`authorName`/`authorGender`/`authorAccountType`, `authorVolume`/
+`authorProfessions`/`authorInterest`, `sentiment`
+(`negative`/`neutral`/`positive`), `reachEstimate`, `impact` — note que
+mesmo sendo "Top Sites", o payload inclui dados do **autor típico** daquele
+domínio (nome/gênero/tipo de conta/interesses), não só do site em si.
+
+| Campo | Tipo | Obrigatório | Descrição |
+|---|---|---|---|
+| `id` | `uuid` | sim | PK |
+| `project_id` | `bigint` | sim | FK → `bw_projects(id)` ON DELETE CASCADE |
+| `query_id` | `bigint` | sim | FK → `bw_queries(id)` ON DELETE CASCADE |
+| `category_id` | `bigint` | não | FK → `bw_categories(id)`; `null` = ranking da Query inteira, preenchido = por Narrativa — mesmo padrão de `bw_query_top_authors` |
+| `category_id_key` | `bigint` | sim | gerada, `coalesce(category_id, 0)` |
+| `domain` | `text` | sim | |
+| `volume` | `integer` | sim | default `0` |
+| `monthly_visitors` | `integer` | não | de `monthlyVisitors` |
+| `reach_estimate` | `integer` | não | |
+| `impact` | `numeric` | não | |
+| `author_name` | `text` | não | autor típico associado ao domínio (o payload trata isso como propriedade do site, não uma lista de autores) |
+| `account_type` | `text` | não | de `authorAccountType` |
+| `country_code` / `country_name` | `text` | não | de `countryCode`/`countryName` |
+| `sentiment_positive`/`neutral`/`negative` | `integer` | sim | default `0` |
+| `platform_stats` | `jsonb` | sim | objeto bruto do endpoint (mesmo raciocínio de `bw_query_top_authors.platform_stats`) |
+| `metric_week` | `date` | sim | mesmo caráter de snapshot que `bw_query_top_authors.metric_week` |
+| `synced_at` | `timestamptz` | sim | |
+
+**Índices**: unique `(project_id, query_id, category_id_key, domain, metric_week)`.
+**Políticas RLS**: select-only via `project_id`. Throttle semanal, mesmo
+padrão de `bw_query_top_authors` (query inteira + cada Narrativa via
+`categoryTarget`, `category=<id>` como filtro).
+
 ### `bw_query_author_topics`
 
 ✅ **Implementado 2026-07-11** (mesma revisão que corrigiu a conclusão de
@@ -813,12 +873,16 @@ correção de "ON CONFLICT DO UPDATE" já aplicada em `bw_query_topics`.
 
 ### `bw_query_demographics_daily`
 
-⚠️ **Pendente de implementação (2026-07-11, revisão de spec — pedido do
+✅ **Implementado 2026-07-11** (migration `20260711070000`) — pedido do
 usuário: "é possível fazer uma análise demográfica de tudo que vem do X?
-Na Brandwatch eu tenho essa informação nos dashboards")**. Confirmado
+Na Brandwatch eu tenho essa informação nos dashboards". Confirmado
 direto contra `developers.brandwatch.com/docs/chart-dimensions-and-aggregates`
 que existem dimensões de chart **oficiais e não amostradas** pra isso —
-mesma família de `pageTypes`/`categories` já usada em `bw-sync`:
+mesma família de `pageTypes`/`categories` já usada em `bw-sync`. Priorizado
+depois de validar contra um export real de dashboard Brandwatch ("X
+Demographics": gender split + trend diário, top interests, top
+professions, top countries — exatamente este shape de dado, incluindo a
+série temporal por dia que a tabela já previa):
 
 - **Específicas de X/Twitter** (a doc marca explicitamente "currently for
   Twitter data only"): `gender`, `accountTypes`, `interest`, `profession`.
@@ -1222,27 +1286,31 @@ revoke all on schema public from bi_reader;
       `narrative_metrics`, via `mentions_sample` de
       `refresh_narrative_metrics()` (migration `20260711010000` — ver
       premissa fixada na tabela `narrative_metrics`)
-      → ⚠️ **pendente de implementação** (revisão de spec 2026-07-11, sem
-      migration ainda): nova tabela `bw_query_x_insights` (§5), colunas
-      `bw_query_topics.daily_series`/`page_type_breakdown` (§5), busca
-      seletiva de `full_text` por Narrativa/top-N (§3) — ver
-      `sync-brandwatch.md` passos 6.4b e 5
+      → colunas `bw_query_topics.daily_series`/`page_type_breakdown` (§5),
+      busca seletiva de `full_text` por Narrativa/top-N (§3) — ⚠️ ainda
+      pendentes de implementação, ver `sync-brandwatch.md` passo 5
       → heartbeat `pg_cron`/`pg_net` pra `bw-sync` a cada 15min (URL
       hardcoded, não é segredo), gated por `BW_SYNC_INTERVAL_HOURS`
       (migration `20260711020000`) → `sync_cursors.next_step` (execução em
       fases, corrige bug de produção "CPU Time exceeded" — migration
       `20260711030000`, ver §4 e `sync-brandwatch.md` "Execução em fases")
-      → ✅ **implementado nesta mesma revisão** (migration `20260711040000`):
-      `bw_query_top_authors.impressions` + nova tabela
+      → `bw_query_top_authors.impressions` + nova tabela
       `bw_query_author_topics` + nova fase `author_enrichment` em
-      `SYNC_STEPS` (§5, ver `sync-brandwatch.md` passo 6.7) — top 10
-      autores da Query inteira, via `data/impressions/queries/days?author=`
-      e `data/topics?author=`
-      → ⚠️ **pendente de implementação** (revisão de spec 2026-07-11, sem
-      migration ainda): `bw_query_top_authors.tweets`/`retweets` (§5, dado
-      já capturado em `platform_stats`, só falta extrair como coluna), nova
-      tabela `bw_query_demographics_daily` + fase `demographics` em
-      `SYNC_STEPS` (§5, ver `sync-brandwatch.md`)
+      `SYNC_STEPS` (migration `20260711040000`, ver `sync-brandwatch.md`
+      passo 6.7) — top 10 autores da Query inteira, via
+      `data/impressions/queries/days?author=` e `data/topics?author=`
+      → `bw_query_group_metrics_weekly.reach_estimate` (migration
+      `20260711050000`) → `bw_query_top_authors.tweets`/`retweets`/
+      `account_type`/`country_code`/`country_name` (migration
+      `20260711060000`, dado já capturado em `platform_stats`, só extraído
+      como coluna) → nova tabela `bw_query_top_sites` (mesma migration) →
+      nova tabela `bw_query_x_insights` + nova tabela
+      `bw_query_demographics_daily` + novas fases `x_insights`/
+      `top_sites`/`demographics` em `SYNC_STEPS` (migration
+      `20260711070000`, ver `sync-brandwatch.md` passos 6.4b/6.6/6.8) —
+      todos validados contra um export real de dashboard Brandwatch
+      (2026-07-11, ver `sync-brandwatch.md` "Validação contra dashboard
+      real")
 - [ ] Triggers `set_updated_at` em `organizations`, `brandwatch_credentials`, `narratives`
 - [ ] RLS habilitada em **todas** as tabelas deste módulo (inclusive
       `sync_cursors`/`sync_log`, deny-all)
