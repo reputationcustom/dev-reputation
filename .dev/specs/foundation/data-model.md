@@ -421,7 +421,14 @@ security` em ambas, **sem nenhuma policy** (deny-all para `anon`/
 > (`metadata`, `mentions`, `daily_metrics`, `weekly_monthly`, `topics`,
 > `top_authors`, `sov`), ampliado pra 8 na mesma revisão (migration
 > `20260711040000`) com `author_enrichment` inserido entre `top_authors` e
-> `sov` (ver `bw_query_top_authors`/`bw_query_author_topics` acima). Uma
+> `sov` (ver `bw_query_top_authors`/`bw_query_author_topics` acima), depois
+> pra 11 (migration `20260711070000`, adiciona `x_insights`/`top_sites`/
+> `demographics`). A migration `20260711090000` (SOV/métricas por
+> plataforma e Narrativa) adicionou um 12º valor, `platform_by_narrative`,
+> a `SYNC_STEPS` no código mas **esqueceu de atualizar a constraint** —
+> bug de produção descoberto 2026-07-12 ("new row ... violates check
+> constraint \"sync_cursors_next_step_check\""), corrigido em
+> `20260712010000` (constraint recriada com os 12 valores atuais). Uma
 > única invocação processando um par "devido" de ponta a ponta (mentions +
 > todas as métricas diárias/semanais/mensais/temas/top-authors/SOV)
 > processava dezenas de milhares de objetos JSON sincronamente e estourava
