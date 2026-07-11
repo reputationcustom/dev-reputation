@@ -135,8 +135,9 @@ used to apply to `bw-sync`.)
   synchronously in one invocation (one `reachEstimate` call alone returned
   4825 rows in one response in production). Now each invocation executes
   exactly one phase from `SYNC_STEPS` (`metadata → mentions →
-  daily_metrics → weekly_monthly → topics → top_authors →
-  author_enrichment → sov`, tracked in `sync_cursors.next_step`) and
+  daily_metrics → weekly_monthly → topics → platform_by_narrative →
+  x_insights → top_authors → author_enrichment → top_sites →
+  demographics → sov`, tracked in `sync_cursors.next_step`) and
   advances the cursor; `last_synced_at` (and the `BW_SYNC_INTERVAL_HOURS`
   gate) only advances once the last phase closes the cycle. Since all
   state lives in Postgres, not the isolate's memory, a manual invocation
@@ -171,6 +172,34 @@ used to apply to `bw-sync`.)
   column + new `bw_query_author_topics` table) — scoped to top 10 as a
   budget safeguard (2 extra calls per author), no per-Narrativa breakdown
   yet.
+
+- **Real SOV scoping bug found and fixed (2026-07-11, migration
+  `20260711080000`)** — user request: verify that SOV = Narrativa mentions
+  / total mentions, and correct any divergence. There was a real one:
+  `public.narratives_overview.sov_percent` divided by the sum of every
+  Narrativa's `total_mentions` across the **entire organization**
+  (grouped only by `organization_id`), not by the Narrativa's own Query
+  (candidate/monitoring effort). Correct only by coincidence when an org
+  has a single Query — wrong as soon as a Project tracks more than one
+  (confirmed as the real scenario by the dashboard PDF validation above —
+  6 candidates, 6 Queries). Root cause ran deeper than the view:
+  `fetchNarrativeCategoryIds()` returned *every* Narrativa in the Project
+  for *whichever* Query was being synced, with no notion of which Query a
+  Category belongs to — wasting call budget and letting
+  `refresh_narrative_metrics()` (joined on `category_id` alone, no
+  `query_id`) pull `total_mentions` from the wrong Query for a Narrativa.
+  Fix: `bw_categories.query_ids` (Brandwatch already returns this in `GET
+  .../rulecategories` as `queryIds` — no new call), `fetchNarrativeCategoryIds()`
+  now filters by Query, `narrative_metrics.query_id` (populated only when
+  a Category maps to exactly one Query — the pattern
+  `brandwatch-setup.md` already recommends), and the SOV view now groups
+  its denominator by `query_id` instead of `organization_id`. Also closed,
+  same request ("share of voice por plataforma... por narrativa... por
+  autores"): SOV by author was already answerable from existing data
+  (`bw_query_top_authors.volume` ÷ `bw_query_metrics_daily.total_mentions`,
+  no new capture); SOV by platform was a real gap —
+  `bw_query_metrics_daily_by_platform` gained `category_id` and a new
+  `platform_by_narrative` phase (migration `20260711090000`).
 
 - **Rate limit budget (30 calls/10min per Client)**: every Brandwatch call
   goes through `callBrandwatch()`, which is sequential (never parallel —

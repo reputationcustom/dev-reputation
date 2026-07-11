@@ -57,6 +57,7 @@ computação síncrona, diferente de esperar rede).
 | `daily_metrics` | Passos 6, 6.3, 6.3b (sentimento diário + reach/engagement + plataforma — sempre rodam, não são "stale-gated") |
 | `weekly_monthly` | Passo 6.1 (semanal/mensal, throttle 7/30 dias) |
 | `topics` | Passo 6.4 (temas, throttle 7 dias) |
+| `platform_by_narrative` | Passo 6.3c (breakdown de plataforma por Narrativa, throttle 7 dias) |
 | `x_insights` | Passo 6.4b (hashtags/emojis/URLs/autores citados de X, throttle 7 dias) |
 | `top_authors` | Passo 6.5 (ranking de autores, throttle 7 dias) |
 | `author_enrichment` | Passo 6.7 (impressões + temas dos top 10 autores, throttle 7 dias) |
@@ -64,8 +65,8 @@ computação síncrona, diferente de esperar rede).
 | `demographics` | Passo 6.6 (demografia — gender/localização, throttle 7 dias) |
 | `sov` | Passo 6.2 (Share of Voice de Query Group + reach por candidato, throttle 7 dias) |
 
-Todas as fases acima estão ✅ **implementadas** (2026-07-11) — as últimas 5
-(`x_insights`, `top_sites`, `demographics`, mais `reach_estimate` em `sov`)
+Todas as fases acima estão ✅ **implementadas** (2026-07-11) —
+`x_insights`, `top_sites`, `demographics` (mais `reach_estimate` em `sov`)
 foram priorizadas depois de validar o modelo de dados contra um export
 real de dashboard Brandwatch (ver "Validação contra dashboard real" mais
 abaixo).
@@ -79,7 +80,7 @@ continuam "stale" e são retomados numa invocação futura da mesma fase, não
 na mesma invocação (é isso que limita o pico de CPU; verificações de
 frescor que não acham nada pra fazer são baratas e não avançam por si só o
 "orçamento" de CPU, só avançam pra próxima fase dentro da mesma
-invocação). O ciclo completo (as 11 fases) só fecha — e só então
+invocação). O ciclo completo (as 12 fases) só fecha — e só então
 `sync_cursors.last_synced_at` avança, rearmando o gate de
 `BW_SYNC_INTERVAL_HOURS` do passo 0.5b — quando a última fase (`sov`) roda
 (ou é pulada por não ter trabalho).
@@ -155,6 +156,52 @@ Brandwatch realmente entrega, painel a painel — resultado:
     de produto sobre se isso é relevante antes de investir mais.
   - **Painel "Custom"**: sem conteúdo visível no export fornecido, não dá
     pra saber o que cobre.
+
+## Correção de escopo do SOV (2026-07-11)
+
+Pedido do usuário: "O SOV corresponde a: Menções da Narrativa / Total de
+Menções. Verifique se estamos seguindo esse conceito... Se houver alguma
+divergência, corrija." Exemplo dado (monitoramento eleitoral, 200 mil
+menções totais, distribuídas em 5 Narrativas — Saúde 40%/Educação 22%/
+Segurança 18%/Economia 12%/Mobilidade 8% — somando 100%).
+
+**Havia divergência real**: `public.narratives_overview.sov_percent`
+dividia pelo total de **todas as Narrativas da organização inteira**
+(agrupado só por `organization_id`), não pelo total da **mesma Query**
+(candidato/monitoramento) que as Narrativas pertencem. Correto só na
+coincidência de a organização ter uma única Query — divergente assim que
+o Project tem mais de uma (confirmado como cenário real na validação
+contra dashboard, seção acima — 6 candidatos, 6 Queries).
+
+Causa raiz, mais funda que a view: `fetchNarrativeCategoryIds()` — chamada
+no início de cada invocação pra montar `categoryTargets` (usado por todos
+os passos 6.x que quebram por Narrativa) — devolvia **todas** as
+Narrativas do Project pra **qualquer** Query sendo sincronizada, sem saber
+a qual Query cada Category pertence. Além de desperdiçar orçamento (uma
+Query filtrando por Categories de candidatos alheios em todo passo 6.x),
+permitia que `refresh_narrative_metrics()` (join só por `category_id`, sem
+`query_id`) juntasse `total_mentions` da Query errada pra uma Narrativa.
+
+**Correção** (migration `20260711080000`): `bw_categories` ganha
+`query_ids` (Brandwatch já devolve isso em `GET .../rulecategories` —
+campo `queryIds`, confirmado em
+`developers.brandwatch.com/docs/retrieving-categories` — sem chamada
+nova); `fetchNarrativeCategoryIds()` passa a filtrar por Query (só
+Categories cujo `query_ids` contém a Query sendo sincronizada);
+`narrative_metrics` ganha `query_id` (preenchido só quando a Category tem
+exatamente 1 Query associada); a view recalcula `sov_percent` agrupando
+por `query_id`. Ver `data-model.md` "Camada de reporting" pro detalhe
+completo do SQL.
+
+**SOV por plataforma e por autor** (mesmo pedido do usuário: "importante
+que tenhamos share of voice por plataforma, por narrativa e por
+autores"): por autor já era respondível com dado existente
+(`bw_query_top_authors.volume` ÷ `bw_query_metrics_daily.total_mentions`,
+sem tabela nova). Por plataforma **não** era — `bw_query_metrics_daily_by_platform`
+só tinha o breakdown da Query inteira, sem quebra por Narrativa. Ganhou
+`category_id`/`category_id_key` (migration `20260711090000`) + fase
+própria `platform_by_narrative` (passo 6.3c abaixo) — ver `data-model.md`
+§5 pro racional completo.
 
 ## Fluxo principal
 
@@ -259,7 +306,11 @@ Brandwatch realmente entrega, painel a painel — resultado:
    `queries/summary` (todas as Queries do Project, não só a rastreada),
    `query-groups` e `rulecategories` (achatando Category+Subcategories em
    linhas de `bw_categories`, `parent_id` para subcategoria), e faz upsert
-   em `bw_projects`/`bw_queries`/`bw_query_groups`/`bw_categories`.
+   em `bw_projects`/`bw_queries`/`bw_query_groups`/`bw_categories`. ✅
+   **Correção 2026-07-11** (bug de escopo do SOV, ver seção acima):
+   `bw_categories.query_ids` também é populado a partir do campo
+   `queryIds` que `rulecategories` já devolve — sem chamada nova, só um
+   campo a mais mapeado da mesma resposta.
    `GET /metrics` (Global Preset Metrics) **não é buscado nesta leva** — não
    há coluna/uso para esse cache ainda no MVP. **Correção 2026-07-10**: logo
    após o upsert de `bw_categories`, `ensureNarrativesFromCategories()` cria
@@ -433,9 +484,16 @@ Brandwatch realmente entrega, painel a painel — resultado:
    `linkedinLikes/Comments/Shares/Impressions`). Ver `data-model.md` §3.
 6. Busca `data/volume/sentiment/days` para o par (`category` omitido = Query
    inteira, mais uma chamada por Category **vinculada a alguma
-   `narratives.bw_category_id`** neste Project — não todas as Categories do
-   Project) e faz upsert em `bw_query_metrics_daily`. Roda em **toda**
-   invocação — é o dado mais volátil depois de mentions.
+   `narratives.bw_category_id` e associada a esta Query** — não toda
+   Category do Project, ver correção de escopo do SOV acima) e faz upsert
+   em `bw_query_metrics_daily`. Roda em **toda** invocação — é o dado mais
+   volátil depois de mentions.
+   ⚠️ **Correção 2026-07-11** (bug de escopo do SOV, ver seção acima): até
+   `fetchNarrativeCategoryIds()` ganhar o filtro por Query, este passo
+   incluía Categories de **qualquer** Query do Project como
+   `categoryTarget`, não só as da Query sendo sincronizada — desperdício de
+   orçamento e risco de `refresh_narrative_metrics()` juntar dado da Query
+   errada. Corrigido via `bw_categories.query_ids`.
    ⚠️ **Correção 2026-07-10** (pedido do usuário: "as métricas não estão
    sendo trazidas corretamente" / "Data início 01/01/2026 até a data de
    hj"): este e todos os passos 6.x abaixo chamavam `data/volume/...` com
@@ -509,6 +567,17 @@ Brandwatch realmente entrega, painel a painel — resultado:
    conhecidos de `bw_categories` primeiro e descarta (com log
    `syncCategoryDailyAggregate:unknown_categories_skipped`) qualquer
    Category fora desse conjunto, em vez de derrubar a invocação inteira.
+6.3c. ✅ **Breakdown de plataforma por Narrativa** (implementado 2026-07-11,
+   pedido do usuário: "importante que tenhamos share of voice por
+   plataforma... por narrativa"): mesmo throttle semanal de
+   `weekly_monthly`/`topics`, reusa `syncPlatformMetrics()` do passo 6.3
+   (mesmo endpoint, `data/volume/pageTypes/days`), agora com filtro
+   `category=<id>` — para no primeiro `categoryTarget` (excluindo `null`,
+   já coberto pelo passo 6.3 todo ciclo) sem linha "fresca" em
+   `bw_query_metrics_daily_by_platform`. Fase própria (`platform_by_narrative`),
+   não faz parte do passo 6.3 (que roda toda invocação sem quebra por
+   Narrativa) pra não reintroduzir o risco de CPU corrigido na "Execução em
+   fases".
 6.4. Temas: se não existir linha "fresca" (7 dias) em `bw_query_topics`
    para o par (e cada `categoryTarget`, mesmo padrão do passo 6.1): busca
    `data/topics?extract=words,phrases,hashtags,entities,people,places,

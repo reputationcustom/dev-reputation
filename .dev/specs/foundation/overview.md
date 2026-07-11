@@ -287,7 +287,7 @@ view/função `narratives_overview(organization_id, at_date)` sobre `narratives`
 | Coluna | Origem | Cálculo |
 |---|---|---|
 | Narrativa | `narratives.title` | direto |
-| SOV | `narrative_metrics.total_mentions` | `total_mentions` da narrativa ÷ soma de `total_mentions` de todas as Narrativas ativas da organização no mesmo `metric_date` — **Share of Voice (Narrativa)**, não confundir com o SOV de Query Group já descrito acima (ver `_glossary.md`) |
+| SOV | `narrative_metrics.total_mentions` | `total_mentions` da narrativa ÷ soma de `total_mentions` de todas as Narrativas da **mesma Query** (`narrative_metrics.query_id`) no mesmo `metric_date` — **Share of Voice (Narrativa)**, não confundir com o SOV de Query Group já descrito acima (ver `_glossary.md`). ⚠️ **Corrigido 2026-07-11** (bug de produção real: a implementação original agrupava por `organization_id` inteira em vez de por Query — divergente assim que uma organização monitora mais de um candidato/Query no mesmo Project; ver `data-model.md` "Camada de reporting" pro detalhe da correção) |
 | Tendência | 2 linhas consecutivas de `narrative_metrics` | variação % entre o período atual e o anterior (mesmo `period`) |
 | Sentimento | `sentiment_positive/neutral/negative` | bucket a partir do sentimento líquido `(positive - negative) / total`; thresholds exatos ⚠️ DECISÃO PENDENTE (decisão de produto, não técnica) |
 | Momentum | magnitude/direção da Tendência | bucket categórico (ex: "Explodindo" / "Forte" / "Médio" / "Esfriando"); thresholds exatos ⚠️ DECISÃO PENDENTE — candidato natural a virar configurável no `threshold-engine` (Sprint 3) em vez de hard-coded |

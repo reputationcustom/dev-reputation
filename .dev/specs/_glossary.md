@@ -184,8 +184,10 @@ exatos em variáveis, componentes, tabelas e comentários.
 |-----------------------|----------------------------------------------------------------------------|
 | Sentiment             | Classificação `positive`/`negative`/`neutral` de uma Mention (Brandwatch). |
 | Risco (`risk_level`) | Nível categórico simples do Caso/Narrativa: `low`/`medium`/`high`/`critical`. **Não** confundir com um "Reputation Score" composto — isso está fora do escopo do MVP. |
-| Share of Voice (Query Group) | Comparação de volume entre Queries de um Query Group (ex: candidato vs. concorrentes) — vem direto da Brandwatch (`data/volume/queryGroups/...`). |
-| Share of Voice (Narrativa) | % do volume total monitorado (entre as Narrativas ativas da organização) atribuído a uma Narrativa específica num período — calculado a partir de `narrative_metrics`, **não** é a mesma coisa que o Share of Voice de Query Group acima; ver [foundation/overview.md](foundation/overview.md). |
+| Share of Voice (Query Group) | Comparação de volume entre Queries de um Query Group (ex: candidato vs. concorrentes) — vem direto da Brandwatch (`data/volume/queries/weeks?queryGroupId=...`), incl. `reach_estimate` desde 2026-07-11. |
+| Share of Voice (Narrativa) | Menções da Narrativa ÷ total de menções de **todas as Narrativas da mesma Query** (candidato/monitoramento) no mesmo período — ex: 200 mil menções totais, Saúde 40%/Educação 22%/Segurança 18%/Economia 12%/Mobilidade 8%. ⚠️ **Corrigido 2026-07-11** (bug real: agrupava por `organization_id` inteira, misturando Narrativas de candidatos/Queries diferentes quando o Project tem mais de uma Query) — agora agrupado por `query_id` via `narrative_metrics.query_id`. **Não** é a mesma coisa que o Share of Voice de Query Group acima; ver [foundation/data-model.md](foundation/data-model.md) "Camada de reporting". |
+| Share of Voice (plataforma) | Participação de uma Narrativa dentro de uma plataforma específica, ou mix de plataformas dentro de uma Narrativa — via `bw_query_metrics_daily_by_platform.category_id` (adicionado 2026-07-11). |
+| Share of Voice (autor) | Participação de um autor no total de menções de uma Query/Narrativa — `bw_query_top_authors.volume` ÷ `bw_query_metrics_daily.total_mentions` (mesmo Query/Category/período); razão calculada na camada de consumo, sem tabela própria. |
 | Compliance eleitoral  | Guardrails de conteúdo/auditoria de IA sobre mentions relacionadas a candidatos/eleições — responsabilidade da aplicação, não da API da Brandwatch. |
 
 ## Abreviações usadas nas specs

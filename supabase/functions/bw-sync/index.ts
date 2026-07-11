@@ -453,6 +453,18 @@ async function refreshMetadata(
       parent_id: null,
       name: category.name,
       matching_type: category.matchingType ?? null,
+      // Corrige divergência de escopo do SOV por Narrativa (2026-07-11,
+      // pedido do usuário — validado contra
+      // developers.brandwatch.com/docs/retrieving-categories: o payload já
+      // inclui `queryIds`, sem chamada nova). Sem isto,
+      // fetchNarrativeCategoryIds() devolvia TODAS as Narrativas do
+      // Project pra QUALQUER Query sincronizada — se o Project tem mais de
+      // uma Query (vários candidatos, como no export de dashboard
+      // validado), cada Query gastava orçamento filtrando por Categories
+      // de candidatos alheios, e refresh_narrative_metrics() podia juntar
+      // linhas de bw_query_metrics_daily de Queries erradas pra mesma
+      // Narrativa.
+      query_ids: category.queryIds ?? [],
       synced_at: new Date().toISOString(),
     });
     for (const child of category.children ?? []) {
@@ -462,6 +474,7 @@ async function refreshMetadata(
         parent_id: category.id,
         name: child.name,
         matching_type: category.matchingType ?? null,
+        query_ids: child.queryIds ?? category.queryIds ?? [],
         synced_at: new Date().toISOString(),
       });
     }
@@ -907,11 +920,21 @@ async function isQueryGroupSovStale(
   return Date.now() - new Date(data.synced_at as string).getTime() > maxAgeMs;
 }
 
-async function fetchNarrativeCategoryIds(supabase: SupabaseClient, projectId: number): Promise<number[]> {
+// Corrigido 2026-07-11 (pedido do usuário: SOV = menções da Narrativa /
+// total de menções — precisa que "total" seja o total da MESMA Query, não
+// de todo o Project). Antes, devolvia toda Narrativa do Project pra
+// qualquer Query — se o Project tem múltiplas Queries (vários candidatos,
+// confirmado no export de dashboard já validado), cada Query gastava
+// categoryTargets/orçamento em Categories de candidatos alheios. Agora
+// filtra por `bw_categories.query_ids` conter o `queryId` corrente
+// (`queryIds` já vem no payload de `rulecategories`, sem chamada nova —
+// ver refreshMetadata()).
+async function fetchNarrativeCategoryIds(supabase: SupabaseClient, projectId: number, queryId: number): Promise<number[]> {
   const { data: categories, error: categoriesError } = await supabase
     .from("bw_categories")
     .select("id")
-    .eq("project_id", projectId);
+    .eq("project_id", projectId)
+    .contains("query_ids", [queryId]);
   if (categoriesError) throw new Error(`Erro lendo bw_categories: ${categoriesError.message}`);
 
   const categoryIds = (categories ?? []).map((c: any) => c.id as number);
@@ -1049,6 +1072,7 @@ async function syncPlatformMetrics(
   token: string,
   projectId: number,
   queryId: number,
+  categoryId: number | null,
   startDate: Date,
   endDate: Date,
 ): Promise<void> {
@@ -1058,6 +1082,12 @@ async function syncPlatformMetrics(
     endDate: formatBrandwatchDate(endDate),
     timezone: TIMEZONE,
   });
+  // Ampliação 2026-07-11 (pedido do usuário: "importante que tenhamos
+  // share of voice por plataforma... por narrativa") — categoryId opcional
+  // permite reusar esta mesma função pra breakdown por Narrativa, não só
+  // da Query inteira. Mesmo filtro `category=<id>` já comprovado em
+  // syncSentimentMetrics/syncTopAuthors/etc.
+  if (categoryId) params.set("category", String(categoryId));
 
   const json = await callBrandwatch(`/projects/${projectId}/data/volume/pageTypes/days?${params.toString()}`, token);
   const results = (json.results ?? []) as { id: string; values?: { id: string; value: number }[] }[];
@@ -1068,6 +1098,7 @@ async function syncPlatformMetrics(
       rows.push({
         project_id: projectId,
         query_id: queryId,
+        category_id: categoryId,
         page_type: String(series.id),
         metric_date: toDateOnly(point.id),
         total_mentions: point.value,
@@ -1077,16 +1108,26 @@ async function syncPlatformMetrics(
   }
 
   if (rows.length === 0) {
-    log("syncPlatformMetrics:empty", { projectId, queryId });
+    log("syncPlatformMetrics:empty", { projectId, queryId, categoryId });
     return;
+  }
+
+  // Defensivo (mesma correção de "ON CONFLICT DO UPDATE" já aplicada em
+  // syncTopicsData()/syncTopAuthors()/etc.) — nunca observado neste
+  // endpoint especificamente, mas mesma classe de risco.
+  const uniqueRows = dedupeByKey(rows, (r) => `${String(r.page_type)}::${String(r.metric_date)}`);
+  if (uniqueRows.length !== rows.length) {
+    log("syncPlatformMetrics:duplicates_removed", {
+      projectId, queryId, categoryId, removed: rows.length - uniqueRows.length,
+    });
   }
 
   const { error } = await supabase
     .from("bw_query_metrics_daily_by_platform")
-    .upsert(rows, { onConflict: "project_id,query_id,page_type,metric_date" });
+    .upsert(uniqueRows, { onConflict: "project_id,query_id,category_id_key,page_type,metric_date" });
   if (error) throw new Error(`Erro upsertando bw_query_metrics_daily_by_platform: ${error.message}`);
 
-  log("syncPlatformMetrics:done", { projectId, queryId, rows: rows.length });
+  log("syncPlatformMetrics:done", { projectId, queryId, categoryId, rows: uniqueRows.length });
 }
 
 // =========================================================================
@@ -2114,6 +2155,7 @@ const SYNC_STEPS = [
   "daily_metrics",
   "weekly_monthly",
   "topics",
+  "platform_by_narrative",
   "x_insights",
   "top_authors",
   "author_enrichment",
@@ -2253,7 +2295,7 @@ async function runDailyMetricsStep(
   );
   // Breakdown de plataforma — sempre roda, query inteira (sem quebra por
   // Narrativa).
-  await syncPlatformMetrics(supabase, token, projectId, queryId, metricsStartDate, now);
+  await syncPlatformMetrics(supabase, token, projectId, queryId, null, metricsStartDate, now);
   return { didWork: true };
 }
 
@@ -2300,6 +2342,63 @@ async function runTopicsStep(
     if (!hasBrandwatchCallBudget()) break;
     if (await isTopicsStale(supabase, projectId, queryId, categoryId, 7 * 24 * 60 * 60 * 1000)) {
       await syncTopicsData(supabase, token, projectId, queryId, categoryId, metricsStartDate, now);
+      return { didWork: true };
+    }
+  }
+  return { didWork: false };
+}
+
+// =========================================================================
+// Passo 6.3c — Breakdown de plataforma por Narrativa (2026-07-11, pedido
+// do usuário: "importante que tenhamos share of voice por plataforma...
+// por narrativa"). Reusa syncPlatformMetrics() (mesmo endpoint do passo
+// 6.3, `data/volume/pageTypes/days`, agora com `category=<id>`) — fase
+// própria e throttled (não faz parte de daily_metrics, que roda toda
+// invocação sem quebra por categoryTarget) pra não reintroduzir o risco de
+// CPU corrigido na "Execução em fases": só o breakdown da Query inteira
+// (category=null) roda toda invocação; o breakdown por Narrativa segue o
+// mesmo padrão semanal de weekly_monthly/topics/top_authors.
+// =========================================================================
+
+async function isPlatformByNarrativeStale(
+  supabase: SupabaseClient,
+  projectId: number,
+  queryId: number,
+  categoryId: number | null,
+  maxAgeMs: number,
+): Promise<boolean> {
+  let query = supabase
+    .from("bw_query_metrics_daily_by_platform")
+    .select("synced_at")
+    .eq("project_id", projectId)
+    .eq("query_id", queryId)
+    .order("synced_at", { ascending: false })
+    .limit(1);
+  query = categoryId ? query.eq("category_id", categoryId) : query.is("category_id", null);
+
+  const { data, error } = await query.maybeSingle();
+  if (error) throw new Error(`Erro checando frescor de bw_query_metrics_daily_by_platform: ${error.message}`);
+  if (!data) return true;
+
+  return Date.now() - new Date(data.synced_at as string).getTime() > maxAgeMs;
+}
+
+async function runPlatformByNarrativeStep(
+  supabase: SupabaseClient,
+  token: string,
+  projectId: number,
+  queryId: number,
+  categoryTargets: (number | null)[],
+  metricsStartDate: Date,
+  now: Date,
+): Promise<StepResult> {
+  // category=null (Query inteira) já é coberto todo ciclo por
+  // daily_metrics — esta fase só cuida do breakdown por Narrativa.
+  const narrativeCategoryTargets = categoryTargets.filter((c) => c !== null);
+  for (const categoryId of narrativeCategoryTargets) {
+    if (!hasBrandwatchCallBudget()) break;
+    if (await isPlatformByNarrativeStale(supabase, projectId, queryId, categoryId, 7 * 24 * 60 * 60 * 1000)) {
+      await syncPlatformMetrics(supabase, token, projectId, queryId, categoryId, metricsStartDate, now);
       return { didWork: true };
     }
   }
@@ -2488,7 +2587,7 @@ async function runSyncInvocation(supabase: SupabaseClient, invocationStartedAt: 
     if (projectRowError) throw new Error(`Erro lendo organization_id de bw_projects: ${projectRowError.message}`);
     const organizationId = projectRow.organization_id as string;
 
-    const narrativeCategoryIds = await fetchNarrativeCategoryIds(supabase, projectId);
+    const narrativeCategoryIds = await fetchNarrativeCategoryIds(supabase, projectId, queryId);
     const categoryTargets: (number | null)[] = [null, ...narrativeCategoryIds];
     const cursorMentionsMeta = {
       last_added_cursor: cursor.last_added_cursor as string | null,
@@ -2523,6 +2622,9 @@ async function runSyncInvocation(supabase: SupabaseClient, invocationStartedAt: 
           break;
         case "topics":
           result = await runTopicsStep(supabase, token, projectId, queryId, categoryTargets, metricsStartDate, now);
+          break;
+        case "platform_by_narrative":
+          result = await runPlatformByNarrativeStep(supabase, token, projectId, queryId, categoryTargets, metricsStartDate, now);
           break;
         case "x_insights":
           result = await runXInsightsStep(supabase, token, projectId, queryId, categoryTargets, metricsStartDate, now);

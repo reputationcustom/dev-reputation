@@ -58,7 +58,7 @@ Qualquer usuário autenticado, membro de ao menos uma organização (ver
 | Organização sem nenhum `bw_project`/sync ainda rodado | `<EmptyState />` no gráfico de volume: "Nenhum dado sincronizado ainda" |
 | Nenhuma Narrativa cadastrada | `<EmptyState />` na tabela: "Nenhuma Narrativa em monitoramento" |
 | Falha ao carregar (erro de rede/Supabase) | `<ErrorMessage retry />` por widget — um widget falhar não derruba os outros (cada card busca seus dados independentemente) |
-| Narrativa sem linha em `narrative_metrics` para o dia selecionado | Linha aparece na tabela com SOV/Tendência/Sentimento/Momentum vazios ("—"), não some da lista (Risco e Narrativa continuam vindo de `narratives`, que sempre existe) |
+| Narrativa sem linha em `narrative_metrics` para o dia selecionado, **ou** com `narrative_metrics.query_id` nulo (Category sem Query associada, ou associada a mais de uma — ver `data-model.md` "Camada de reporting", correção 2026-07-11) | Linha aparece na tabela com SOV/Tendência/Sentimento/Momentum vazios ("—"), não some da lista (Risco e Narrativa continuam vindo de `narratives`, que sempre existe) |
 
 ## Interface (UI)
 

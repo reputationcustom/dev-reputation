@@ -213,11 +213,18 @@ usando join implícito por `project_id in (select id from bw_projects where orga
 | `parent_id`      | `bigint`      | não | FK → `bw_categories(id)` ON DELETE CASCADE; `null` = Category raiz |
 | `name`           | `text`        | sim | |
 | `matching_type`  | `text`        | não | `manual` \| `keywords` |
+| `query_ids`      | `bigint[]`    | sim | default `'{}'`. ✅ Adicionado 2026-07-11 (migration `20260711080000`, correção de bug de SOV) — de `queryIds` no payload de `GET .../rulecategories` (confirmado em `developers.brandwatch.com/docs/retrieving-categories`), sem chamada nova. Quais Queries essa Category está associada — usado por `fetchNarrativeCategoryIds()` pra escopar `categoryTargets` corretamente por Query, e por `refresh_narrative_metrics()` pra saber a qual Query o `total_mentions` de uma Narrativa pertence |
 | `synced_at`      | `timestamptz` | sim | `now()` |
 
 **Índices**: `(project_id)`, `(parent_id)`.
 
 **RLS**: mesmo padrão via `project_id`.
+
+> ⚠️ **`query_ids` — ver bug de produção corrigido na seção "Camada de
+> reporting" abaixo**: antes desta coluna existir, não havia como saber a
+> qual Query cada Category pertencia, e `fetchNarrativeCategoryIds()`
+> devolvia todas as Categories do Project pra qualquer Query — problema
+> real quando o Project tem mais de uma Query (vários candidatos).
 
 ---
 
@@ -554,14 +561,38 @@ das menções · por plataforma" do mockup de referência).
 | `id` | `uuid` | sim | PK |
 | `project_id` | `bigint` | sim | FK → `bw_projects(id)` ON DELETE CASCADE |
 | `query_id` | `bigint` | sim | FK → `bw_queries(id)` ON DELETE CASCADE |
-| `page_type` | `text` | sim | nome da plataforma/fonte retornado pela dimensão `pageTypes` — sempre preenchido (não sofre o bug de `category_id` nullable) |
+| `category_id` | `bigint` | não | FK → `bw_categories(id)`; `null` = breakdown da Query inteira, preenchido = por Narrativa. ✅ Adicionado 2026-07-11 (migration `20260711090000`, pedido do usuário: "importante que tenhamos share of voice por plataforma... por narrativa") |
+| `category_id_key` | `bigint` | sim | gerada, `coalesce(category_id, 0)` — mesmo padrão anti-`NULL <> NULL` das demais tabelas de agregado |
+| `page_type` | `text` | sim | nome da plataforma/fonte retornado pela dimensão `pageTypes` |
 | `metric_date` | `date` | sim | |
 | `total_mentions` | `integer` | sim | default `0` |
 | `synced_at` | `timestamptz` | sim | |
 
-**Índices**: unique `(project_id, query_id, page_type, metric_date)`.
+**Índices**: unique `(project_id, query_id, category_id_key, page_type, metric_date)`
+(migração de `(project_id, query_id, page_type, metric_date)` — a constraint
+antiga sem nome explícito foi localizada via `pg_constraint` em vez de
+adivinhar o nome auto-gerado, ver migration `20260711090000`).
 **Políticas RLS**: select-only via `project_id`, mesmo padrão das demais.
-Sync roda **toda invocação** (mesmo throttle "diário sempre" do sentiment).
+Breakdown da **Query inteira** (`category_id is null`) roda **toda
+invocação** (mesmo throttle "diário sempre" do sentiment, fase
+`daily_metrics`); breakdown **por Narrativa** roda em fase própria
+(`platform_by_narrative`), throttle semanal, mesmo padrão de
+`weekly_monthly`/`topics` — não faz parte de `daily_metrics` pra não
+reintroduzir o risco de estouro de CPU corrigido em `20260711030000`.
+
+**SOV por plataforma**: com `category_id` preenchido, dá pra responder
+tanto "qual o mix de plataformas dentro da Narrativa X" (breakdown por
+`page_type` dentro de uma `category_id`) quanto "qual a participação da
+Narrativa X num `page_type` específico" (Narrativa/`page_type` ÷ Query
+inteira/mesmo `page_type`, este último já disponível via `category_id is
+null`) — sem cálculo local sobre `mentions`, os dois lados da divisão vêm
+de agregados oficiais.
+
+**SOV por autor**: já respondível com dado existente, sem tabela nova —
+`bw_query_top_authors.volume` (por Query/Category/semana) ÷
+`bw_query_metrics_daily.total_mentions` (mesmo Query/Category/dia mais
+próximo) dá a participação de um autor no total — mera razão calculada na
+camada de consumo (view/frontend), não precisa de sync adicional.
 
 ### `bw_query_topics`
 
@@ -1010,6 +1041,7 @@ narrative_id in (
 |------------------------|---------------|-------------|-----------|
 | `id`                   | `uuid`        | sim | PK |
 | `narrative_id`         | `uuid`        | sim | FK → `narratives(id)` ON DELETE CASCADE |
+| `query_id`             | `bigint`      | não | FK → `bw_queries(id)` ON DELETE CASCADE. ✅ Adicionado 2026-07-11 (migration `20260711080000`, correção de bug de SOV — ver "Camada de reporting" abaixo) — preenchido só quando `narratives.bw_category_id` está associado a **exatamente 1** Query em `bw_categories.query_ids`; `null` quando a Category não tem Query associada ainda ou (incomum, mas o schema da Brandwatch permite) está associada a mais de uma. Usado pelo SOV pra agrupar "total de menções" pela Query certa, não pela organização inteira |
 | `metric_date`          | `date`        | sim | |
 | `period`               | `text`        | sim | `daily` \| `weekly` \| `monthly`; default `daily` |
 | `source`               | `text`        | sim | `bw_aggregate` — check constraint permite também `mentions_sample`, mas nada insere com esse valor desde `20260711010000` (ver nota) |
@@ -1153,21 +1185,24 @@ uma via só — sem agregado oficial da Brandwatch (`bw_category_id` nulo),
 sem `narrative_metrics`.
 
 > ⚠️ **A definição completa da função vive só na migration**
-> (`supabase/migrations/20260711010000_remove_sampled_mentions_aggregations.sql`,
-> que substitui as versões anteriores de `20260707000000` e
-> `20260710030000`) — não duplicada aqui verbatim pra evitar drift entre
+> (`supabase/migrations/20260711080000_narrative_sov_scoped_by_query.sql`,
+> que substitui as versões anteriores de `20260707000000`, `20260710030000`
+> e `20260711010000`) — não duplicada aqui verbatim pra evitar drift entre
 > spec e código. Resumo do comportamento atual:
 
 - **Assinatura**: `refresh_narrative_metrics(p_from date, p_to date)` —
   range, não um único dia, servindo tanto de backfill histórico quanto de
   refresh incremental (via `pg_cron`, ver seção "`pg_cron` —
   agendamentos deste módulo" abaixo).
-- **Única via**: `join bw_query_metrics_daily on category_id = bw_category_id`
-  — `total_mentions`/sentimento/`reach_estimate`/`engagement_score`, tudo
-  agregado oficial da Brandwatch, sampling-safe. `where bw_category_id is
-  not null` — Narrativa sem Category vinculada não recebe linha nenhuma
-  (não existe agregado oficial pra ela; ver premissa fixada na tabela
-  `narrative_metrics` acima).
+- **Única via**: `join bw_categories on bw_categories.id = bw_category_id`,
+  depois `join bw_query_metrics_daily on category_id = bw_category_id and
+  query_id = any(bw_categories.query_ids)` — `total_mentions`/sentimento/
+  `reach_estimate`/`engagement_score`, tudo agregado oficial da Brandwatch,
+  sampling-safe. `where bw_category_id is not null and array_length(
+  bw_categories.query_ids, 1) = 1` — Narrativa sem Category vinculada, ou
+  cuja Category não está associada a exatamente 1 Query, não recebe linha
+  nenhuma (sem escopo inequívoco de qual Query é o "total", ver bug
+  corrigido na "Camada de reporting" acima).
 - Não usa `narrative_matched_mentions()` nem toca `mentions` de forma
   alguma — removido junto com a via antiga (`mentions_sample`) e os 3
   helpers `mention_engagement_likes`/`_reposts`/`_comments`, que não têm
@@ -1190,18 +1225,17 @@ comment on view reporting.mentions_daily is
 
 create or replace view reporting.narratives_overview as
 with daily as (
-  select narrative_id, metric_date, total_mentions,
+  select narrative_id, query_id, metric_date, total_mentions,
          sentiment_positive, sentiment_neutral, sentiment_negative,
          lag(total_mentions) over (partition by narrative_id order by metric_date) as prev_total_mentions
   from narrative_metrics
   where period = 'daily'
 ),
-org_totals as (
-  select nm.metric_date, n.organization_id, sum(nm.total_mentions) as org_total_mentions
-  from narrative_metrics nm
-  join narratives n on n.id = nm.narrative_id
-  where nm.period = 'daily'
-  group by nm.metric_date, n.organization_id
+query_totals as (
+  select metric_date, query_id, sum(total_mentions) as query_total_mentions
+  from narrative_metrics
+  where period = 'daily' and query_id is not null
+  group by metric_date, query_id
 )
 select
   n.id as narrative_id,
@@ -1211,7 +1245,7 @@ select
   n.risk_level,
   d.metric_date,
   d.total_mentions,
-  round(100.0 * d.total_mentions / nullif(t.org_total_mentions, 0), 1) as sov_percent,
+  round(100.0 * d.total_mentions / nullif(t.query_total_mentions, 0), 1) as sov_percent,
   round(100.0 * (d.total_mentions - d.prev_total_mentions) / nullif(d.prev_total_mentions, 0), 1) as trend_percent,
   case
     when d.total_mentions = 0 then 'neutral'
@@ -1221,10 +1255,10 @@ select
   end as sentiment_bucket
 from narratives n
 join daily d on d.narrative_id = n.id
-join org_totals t on t.metric_date = d.metric_date and t.organization_id = n.organization_id;
+left join query_totals t on t.metric_date = d.metric_date and t.query_id = d.query_id;
 
 comment on view reporting.narratives_overview is
-  'View usada pela tabela interativa de Narrativas no Executive Overview e exposta para BI externo. Thresholds de sentiment_bucket (±20%) e o bucket de Momentum (calculado no frontend a partir de trend_percent) são placeholders — ver ⚠️ DECISÃO PENDENTE em overview.md.';
+  'View usada pela tabela interativa de Narrativas no Executive Overview e exposta para BI externo. sov_percent = menções da Narrativa / total de menções de todas as Narrativas da MESMA Query no mesmo dia — corrigido 2026-07-11 (ver nota abaixo). Thresholds de sentiment_bucket (±20%) e o bucket de Momentum (calculado no frontend a partir de trend_percent) são placeholders — ver ⚠️ DECISÃO PENDENTE em overview.md.';
 
 -- Role só-leitura para BI externo (Qlik Cloud, Power BI, ferramentas próprias)
 create role bi_reader login noinherit;
@@ -1239,6 +1273,45 @@ revoke all on schema public from bi_reader;
 > `reporting` **não** deve entrar em `db.schemas` (Settings → API → Exposed
 > schemas) no dashboard do Supabase — só acessível via conexão Postgres
 > direta (Session pooler, porta 5432), nunca via PostgREST.
+
+> ⚠️ **Bug de produção corrigido (2026-07-11, migration `20260711080000`,
+> pedido do usuário: "O SOV corresponde a: Menções da Narrativa / Total de
+> Menções. Verifique se estamos seguindo esse conceito")**: havia
+> divergência real. `sov_percent` dividia pelo total de **todas as
+> Narrativas da organização inteira** (`org_totals`, agrupado só por
+> `organization_id`) — correto só na coincidência de a organização ter uma
+> única Query monitorada. Com múltiplos candidatos/Queries no mesmo
+> Project (confirmado no export de dashboard real validado na revisão
+> anterior — 6 candidatos, 6 Queries), Narrativas de candidatos diferentes
+> ficavam misturadas no mesmo denominador — o "Total" deixava de
+> corresponder a "o total de menções da MESMA Query/candidato" que o
+> conceito de SOV exige (ver exemplo do usuário: 200 mil menções de UM
+> monitoramento, 5 Narrativas somando 100%).
+>
+> Causa raiz, mais funda que a view: `fetchNarrativeCategoryIds()` em
+> `bw-sync/index.ts` devolvia **todas** as Narrativas do Project pra
+> **qualquer** Query sendo sincronizada (sem noção de qual Query cada
+> Category pertence) — desperdiçando orçamento (uma Query filtrando por
+> Categories de candidatos alheios) e, mais grave, permitindo que
+> `refresh_narrative_metrics()` (join só por `category_id`, sem restringir
+> `query_id`) juntasse `total_mentions` da Query errada pra uma Narrativa.
+>
+> **Correção em 3 partes**:
+> 1. `bw_categories` ganha `query_ids bigint[]` — Brandwatch já devolve
+>    isso em `GET .../rulecategories` (campo `queryIds`, confirmado em
+>    `developers.brandwatch.com/docs/retrieving-categories`), sem chamada
+>    nova. Ver `refreshMetadata()`.
+> 2. `fetchNarrativeCategoryIds()` passa a filtrar por Query (`bw_categories.
+>    query_ids` contém o `queryId` corrente) — cada Query só recebe
+>    `categoryTargets` das Narrativas que de fato pertencem a ela.
+> 3. `narrative_metrics` ganha `query_id`, preenchido só quando a Category
+>    da Narrativa está associada a **exatamente 1** Query (`array_length(
+>    bc.query_ids, 1) = 1`) — o padrão recomendado em `brandwatch-setup.md`
+>    (exemplos sempre usam `queryIds` com um único id). Categories
+>    associadas a 0 ou >1 Queries não geram `narrative_metrics` — sem
+>    escopo inequívoco, sem estimar (mesma premissa de "sem dado oficial
+>    claro, sem número" já aplicada no resto do projeto). A view acima
+>    agrupa `query_totals` por `query_id`, não mais por `organization_id`.
 
 ---
 
@@ -1311,6 +1384,16 @@ revoke all on schema public from bi_reader;
       todos validados contra um export real de dashboard Brandwatch
       (2026-07-11, ver `sync-brandwatch.md` "Validação contra dashboard
       real")
+      → **correção de bug de SOV** (pedido do usuário: "SOV = Menções da
+      Narrativa / Total de Menções... verifique"): `bw_categories.query_ids`
+      + `narrative_metrics.query_id` + `refresh_narrative_metrics()`
+      reescrita (join agora respeita `query_id`) +
+      `public.narratives_overview`/`reporting.narratives_overview`
+      recalculando `sov_percent` por Query, não por organização inteira +
+      `fetchNarrativeCategoryIds()` escopado por Query (migration
+      `20260711080000`) → `bw_query_metrics_daily_by_platform.category_id`
+      + nova fase `platform_by_narrative` em `SYNC_STEPS` (migration
+      `20260711090000`, "SOV por plataforma")
 - [ ] Triggers `set_updated_at` em `organizations`, `brandwatch_credentials`, `narratives`
 - [ ] RLS habilitada em **todas** as tabelas deste módulo (inclusive
       `sync_cursors`/`sync_log`, deny-all)
