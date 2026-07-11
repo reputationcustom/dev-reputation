@@ -1027,13 +1027,34 @@ async function syncCategoryDailyAggregate(
   const json = await callBrandwatch(`/projects/${projectId}/data/${aggregate}/categories/days?${params.toString()}`, token);
   const results = (json.results ?? []) as { id: string | number; values?: { id: string; value: number }[] }[];
 
+  // A dimensão `categories` pode incluir IDs fora do universo já cacheado
+  // em bw_categories (ex: Categories fora do escopo de `rulecategories`,
+  // ou dessincronizadas desde o último refresh de metadata) — sem esse
+  // filtro, o upsert quebra com violação de FK
+  // (bw_query_metrics_daily.category_id → bw_categories.id). Buscar os IDs
+  // conhecidos e descartar (com log) qualquer categoria fora desse
+  // conjunto, em vez de derrubar a invocação inteira.
+  const { data: knownCategories, error: knownCategoriesError } = await supabase
+    .from("bw_categories")
+    .select("id")
+    .eq("project_id", projectId);
+  if (knownCategoriesError) {
+    throw new Error(`Erro lendo bw_categories para validação de FK: ${knownCategoriesError.message}`);
+  }
+  const knownCategoryIds = new Set((knownCategories ?? []).map((c: any) => c.id as number));
+
   const rows: Record<string, unknown>[] = [];
+  const skippedCategoryIds = new Set<number>();
   for (const series of results) {
     const categoryId = Number(series.id);
     if (!Number.isFinite(categoryId)) {
       // Pode incluir um item pra mentions sem nenhuma Category — não temos
       // onde guardar isso em bw_query_metrics_daily (category_id sempre se
       // refere a uma Category real), então pula em vez de quebrar.
+      continue;
+    }
+    if (!knownCategoryIds.has(categoryId)) {
+      skippedCategoryIds.add(categoryId);
       continue;
     }
     for (const point of series.values ?? []) {
@@ -1046,6 +1067,12 @@ async function syncCategoryDailyAggregate(
         synced_at: new Date().toISOString(),
       });
     }
+  }
+
+  if (skippedCategoryIds.size > 0) {
+    log("syncCategoryDailyAggregate:unknown_categories_skipped", {
+      projectId, queryId, aggregate, categoryIds: Array.from(skippedCategoryIds),
+    });
   }
 
   if (rows.length === 0) {

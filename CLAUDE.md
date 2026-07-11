@@ -354,6 +354,13 @@ yet (no migration sets it up) — for now the function is invoked manually.
   `data/volume/topauthors/queries` has a confirmed example payload — both
   follow the same pattern already proven for sentiment, flagged the same
   way `syncPlatformMetrics` was.
+  **Hit in production same day**: the `categories` dimension returned
+  category IDs `bw_categories` didn't have cached (outside `rulecategories`'
+  scope, or stale since the last metadata refresh), which crashed the
+  upsert on the `bw_query_metrics_daily.category_id → bw_categories.id`
+  FK. `syncCategoryDailyAggregate()` now looks up known category IDs first
+  and skips (logging `unknown_categories_skipped`) anything outside that
+  set instead of failing the whole invocation.
 - **Data scope is deliberately bounded**: `foundation`/`bw-sync` covers all
   *pull* data later sprints need (projects, queries, query groups,
   categories, mentions, daily/weekly/monthly metrics, Query Group SOV).

@@ -256,6 +256,15 @@ o Executive Overview consomem o resultado (tabelas já sincronizadas).
    `values[]`, mesmo shape de `data/volume/sentiment/days`), não
    confirmado com um payload de exemplo específico pra esses 2 aggregates
    — mesma categoria de risco já assumida pra `syncPlatformMetrics`.
+   ⚠️ **Correção 2026-07-10, encontrado em teste real**: a dimensão
+   `categories` devolveu IDs de Category fora do que `bw_categories` tinha
+   cacheado (Categories fora do escopo de `rulecategories`, ou
+   dessincronizadas desde o último refresh de metadata), quebrando o
+   upsert com violação de FK (`bw_query_metrics_daily.category_id →
+   bw_categories.id`). `syncCategoryDailyAggregate()` agora busca os IDs
+   conhecidos de `bw_categories` primeiro e descarta (com log
+   `syncCategoryDailyAggregate:unknown_categories_skipped`) qualquer
+   Category fora desse conjunto, em vez de derrubar a invocação inteira.
 6.4. Temas: se não existir linha "fresca" (7 dias) em `bw_query_topics`
    para o par (e cada `categoryTarget`, mesmo padrão do passo 6.1): busca
    `data/topics?extract=words,phrases,hashtags,entities,people,places,
