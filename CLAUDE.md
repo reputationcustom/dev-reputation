@@ -120,12 +120,13 @@ metadata bootstrap (conditional, also auto-creates `narratives` from
 top-level Categories) → mentions poll (paginated, backfill-aware) → daily
 metrics incl. non-sampled reach/engagement (always) → weekly/monthly
 metrics + platform breakdown + topics + top-authors (per Narrativa) + Query
-Group SOV (throttled). `pg_cron` isn't actually scheduled for `bw-sync`
-itself yet (no migration sets it up, blocked on token caching — see
-below) — for now the function is invoked manually. (`refresh_narrative_metrics()`,
-the SQL-only function that computes `narrative_metrics`, *is* on `pg_cron`
-since 2026-07-10 — it doesn't call Brandwatch, so it was never blocked by
-the same prerequisite.)
+Group SOV (throttled). ✅ **`bw-sync` is now scheduled via `pg_cron`
+(2026-07-11, migration `20260711020000`)** — see "Scheduled cadence
+(`BW_SYNC_INTERVAL_HOURS`)" below for the mechanism; this replaces the
+"invoked manually" state from 2026-07-07/10. (`refresh_narrative_metrics()`,
+the SQL-only function that computes `narrative_metrics`, has been on
+`pg_cron` since 2026-07-10 — it doesn't call Brandwatch, so it was never
+blocked by the same prerequisite that used to apply to `bw-sync`.)
 
 - **Rate limit budget (30 calls/10min per Client)**: every Brandwatch call
   goes through `callBrandwatch()`, which is sequential (never parallel —
@@ -147,11 +148,57 @@ the same prerequisite.)
   one at runtime via `grant_type=api-password` (`mintBrandwatchAccessToken()`)
   using Edge Function secrets `BRANDWATCH_USERNAME`/`BRANDWATCH_PASSWORD`/
   `BRANDWATCH_PLATFORM_CLIENT_ID` — not per-org DB columns (MVP assumes a
-  single Brandwatch Client). **Known gap**: mints a fresh token on *every*
-  invocation — `brandwatch_credentials.access_token_secret_ref`/
-  `token_expires_at` exist to cache it, but the Vault write-back is still a
-  TODO. Must be fixed before scheduling `bw-sync` on a real `pg_cron`
-  cadence (~20-30s), or the mint call alone burns much of the rate budget.
+  single Brandwatch Client). **Known gap, no longer blocking**: mints a
+  fresh token on every invocation that passes the interval gate (see below)
+  — `brandwatch_credentials.access_token_secret_ref`/`token_expires_at`
+  exist to cache it, but the Vault write-back is still a TODO. This used to
+  be a hard prerequisite for scheduling `bw-sync` on `pg_cron` at all
+  (original plan assumed a ~20-30s cadence, where an uncached mint alone
+  would burn much of the 30-calls/10min budget) — resolved instead by
+  scheduling at hours-scale cadence (see below), where a mint per due pair
+  is negligible. Caching the token is still worth doing (saves 1 call per
+  due pair), just not a blocker anymore.
+- **Scheduled cadence (`BW_SYNC_INTERVAL_HOURS`)** — added 2026-07-11, user
+  request: "a cada 3 horas as rotinas de integração com a Brandwatch sejam
+  executadas para capturar o cenário atual", configurable via environment
+  variable. `pg_cron` invokes `bw-sync` every 15 minutes (fixed heartbeat,
+  `bw-sync-heartbeat`, migration `20260711020000`, via `net.http_post` —
+  `bw-sync` runs with `verify_jwt = false` so no Authorization header is
+  needed). Most heartbeats do nothing: at the top of the handler (before
+  the concurrency lock, before minting any token), `bw-sync` checks whether
+  any `sync_cursors` row is "due" — `last_synced_at is null or
+  last_synced_at < now() - BW_SYNC_INTERVAL_HOURS` (Edge Function secret,
+  default `3`) — and exits immediately if not. This makes the actual
+  capture cadence a pure env-var change (`supabase secrets set
+  BW_SYNC_INTERVAL_HOURS=...`), no migration needed; only the 15-minute
+  heartbeat itself is fixed in SQL (an infra-cadence detail, not the
+  business parameter). The round-robin pair picker (`sync_cursors` ordered
+  by oldest `last_synced_at`) now also filters to only "due" pairs — one
+  pair is still processed per invocation, so with several due pairs at
+  once each is picked up on a subsequent 15-minute heartbeat rather than
+  all at once; at MVP scale (one Project, a handful of Queries) that drift
+  is at most a few multiples of 15 minutes, negligible against an
+  hours-scale interval. One consequence: historical mentions backfill
+  (`BRANDWATCH_MENTIONS_START_DATE` onward) now only advances when a pair
+  is due, so it progresses slower in wall-clock time than a hypothetical
+  continuous-polling design would — accepted trade-off, since the explicit
+  ask is capturing the *current* scenario on a schedule, not backfill
+  speed. `bw-sync-heartbeat`'s `net.http_post` hardcodes the function's
+  invocation URL directly in the migration — not a secret (same value
+  already exposed to every browser via `NEXT_PUBLIC_SUPABASE_URL`;
+  Principle 1 is about credentials, not the project's public URL), and
+  this project only ever deploys to one Supabase project, so there's no
+  ambiguity to resolve at deploy time. No manual post-deploy step needed.
+- **Data storage is historical by design, already sufficient for future AI
+  use** — confirmed 2026-07-11 (user request: ensure daily/weekly/monthly
+  Brandwatch data is stored as history for eventual AI use). No code change
+  needed: `bw_query_metrics_daily`/`weekly`/`monthly`,
+  `bw_query_group_metrics_weekly`, `bw_query_metrics_daily_by_platform`,
+  `bw_query_topics`, `bw_query_top_authors`, and `narrative_metrics` are all
+  upserted on a unique key that includes the date/week/month grain, so every
+  period gets its own row, never overwritten by a later sync of the same
+  pair (only corrected if the *same* period is re-synced). No retention/
+  pruning job exists anywhere — history accumulates indefinitely by design.
 - **`sync_cursors` seeding**: nothing else populates `sync_cursors`
   (`projects/summary` auto-discovery was never built — Client is known
   upfront instead). `ensureBootstrapSeed()` runs first every invocation and,

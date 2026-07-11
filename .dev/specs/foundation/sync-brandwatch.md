@@ -3,7 +3,7 @@ tipo: feature-spec
 módulo: foundation
 funcionalidade: sync-brandwatch
 status: pronto
-atualizado: 2026-07-07
+atualizado: 2026-07-11
 ---
 
 # Sync Brandwatch
@@ -15,6 +15,20 @@ Manter `bw_projects`, `bw_queries`, `bw_query_groups`, `bw_categories`,
 `bw_query_group_metrics_weekly` sincronizados com a Brandwatch, respeitando
 o rate limit (30 chamadas/10min por Client) e sem depender de soma local de
 mentions para números de volume (ver nota de sampling).
+
+> ✅ **Cadência de captura agendada (2026-07-11)**: "a cada 3 horas as
+> rotinas de integração com a Brandwatch sejam executadas para capturar o
+> cenário atual" — parâmetro de negócio 100% controlado pelo secret
+> `BW_SYNC_INTERVAL_HOURS` (default `3`), sem precisar de nova migration
+> para mudar. Ver passo 0.5b abaixo para o mecanismo. Os dados capturados
+> (diário/semanal/mensal, sempre vindos de agregados oficiais da
+> Brandwatch — nunca somados localmente sobre `mentions`) são armazenados
+> como **histórico** (`bw_query_metrics_daily`/`weekly`/`monthly`,
+> `narrative_metrics`, `bw_query_topics`, `bw_query_top_authors`,
+> `bw_query_x_insights` — uma linha por data/semana/mês, nunca sobrescrita
+> nem removida) — ver "Regras de negócio" abaixo para a confirmação
+> explícita de que isso já atende o uso futuro como base de dados para IA
+> (Sprint 4).
 
 ## Usuários afetados
 
@@ -51,11 +65,48 @@ o Executive Overview consomem o resultado (tabelas já sincronizadas).
    (`HTTP 200, ok: true`) sem tentar nada. Lock expira sozinho em 5min
    mesmo sem `release_bw_sync_lock()` explícito, pra não travar pra sempre
    se uma invocação morrer no meio do caminho.
-1. `pg_cron` invoca a Edge Function `bw-sync` a cada ~20–30 segundos
-   (`select net.http_post(url := '<edge-function-url>/bw-sync', ...)`).
+0.5b. **Gate de intervalo de negócio** (✅ adicionado 2026-07-11, pedido do
+   usuário — ver migration `20260711020000`). Roda **antes** do lock acima
+   (checagem barata, sem chamar a Brandwatch): depois da semeadura do passo
+   0 (que também passou a rodar antes do lock, pelo mesmo motivo), a função
+   calcula `dueCutoff = now() - BW_SYNC_INTERVAL_HOURS horas` (secret da
+   Edge Function, default `3`) e conta quantos `sync_cursors` têm
+   `last_synced_at is null or last_synced_at < dueCutoff` (ou seja, "devidos"
+   pra nova sincronização). Se zero, a invocação encerra imediatamente
+   (`HTTP 200, ok: true, skipped: true`) sem mintar token nem chamar a
+   Brandwatch. Isso é o que torna o "a cada 3 horas" um parâmetro de
+   ambiente de verdade — mudar `BW_SYNC_INTERVAL_HOURS` (`supabase secrets
+   set`) muda o comportamento na invocação seguinte, sem nova migration.
+1. `pg_cron` invoca a Edge Function `bw-sync` a cada **15 minutos** — um
+   heartbeat fixo e barato (cadência de infraestrutura, não o parâmetro de
+   negócio; só precisa ser frequente o bastante relativo aos
+   `BW_SYNC_INTERVAL_HOURS` configurados pra não gerar atraso perceptível
+   — ver migration `20260711020000`, `select net.http_post(url := ...)`,
+   `verify_jwt = false` pra esta function já que só é acionada por
+   `pg_cron`/manualmente). A maioria dos heartbeats não faz nenhum trabalho
+   — sai no gate do passo 0.5b. ⚠️ **Histórico**: até 2026-07-11, `bw-sync`
+   nunca teve `pg_cron` agendado de verdade (só invocação manual) — o
+   bloqueio documentado (mint de token gastando parte do orçamento de
+   30/10min a cada invocação, relevante numa cadência de ~20-30s) deixou de
+   valer nesse desenho, porque o gate do passo 0.5b faz o mint só acontecer
+   quando algum par está de fato devido (a cada `BW_SYNC_INTERVAL_HOURS`
+   por par, não a cada heartbeat) — sem precisar implementar o cache de
+   token no Vault antes (continua um TODO separado, só que não bloqueante).
 2. A função resolve, em round-robin, o próximo par `(project_id, query_id)`
-   com sync pendente, olhando `sync_cursors` (o cursor com `last_synced_at`
-   mais antigo primeiro).
+   **devido** (mesmo filtro do passo 0.5b, reaplicado aqui) com sync
+   pendente, olhando `sync_cursors` (dentre os devidos, o cursor com
+   `last_synced_at` mais antigo primeiro). ⚠️ **Trade-off aceito**: uma
+   invocação processa só um par — se houver múltiplos pares devidos ao
+   mesmo tempo (ex: várias Queries), cada um é pego num heartbeat de 15min
+   subsequente, não todos de uma vez. Com heartbeat de 15min e um punhado
+   de pares (cenário típico de MVP — 1 Project, poucas Queries), o atraso
+   entre pares no mesmo ciclo é de no máximo alguns múltiplos de 15min —
+   desprezível frente a uma cadência de negócio de horas. O
+   **backfill histórico de mentions** (`BRANDWATCH_MENTIONS_START_DATE` até
+   hoje) também passa a avançar só quando o par está devido, não
+   continuamente — logo mais lento em tempo relógio do que seria numa
+   cadência de segundos, mas aceitável: a prioridade explícita do pedido é
+   "capturar o cenário atual" a cada intervalo, não velocidade de backfill.
 3. Resolve o access token da Brandwatch via `grant_type=api-password`:
    ```
    POST https://api.brandwatch.com/oauth/token
@@ -70,12 +121,16 @@ o Executive Overview consomem o resultado (tabelas já sincronizadas).
    `brandwatch_credentials` neste MVP (assume um único Client Brandwatch).
    `client_id=brandwatch-api-client` é um literal fixo da Brandwatch, não é
    segredo. **Implementação atual (2026-07-07): sem cache** — minta um token
-   novo em **toda** invocação (`mintBrandwatchAccessToken()` em
-   `bw-sync/index.ts`); `brandwatch_credentials.access_token_secret_ref`/
-   `token_expires_at` existem na tabela para servir de cache, mas o
-   write-back pro Vault ainda é TODO — fica para antes de agendar via
-   `pg_cron` de verdade em produção, já que sem cache o mint por si só já
-   consome 1 chamada por invocação do orçamento de 30/10min.
+   novo em **toda** invocação que passa do gate do passo 0.5b
+   (`mintBrandwatchAccessToken()` em `bw-sync/index.ts`);
+   `brandwatch_credentials.access_token_secret_ref`/`token_expires_at`
+   existem na tabela para servir de cache, mas o write-back pro Vault
+   ainda é TODO. ✅ **Deixou de bloquear o agendamento via `pg_cron`
+   (2026-07-11)**: o gate do passo 0.5b faz o mint só acontecer quando algum
+   par está devido (a cada `BW_SYNC_INTERVAL_HOURS` por par, não a cada
+   heartbeat de 15min) — a essa cadência o mint sem cache é irrelevante para
+   o orçamento de 30/10min. O cache continua valendo a pena (evita 1
+   chamada por par devido), só não é mais pré-requisito.
 4. Se for a primeira sincronização daquele Project (`bw_projects.name` ainda
    é o placeholder do passo 0), `bw_categories` estiver vazia, ou um refresh
    periódico (> 1h desde `synced_at` — reduzido de 24h, ver correção
@@ -222,6 +277,20 @@ o Executive Overview consomem o resultado (tabelas já sincronizadas).
    `/data/mentions/fulltext` dobraria as chamadas por poll; decisão
    deliberada, revisar se o produto precisar de texto completo (ex:
    matching de narrativa por `keyword` em fontes sem restrição).
+   ⚠️ **Busca seletiva planejada (2026-07-11, revisão de spec pré-
+   implementação — ainda sem código/migration)**: `snippet` sozinho pode
+   não bastar como insumo de texto pra síntese de Narrativa (Sprint 4,
+   ver `_index.md` "Fora de escopo do MVP"). Plano: um passo adicional
+   (fora do poll principal de mentions, pra não competir pelo mesmo
+   orçamento por invocação) busca `/data/mentions/fulltext` **só** para
+   mentions que atendam **todos** os critérios: (a) fonte não-redigida
+   pela Brandwatch (Facebook/Instagram/YouTube/TikTok/fóruns — não
+   X/Reddit/LinkedIn, ver `overview.md` "Validação de viabilidade"); (b) já
+   vinculada a uma Narrativa (`bw_category_id` resolvido ou casada via
+   `narrative_matched_mentions()`); (c) limitado a top-N (5–10) por
+   `engagement`/`reach_estimate` por Narrativa/dia — não todo o volume.
+   Baixo custo de chamadas (bounded por Narrativa×dia, não por mention
+   individual), mas ainda não implementado — ver `data-model.md` §3.
    **Ampliação 2026-07-10** (pedido do usuário: garantir que tudo
    necessário pra visões estilo "Relatório de Insights" — mockup
    `mockup_governo_sp_narrativas.pdf` — já é capturado; nomes confirmados
@@ -261,8 +330,10 @@ o Executive Overview consomem o resultado (tabelas já sincronizadas).
    `bw_query_metrics_weekly`/`bw_query_metrics_monthly` — mas só quando não
    existir linha "fresca" (semanal: sem `synced_at` nos últimos 7 dias;
    mensal: 30 dias). Esse throttle é o que mantém o consumo de rate limit
-   sob controle apesar de mais 2 tipos de métrica — sem ele, cada invocação
-   (~20-30s) gastaria chamadas em dados que só mudam semanalmente/mensalmente.
+   sob controle apesar de mais 2 tipos de métrica — sem ele, toda vez que um
+   par estivesse devido (ver passo 0.5b) gastaria chamadas em dados que só
+   mudam semanalmente/mensalmente, mesmo que o par já tivesse sido
+   sincronizado há pouco.
 6.2. Se a Query pertence a algum `bw_query_groups.query_ids`, e não existe
    linha "fresca" (7 dias) em `bw_query_group_metrics_weekly` para aquele
    grupo: busca `data/volume/queries/weeks?queryGroupId=...` e faz upsert
@@ -331,6 +402,39 @@ o Executive Overview consomem o resultado (tabelas já sincronizadas).
    Brandwatch não expõe como agregado oficial (ver `data-model.md`,
    `narrative_metrics`). `data/topics` genuinamente não tem essa métrica;
    `bw_query_topics` fica só com o que o endpoint de fato devolve.
+   ⚠️ **Ampliação pendente de implementação (2026-07-11, revisão de
+   spec)**: o payload de `data/topics` já traz, por tópico, série diária
+   (`days`, confirmado: `[{date, volume}]`) e breakdown por canal
+   (`pageType`, confirmado: volume por `blog`/`facebook`/`forum`/`general`/
+   `image`/`instagram`/`news`/`review`/`twitter`/`video`) — nenhum dos dois
+   é capturado hoje (só o snapshot agregado). Mapear os dois campos
+   adicionais em `bw_query_topics.daily_series`/`page_type_breakdown`
+   (ver `data-model.md` §5) na mesma chamada já feita neste passo, sem
+   custo extra de rate limit — é o insumo que falta pra reconstruir picos
+   de volume por Narrativa (ex: "03/02 · Operação policial na Baixada
+   Santista" do mockup de referência) sem violar a premissa acima.
+6.4b. **X (Twitter) Insights**, sinal textual específico de X que
+   complementa os Temas do passo 6.4 (tematização geral, mas sem o
+   componente de hashtag/emoji/URL/autor citado com sentimento próprio):
+   se não existir linha "fresca" (7 dias) em `bw_query_x_insights` para o
+   par e `categoryTarget` — busca em sequência os 4 endpoints de "X
+   (Twitter) Insights" confirmados em
+   `developers.brandwatch.com/docs/twitter-insights` (`data/hashtags`,
+   `data/emoticons`, `data/urls`, `data/mentionedauthors` — todos exigem
+   `queryId`/`queryGroupId` + `startDate`/`endDate`) e faz upsert em
+   `bw_query_x_insights` com `insight_type` correspondente
+   (`hashtag`/`emoticon`/`url`/`mentioned_author`). Não amostrado —
+   mesma família sampling-safe de `bw_query_topics`/`bw_query_top_authors`.
+   ⚠️ Ainda não implementado (revisão de spec pré-implementação, sem
+   migration/código correspondente).
+   **Salvaguarda de orçamento**: só roda para `categoryTarget`s com volume
+   relevante em `page_type = 'twitter'` (já disponível em
+   `bw_query_metrics_daily_by_platform`, passo 6.3, sem chamada extra pra
+   checar isso) — Narrativa/Query sem presença relevante em X não gasta as
+   4 chamadas à toa. Mesmo padrão de "para quando o orçamento acaba
+   (`BRANDWATCH_CALL_BUDGET`), retoma na invocação seguinte" dos passos 6.1
+   e 6.5 — o loop de `categoryTargets` verifica orçamento antes de cada um
+   dos 4 endpoints, não só entre `categoryTargets`.
 6.5. Ranking de autores: se não existir linha "fresca" (7 dias) em
    `bw_query_top_authors` para o par **e `categoryTarget`** (query inteira
    + cada Narrativa — ver correção abaixo): busca `data/volume/
@@ -411,11 +515,27 @@ o Executive Overview consomem o resultado (tabelas já sincronizadas).
 - Todo texto de mention é armazenado como veio da API, sem sanitização —
   sanitização para exibição é responsabilidade do frontend (nunca
   `dangerouslySetInnerHTML` direto com `snippet`/`full_text`).
+- ✅ **Confirmado (2026-07-11, pedido do usuário)**: "os dados da integração
+  são diários, semanais e mensais... armazenando no banco de dados como
+  histórico e possibilidade de utilização em IA" — já é o comportamento de
+  todas as tabelas de agregado deste módulo, sem mudança de código
+  necessária. `bw_query_metrics_daily`/`weekly`/`monthly`,
+  `bw_query_group_metrics_weekly`, `bw_query_metrics_daily_by_platform`,
+  `bw_query_topics`, `bw_query_top_authors`, `bw_query_x_insights` e
+  `narrative_metrics` são todas upsertadas por chave única que **inclui a
+  data/semana/mês** (`metric_date`/`metric_week`/`metric_month`) — cada
+  período gera sua própria linha, nunca sobrescrita por um sync
+  subsequente do mesmo par (só corrigida se o **mesmo** período for
+  ressincronizado, upsert idempotente). Não existe rotina de retenção/
+  limpeza (nenhuma linha é deletada por idade) — o histórico cresce
+  indefinidamente por design, exatamente para servir de base a um uso
+  futuro por IA (Sprint 4, `executive-reports`, ver `_index.md` "Fora de
+  escopo do MVP").
 
 ## Dados envolvidos
 
 - **Lê**: `brandwatch_credentials`, `sync_cursors`, `bw_projects`, `bw_queries`, `bw_query_groups`, `bw_categories`, `narratives` (para saber quais `bw_category_id` merecem chart por categoria).
-- **Escreve**: `bw_projects`, `bw_queries`, `bw_query_groups`, `bw_categories`, `mentions`, `bw_query_metrics_daily`/`weekly`/`monthly`, `bw_query_group_metrics_weekly`, `sync_cursors`, `sync_log`.
+- **Escreve**: `bw_projects`, `bw_queries`, `bw_query_groups`, `bw_categories`, `mentions`, `bw_query_metrics_daily`/`weekly`/`monthly`, `bw_query_metrics_daily_by_platform`, `bw_query_topics`, `bw_query_top_authors`, `bw_query_x_insights` (⚠️ pendente de implementação, ver passo 6.4b), `bw_query_group_metrics_weekly`, `sync_cursors`, `sync_log`.
 - Detalhes de schema: ver [data-model.md](data-model.md).
 
 ## Permissões
@@ -440,7 +560,15 @@ só metadados (tamanho do token, expiração, ids do par processado).
 
 - Edge Function autossuficiente `supabase/functions/bw-sync/index.ts`
   (Princípio técnico 5, `_index.md`).
-- `pg_cron` + `pg_net` (ou equivalente) para HTTP a partir do Postgres.
+- `pg_cron` + `pg_net` para HTTP a partir do Postgres (migration
+  `20260711020000`, heartbeat `bw-sync-heartbeat` a cada 15min via
+  `net.http_post`, URL hardcoded na migration — não é segredo, mesmo valor
+  já exposto via `NEXT_PUBLIC_SUPABASE_URL`, então sem passo manual
+  pós-deploy). Function roda com `verify_jwt = false`
+  (`supabase/config.toml`) — sem Authorization header no cron job.
+- `BW_SYNC_INTERVAL_HOURS` (secret da Edge Function, default `3`) — o
+  parâmetro de negócio de cadência de captura (ver "Objetivo" acima e passo
+  0.5b).
 - Skill `brandwatch-api`: `references/authentication.md`,
   `references/mentions.md`, `references/data-retrieval-charts.md`,
   `references/queries-and-projects.md` (nota de sampling),

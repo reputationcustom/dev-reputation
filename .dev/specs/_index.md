@@ -1,7 +1,7 @@
 ---
 tipo: index
 projeto: Reputation OS
-atualizado: 2026-07-10
+atualizado: 2026-07-11
 ---
 
 # Reputation OS — Índice de Especificações
@@ -198,8 +198,12 @@ deve ser conferido contra esta lista antes de ser considerado pronto.
 >   plataforma), `bw_query_group_metrics_weekly` (Share of Voice),
 >   `bw_query_topics` (temas/hashtags/entidades com sentimento, via
 >   `data/topics` — o mecanismo mais próximo de "clusterização" que a API
->   padrão oferece), `bw_query_top_authors` (ranking de autores por Query
->   e por Narrativa, não amostrado).
+>   padrão oferece, incl. série diária/breakdown por canal por tópico),
+>   `bw_query_top_authors` (ranking de autores por Query e por Narrativa,
+>   não amostrado), `bw_query_x_insights` (hashtags/emojis/URLs/autores
+>   citados específicos de X com sentimento próprio, via os 4 endpoints de
+>   "X (Twitter) Insights" — ⚠️ identificado em revisão de spec
+>   2026-07-11, ainda sem migration/código).
 >
 > Isso já cobre o que `entities` (via `mentions.author`),
 > `threshold-engine`/`intelligent-feed` (via `mentions`/`bw_categories`/
@@ -246,9 +250,12 @@ deve ser conferido contra esta lista antes de ser considerado pronto.
   documentado pra um módulo futuro (candidato natural: `executive-reports`,
   Sprint 4, já que a prosa/síntese do relatório é geração de conteúdo, não
   sync de dados). `foundation` cobre só a captura de dados brutos que esse
-  módulo futuro vai precisar (mentions enriquecidas, `bw_query_topics`,
-  `bw_query_top_authors` — ver `data-model.md` §5, migration
-  `20260710010000`).
+  módulo futuro vai precisar (mentions enriquecidas, `bw_query_topics`
+  incl. `daily_series`/`page_type_breakdown`, `bw_query_top_authors`,
+  `bw_query_x_insights` — ver `data-model.md` §5, migration
+  `20260710010000` para o que já existe; `bw_query_x_insights` e as duas
+  colunas novas de `bw_query_topics` são ampliação identificada em revisão
+  de spec 2026-07-11, ainda sem migration própria).
   **Investigação sobre "Iris"** (a IA da Brandwatch — teria uma API
   própria que resolvesse isso?): pesquisa direta em
   `developers.brandwatch.com` (índice `llms.txt` + páginas individuais)

@@ -2,7 +2,7 @@
 tipo: setup-guide
 módulo: foundation
 status: pronto
-atualizado: 2026-07-07
+atualizado: 2026-07-11
 ---
 
 # Brandwatch — Configuração Necessária (Fundação de Dados)
@@ -97,10 +97,17 @@ Groups e credenciais.
 > `brandwatch_credentials.access_token_secret_ref`/`token_expires_at`
 > continuam existindo, mas mudam de papel: deixam de ser preenchidos
 > manualmente e passam a ser o **cache** do token mintado em runtime — a
-> Edge Function checa `token_expires_at` a cada invocação e só chama
-> `/oauth/token` de novo quando o cache está ausente/expirado (evita gastar
-> parte do rate limit de 30 chamadas/10min só renovando token a cada
-> ~20-30s). Ver `sync-brandwatch.md` para o fluxo completo.
+> ideia é a Edge Function checar `token_expires_at` a cada invocação e só
+> chamar `/oauth/token` de novo quando o cache está ausente/expirado,
+> evitando gastar parte do rate limit de 30 chamadas/10min só renovando
+> token. ⚠️ Ainda não implementado (write-back pro Vault é TODO, ver
+> CLAUDE.md "Brandwatch sync model") — hoje `bw-sync` minta um token novo
+> toda vez que algum par está "devido" (a cada `BW_SYNC_INTERVAL_HOURS`,
+> default 3h, não mais a cada ~20-30s como o desenho original previa — ver
+> `sync-brandwatch.md` passo 0.5b), o que já é barato o bastante mesmo sem
+> cache. Cachear continua economizando 1 chamada por par devido, só deixou
+> de ser pré-requisito para agendar via `pg_cron`. Ver `sync-brandwatch.md`
+> para o fluxo completo.
 
 - Criar a linha correspondente em `brandwatch_credentials` (só o vínculo com
   a organização e o Client — sem token ainda, ele é preenchido pela primeira
@@ -387,6 +394,16 @@ crie a Category correspondente e promova a narrativa para `bw_aggregate`.
       vírgula) cadastrados como secrets da Edge Function `bw-sync` — semeia
       `sync_cursors` na primeira execução (ver ⚠️ correção em
       `sync-brandwatch.md`, passo 0)
+- [ ] `BW_SYNC_INTERVAL_HOURS` cadastrado como secret da Edge Function
+      `bw-sync` (opcional — default `3` se omitido; controla de quanto em
+      quanto tempo cada par `(project_id, query_id)` é recapturado, ver
+      `sync-brandwatch.md` passo 0.5b)
+- [x] Heartbeat de `pg_cron` (`bw-sync-heartbeat`, a cada 15min) já vem
+      pronto na migration `20260711020000` — URL da function hardcoded na
+      migration (não é segredo, mesmo valor já exposto via
+      `NEXT_PUBLIC_SUPABASE_URL`), sem passo manual pós-deploy. Só revisar
+      se o projeto Supabase for recriado/migrado no futuro (nesse caso, uma
+      nova migration troca a URL).
 - [ ] Queries dos concorrentes criadas com os mesmos parâmetros, se houver
       necessidade de Share of Voice
 - [ ] Query Group criado (ex: "Disputa Governo SP 2026")

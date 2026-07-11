@@ -2,7 +2,7 @@
 tipo: data-model
 módulo: foundation
 status: pronto
-atualizado: 2026-07-07
+atualizado: 2026-07-11
 ---
 
 # Modelo de Dados — Foundation
@@ -229,6 +229,24 @@ Campos originais (sem alteração): `organization_id`, `project_id`,
 `lower(author)`), `reach_estimate`, `domain`, `snippet`, `full_text`,
 `added`, `mention_date`, `raw jsonb`.
 
+> ⚠️ **`full_text` deixa de ser sempre `null` — busca seletiva planejada
+> (2026-07-11, revisão de spec pré-implementação)**: a decisão original
+> (`full_text = null` geral, ver `sync-brandwatch.md` passo 5) continua
+> certa como *default* — buscar `/data/mentions/fulltext` pra toda mention
+> dobraria as chamadas de todo poll, o que não se sustenta no orçamento de
+> 25/invocação. Mas `snippet` sozinho pode não ser suficiente insumo de
+> texto pra síntese de Narrativa (Sprint 4) nas fontes que **não** são
+> redigidas pela Brandwatch (Facebook/Instagram/YouTube/TikTok/fóruns —
+> diferente de X/Reddit/LinkedIn, ver "Validação de viabilidade" em
+> `overview.md`). Plano: `bw-sync` busca `full_text` **seletivamente**, só
+> para mentions de fonte não-redigida já vinculadas a uma Narrativa
+> (`bw_category_id` resolvido ou casada via `narrative_signals`/
+> `narrative_matched_mentions()`), limitado a top-N (5–10) por
+> engajamento/`reach_estimate` por Narrativa/dia — ver `sync-brandwatch.md`
+> passo 5 (nota). Baixo custo incremental de chamadas (bounded por
+> Narrativa×dia, não por mention), ainda sem migration/código
+> correspondente.
+
 > ✅ **Decisão fechada (2026-07-10)**: a ⚠️ DECISÃO PENDENTE sobre campos de
 > engajamento (likes/shares/comentários) foi resolvida — pesquisa direta em
 > `developers.brandwatch.com/docs/mention-metadata-field-definitions`
@@ -265,6 +283,44 @@ confirmados contra `mention-metadata-field-definitions`, não inferidos):
 | `reply_to` / `retweet_of` | `text` | `replyTo`/`retweetOf` (URLs) |
 | `engagement` | `jsonb` | ver nota acima |
 | `mention_role` | `text` | gerada, `'retweet'` se `retweet_of` preenchido, senão `'reply'` se `reply_to` preenchido, senão `'original'` — adicionado `20260710050000` |
+
+> ⚠️ **Limitação de `emotion` documentada (2026-07-11, revisão de spec)**:
+> `emotion` **não** é um campo direto da API — é derivado em `bw-sync`
+> varrendo `classifications` (array bruto por mention) em busca do primeiro
+> classifier cujo `name` bate com `emotions:...`, sempre olhando **uma
+> mention por vez**. Isso o coloca na mesma categoria de `mention_role`
+> (classificação de uma linha já capturada a partir dos próprios campos
+> dela, não uma soma/contagem sobre a amostra) — **não** viola a premissa
+> "nunca calcular localmente sobre `mentions` amostrada" fixada acima,
+> desde que nada agregue `emotion` por Narrativa/Category somando sobre
+> `mentions` (isso sim repetiria o erro já revertido de
+> `unique_authors`/`repost_count`/`comment_count` — ver `narrative_metrics`
+> abaixo). Nenhum agregado oficial da Brandwatch por Category expõe
+> emoção (`data/topics` só tem `volume, percentageVolume, sentiment, gender,
+> trending, timeSeries` como `metrics`), então uma futura feature de
+> "emoção dominante da Narrativa" **não tem fonte não-amostrada disponível**
+> — se um dia for pedida, cai na mesma decisão já tomada para
+> `unique_authors`/`repost_count`/`comment_count`: sem alternativa oficial,
+> não computar.
+> ⚠️ **Segunda limitação, não confirmada na documentação pública da API**
+> (`developers.brandwatch.com/docs/mention-metadata-field-definitions` não
+> documenta o classificador de emoção nem restrição de idioma — a busca foi
+> direta na doc, não achado): o classificador de "Emotion" da Brandwatch é
+> conhecido por cobrir só mentions em **inglês**. Como o produto é 100%
+> PT-BR, a expectativa realista é que `emotion` venha vazio/esparso na
+> maior parte das mentions, não apenas "menos confiável" — é uma limitação
+> de cobertura, não de precisão. Tratar como **não confirmado
+> oficialmente** até validar contra dados reais sincronizados (checar
+> `select count(*) filter (where emotion is not null) from mentions` depois
+> de um backfill representativo).
+> ✅ **Decisão de escopo (2026-07-11)**: `emotion` **permanece** como sinal
+> best-effort, rotulado como tal sempre que exibido — nunca com o mesmo peso
+> visual/estatístico de `sentiment` (que é agregado oficial, não amostrado,
+> via `bw_query_metrics_daily`). Qualquer UI futura (Sprint 4,
+> `executive-reports`) que mostrar "emoção" precisa deixar claro que é
+> best-effort/cobertura parcial (ex: badge, não gráfico com a mesma
+> confiança de sentimento) — não tirar do escopo, mas nunca apresentar como
+> equivalente a sentimento.
 
 Índices: `idx_mentions_content_source`, `idx_mentions_classifications`
 (gin), `idx_mentions_insights_hashtag` (gin), `idx_mentions_mention_role`.
@@ -320,6 +376,22 @@ security` em ambas, **sem nenhuma policy** (deny-all para `anon`/
 > a partir daí o fallback por `MAX(added)` volta a ser usado (modo de
 > polling incremental normal). Ver `resolveMentionsSinceAdded()` em
 > `bw-sync/index.ts`.
+
+> ✅ **`last_synced_at` também vira o sinal de "devido" (2026-07-11,
+> migration `20260711020000`)**: sem coluna nova — o gate de intervalo do
+> passo 0.5b de `sync-brandwatch.md` filtra `sync_cursors` por
+> `last_synced_at is null or last_synced_at < now() - BW_SYNC_INTERVAL_HOURS`,
+> reusando exatamente o campo que o round-robin já ordenava por. Nenhuma
+> tabela nova precisou existir só para rastrear "quando cada par foi
+> sincronizado pela última vez".
+>
+> O heartbeat de `pg_cron` que aciona esse gate (`bw-sync-heartbeat`,
+> migration `20260711020000`) também não precisou de tabela nova pra saber
+> a URL da Edge Function — a URL vai hardcoded na própria migration (não é
+> segredo, é o mesmo valor já exposto a qualquer client via
+> `NEXT_PUBLIC_SUPABASE_URL`; Princípio técnico 1 é sobre credenciais, não
+> sobre o identificador público do projeto), então a migration é
+> autossuficiente, sem passo manual pós-deploy.
 
 ---
 
@@ -385,8 +457,9 @@ linhas diárias (sampling/timezone) — por isso são buscados da API
 diretamente, não calculados como rollup SQL local.
 
 **Throttle de sync** (não é regra de negócio do dado em si, é comportamento
-do `bw-sync`): como semanal/mensal mudam bem mais devagar que o polling de
-mentions (~20-30s), a Edge Function só busca de novo quando não existe linha
+do `bw-sync`): como semanal/mensal mudam bem mais devagar que a cadência de
+captura (`BW_SYNC_INTERVAL_HOURS`, default 3h — ver `sync-brandwatch.md`
+passo 0.5b), a Edge Function só busca de novo quando não existe linha
 "fresca" (semanal: sem `synced_at` nos últimos 7 dias; mensal: 30 dias) —
 ver `ensureBootstrapSeed`/`isGrainStale` em `bw-sync/index.ts`.
 
@@ -479,6 +552,8 @@ Adicionada em `20260710010000`.
 | `percentage_volume` | `numeric` | não | |
 | `sentiment_positive`/`neutral`/`negative` | `integer` | sim | default `0` |
 | `trending` | `numeric` | não | |
+| `daily_series` | `jsonb` | não | array bruto do campo `days` do payload de `data/topics` para este tópico (confirmado em `developers.brandwatch.com/docs/topics`: `[{date, volume}, ...]` — sem sentimento por dia, só volume) — permite reconstruir picos de volume por Narrativa/tema (ex: "03/02 · Operação policial na Baixada Santista" do mockup de referência) sem violar a premissa de nunca somar `mentions` amostrada, já que vem do mesmo agregado oficial já buscado no passo 6.4. Adicionado 2026-07-11 (revisão de spec — payload do endpoint já trazia este dado, não capturado até então) |
+| `page_type_breakdown` | `jsonb` | não | objeto bruto do campo `pageType` do mesmo payload (confirmado: volume do tópico por canal — `blog`/`facebook`/`forum`/`general`/`image`/`instagram`/`news`/`review`/`twitter`/`video`) — mesma chamada do passo 6.4, sem custo extra de rate limit. Adicionado 2026-07-11 |
 | `metric_week` | `date` | sim | data do snapshot de sync (não um bucket semanal literal — `data/topics` é um agregado sobre a janela toda, não uma série por semana; usado só como marcador de frescor/throttle) |
 | `synced_at` | `timestamptz` | sim | |
 
@@ -487,6 +562,15 @@ label, metric_week)`. **Políticas RLS**: select-only via `project_id`.
 Throttle semanal (mesmo padrão de `bw_query_metrics_weekly`,
 `isTopicsStale()` em `bw-sync/index.ts`), por `categoryTarget` (query
 inteira + cada Narrativa).
+
+> ⚠️ **Ampliação pendente de implementação (2026-07-11, revisão de spec)**:
+> `daily_series`/`page_type_breakdown` ainda não têm migration/código
+> correspondentes — mapeamento de campos adicional sobre a mesma chamada já
+> feita no passo 6.4 de `sync-brandwatch.md`, não um endpoint novo. Nomes de
+> campo (`days`, `pageType`) confirmados direto contra
+> `developers.brandwatch.com/docs/topics`, não inferidos — falta só
+> confirmar contra um payload real de produção (logs) antes de consumir
+> estes dois campos numa UI.
 
 > ⚠️ **Revertido (2026-07-11, migration `20260711010000`)**:
 > `engagement_total`/`reach_estimated` chegaram a existir aqui
@@ -499,6 +583,50 @@ inteira + cada Narrativa).
 > oficial** — "não reflete a realidade, é apenas uma amostra". As duas
 > colunas e a função `refresh_topic_engagement_reach()` foram removidas.
 > Tópicos ficam só com o que `data/topics` de fato devolve.
+
+### `bw_query_x_insights`
+
+Dados agregados e não amostrados específicos de X (Twitter), via os 4
+endpoints de "X (Twitter) Insights" — confirmados em
+`developers.brandwatch.com/docs/twitter-insights`: `data/hashtags`,
+`data/emoticons`, `data/urls` (nomeado "Stories" na doc, mas o path é
+`urls`), `data/mentionedauthors`; todos exigem `queryId`/`queryGroupId` +
+`startDate`/`endDate`. É o complemento que falta a `bw_query_topics`
+(`data/topics` cobre tematização geral, mas não este componente) — o
+insumo textual que dá sinal a narrativas exclusivas de X, já que a
+Brandwatch redige o texto de mentions de X mention a mention (ver
+`overview.md`, "Validação de viabilidade"), mas estes 4 aggregates
+**não são redigidos** — trazem sentimento por hashtag/emoji/URL/autor
+citado sem depender de reler texto restrito. Adicionado 2026-07-11
+(revisão de spec pré-implementação — ainda sem migration correspondente).
+
+| Campo | Tipo | Obrigatório | Descrição |
+|---|---|---|---|
+| `id` | `uuid` | sim | PK |
+| `project_id` | `bigint` | sim | FK → `bw_projects(id)` ON DELETE CASCADE |
+| `query_id` | `bigint` | sim | FK → `bw_queries(id)` ON DELETE CASCADE |
+| `category_id` | `bigint` | não | FK → `bw_categories(id)`; `null` = agregado da Query inteira, preenchido = por Narrativa — mesmo padrão de `bw_query_topics`/`bw_query_top_authors` |
+| `category_id_key` | `bigint` | sim | gerada, `coalesce(category_id, 0)` — mesmo padrão anti-`NULL <> NULL` já usado nas demais tabelas de agregado |
+| `insight_type` | `text` | sim | `hashtag` \| `emoticon` \| `url` \| `mentioned_author` — discriminador em vez de 4 tabelas quase idênticas (mesmo raciocínio de `bw_query_topics.topic_type`) |
+| `name` | `text` | sim | a hashtag, emoji, URL ou @handle citado |
+| `label` | `text` | não | presente no payload dos 4 endpoints, mas só com conteúdo útil em `insight_type = 'emoticon'` (confirmado exemplo: `"label": "spaghetti"` para `"name": "🍝"` — descrição textual do emoji); vazio/irrelevante nos demais tipos na prática |
+| `volume` | `integer` | sim | default `0` |
+| `tweets` | `integer` | não | |
+| `retweets` | `integer` | não | |
+| `impressions` | `integer` | não | |
+| `reach_estimate` | `integer` | não | confirmado **ausente** no payload de `data/hashtags` — `null` para `insight_type = 'hashtag'`, presente para `emoticon`/`url`/`mentioned_author` |
+| `sentiment_positive`/`neutral`/`negative` | `integer` | sim | default `0`, do objeto `sentiment` do payload |
+| `metric_week` | `date` | sim | mesmo caráter de snapshot que `bw_query_topics.metric_week`/`bw_query_top_authors.metric_week` — marcador de frescor/throttle, não bucket semanal literal |
+| `synced_at` | `timestamptz` | sim | |
+
+**Índices**: unique `(project_id, query_id, category_id_key, insight_type,
+name, metric_week)`. **Políticas RLS**: select-only via `project_id`, mesmo
+padrão de `bw_query_topics`/`bw_query_top_authors`. Throttle semanal, por
+`categoryTarget` (query inteira + cada Narrativa) — ver `sync-brandwatch.md`
+passo 6.4b. **Salvaguarda de orçamento**: só sincronizado para
+`categoryTarget`s com volume relevante em `page_type = 'twitter'` (já
+disponível em `bw_query_metrics_daily_by_platform`) — não gasta as 4
+chamadas em Narrativa/Query sem presença em X.
 
 ### `bw_query_top_authors`
 
@@ -691,12 +819,14 @@ narrative_id in (
 > `pg_cron` (`refresh_narrative_metrics_hourly`, a cada hora) cobrindo uma
 > janela larga (`current_date - 210` até `current_date`) em vez de só
 > "ontem" — necessário porque o backfill de `mentions`/
-> `bw_query_metrics_daily` pelo `bw-sync` ainda está em andamento (sem
-> `pg_cron` próprio ainda, só invocação manual), então dias antigos podem
-> ganhar dado novo e precisam ser reprocessados aqui também. Revisar essa
-> janela pra algo mais estreito quando o backfill de mentions estiver
-> confirmadamente completo. Diferente de `bw-sync` (cujo `pg_cron` real
-> está bloqueado até o cache de token no Vault existir, ver
+> `bw_query_metrics_daily` pelo `bw-sync` ainda está em andamento (agora
+> agendado via heartbeat de `pg_cron`, migration `20260711020000`, mas
+> gated pelo intervalo de negócio — ver `sync-brandwatch.md` — então ainda
+> mais lento que um backfill contínuo), então dias antigos podem ganhar
+> dado novo e precisam ser reprocessados aqui também. Revisar essa janela
+> pra algo mais estreito quando o backfill de mentions estiver
+> confirmadamente completo. Diferente de `bw-sync` (que chama a Brandwatch
+> e por isso tem o gate de `BW_SYNC_INTERVAL_HOURS`, ver
 > `sync-brandwatch.md`), `refresh_narrative_metrics()` não chama a
 > Brandwatch — sem implicação de rate limit, podia rodar em `pg_cron`
 > desde sempre.
@@ -871,7 +1001,7 @@ revoke all on schema public from bi_reader;
 
 | Job | Frequência | Ação |
 |---|---|---|
-| `bw-sync` (Edge Function) | a cada ~20–30s | ⚠️ **ainda não agendado** — bloqueado até o cache de token no Vault existir (ver `sync-brandwatch.md`), invocação hoje é manual |
+| `bw-sync-heartbeat` (Edge Function) | a cada 15min (heartbeat fixo, infraestrutura) | ✅ **agendado em `20260711020000`** — `select net.http_post(url := 'https://ktvyqpogfnowuqmjybvu.supabase.co/functions/v1/bw-sync', ...)` (URL hardcoded, não é segredo — ver nota acima). Cadência de negócio real (quando de fato minta token/chama a Brandwatch) é `BW_SYNC_INTERVAL_HOURS` (secret da Edge Function, default `3`) — ver `sync-brandwatch.md`, passo 0.5b. Nenhum passo manual pós-deploy necessário |
 | `refresh_narrative_metrics_hourly` | de hora em hora | ✅ **agendado em `20260710030000`** — `select refresh_narrative_metrics(current_date - 210, current_date);`. Não chama a Brandwatch (só agrega dado já sincronizado), então não tinha o mesmo bloqueio de `bw-sync`. Janela larga (210 dias) hoje porque o backfill de `bw-sync` ainda está em andamento; revisar pra uma janela mais estreita quando isso estabilizar |
 
 ## Checklist antes de aplicar a migration
@@ -911,11 +1041,20 @@ revoke all on schema public from bi_reader;
       `narrative_metrics`, via `mentions_sample` de
       `refresh_narrative_metrics()` (migration `20260711010000` — ver
       premissa fixada na tabela `narrative_metrics`)
+      → ⚠️ **pendente de implementação** (revisão de spec 2026-07-11, sem
+      migration ainda): nova tabela `bw_query_x_insights` (§5), colunas
+      `bw_query_topics.daily_series`/`page_type_breakdown` (§5), busca
+      seletiva de `full_text` por Narrativa/top-N (§3) — ver
+      `sync-brandwatch.md` passos 6.4b e 5
+      → heartbeat `pg_cron`/`pg_net` pra `bw-sync` a cada 15min (URL
+      hardcoded, não é segredo), gated por `BW_SYNC_INTERVAL_HOURS`
+      (migration `20260711020000`)
 - [ ] Triggers `set_updated_at` em `organizations`, `brandwatch_credentials`, `narratives`
 - [ ] RLS habilitada em **todas** as tabelas deste módulo (inclusive
       `sync_cursors`/`sync_log`, deny-all)
 - [ ] Schema `reporting` + views + role `bi_reader` (senha fora do repo)
 - [ ] `reporting` fora de `db.schemas` no dashboard do Supabase
 - [x] `pg_cron` configurado para `refresh_narrative_metrics` (migration
-      `20260710030000`) — `bw-sync` continua ⚠️ pendente (ver acima)
+      `20260710030000`) e para `bw-sync` (heartbeat, migration
+      `20260711020000` — autossuficiente, sem passo manual pós-deploy)
 - [ ] Rodar `supabase gen types typescript --local > types/database.types.ts`

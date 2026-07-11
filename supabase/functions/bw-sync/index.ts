@@ -1,7 +1,15 @@
 // supabase/functions/bw-sync/index.ts
 //
 // Edge Function autossuficiente (Princípio técnico 5, .dev/specs/_index.md)
-// — sem import relativo de `_shared/`. Acionada por pg_cron a cada ~20-30s
+// — sem import relativo de `_shared/`. Acionada por pg_cron a cada 15min (um
+// "heartbeat" barato, fixo — ver migration `20260711020000`), mas só faz
+// trabalho de verdade (mint de token + chamadas à Brandwatch) quando algum
+// par (project_id, query_id) está "devido": sync_cursors.last_synced_at mais
+// antigo que BW_SYNC_INTERVAL_HOURS (secret da própria função, default `3`
+// — pedido do usuário 2026-07-11: "a cada 3 horas... capturar o cenário
+// atual", configurável e fácil de mudar via variável de ambiente, sem
+// precisar de nova migration). Ver getSyncIntervalHours() e o gate no topo
+// do handler abaixo, e sync-brandwatch.md passo 0.5b.
 // (nunca pelo frontend, por isso sem CORS — Princípio técnico 5, ressalva de
 // funções só-cron; verify_jwt=false em supabase/config.toml pelo mesmo
 // motivo).
@@ -199,6 +207,24 @@ function getMentionsStartDate(): Date {
     logError("getMentionsStartDate:invalid", `BRANDWATCH_MENTIONS_START_DATE="${raw}" inválida, usando default`);
   }
   return new Date("2026-01-01T00:00:00.000Z");
+}
+
+// Intervalo de negócio entre capturas completas do "cenário atual" —
+// parametrizável via secret (BW_SYNC_INTERVAL_HOURS), default 3h. Não é a
+// frequência do pg_cron (fixa em 15min, só um heartbeat barato que decide se
+// há trabalho a fazer) — é o que efetivamente determina se um par
+// (project_id, query_id) está "devido" pra nova sincronização. Trocar esse
+// secret muda o comportamento na próxima invocação, sem precisar de nova
+// migration. Piso efetivo = a cadência do heartbeat (15min) — um valor menor
+// que isso não faz a sincronização rodar mais rápido que a cada 15min.
+function getSyncIntervalHours(): number {
+  const raw = Deno.env.get("BW_SYNC_INTERVAL_HOURS");
+  if (raw) {
+    const parsed = Number(raw);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+    logError("getSyncIntervalHours:invalid", `BW_SYNC_INTERVAL_HOURS="${raw}" inválido, usando default 3`);
+  }
+  return 3;
 }
 
 // =========================================================================
@@ -1368,6 +1394,48 @@ Deno.serve(async (_req: Request) => {
     Deno.env.get("SUPABASE_SECRET_KEY") ?? Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
   );
 
+  // Passo 0: semeadura (idempotente — upserts `on conflict do nothing`, sem
+  // chamada à Brandwatch). Roda antes do gate de intervalo abaixo, sem lock,
+  // porque decide se há par pendente pra sequer avaliar: sem isto, a
+  // primeira invocação (sync_cursors ainda vazia) nunca teria par nenhum pra
+  // considerar "devido".
+  try {
+    await ensureBootstrapSeed(supabase);
+  } catch (err) {
+    logError("invocation:bootstrap_seed_failed", err);
+    return new Response(
+      JSON.stringify({ ok: false, error: err instanceof Error ? err.message : String(err) }),
+      { status: 500, headers: { "Content-Type": "application/json" } },
+    );
+  }
+
+  // Passo 0.5b: gate de intervalo (pedido do usuário 2026-07-11 — ver
+  // getSyncIntervalHours() acima). pg_cron dispara este handler a cada
+  // 15min (heartbeat fixo, migration `20260711020000`), mas só vale a pena
+  // mintar token/chamar a Brandwatch se algum par estiver "devido" — sem
+  // isto, cada heartbeat de 15min mintaria um token à toa mesmo sem nada
+  // pra sincronizar. Checagem barata (1 SELECT), sem lock, antes de
+  // qualquer chamada à Brandwatch.
+  const intervalHours = getSyncIntervalHours();
+  const dueCutoffIso = new Date(Date.now() - intervalHours * 3_600_000).toISOString();
+  const { count: duePairsCount, error: dueCheckError } = await supabase
+    .from("sync_cursors")
+    .select("id", { count: "exact", head: true })
+    .or(`last_synced_at.is.null,last_synced_at.lt.${dueCutoffIso}`);
+  if (dueCheckError) {
+    logError("invocation:due_check_failed", dueCheckError.message);
+    return new Response(JSON.stringify({ ok: false, error: dueCheckError.message }), {
+      status: 500,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+  if (!duePairsCount) {
+    log("invocation:no_pair_due", { intervalHours, dueCutoffIso });
+    return new Response(JSON.stringify({ ok: true, skipped: true, reason: "no_pair_due" }), {
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
   // Correção 2026-07-10/11 (relatado pelo usuário: HTTP 429 em cascata —
   // logs mostraram duas chamadas diferentes, para endpoints diferentes,
   // levando 429 de forma intercalada, sinal de duas invocações rodando ao
@@ -1403,21 +1471,19 @@ Deno.serve(async (_req: Request) => {
 });
 
 async function runSyncInvocation(supabase: SupabaseClient, invocationStartedAt: number): Promise<Response> {
-  // Passo 0: semeadura (idempotente, roda toda invocação).
-  try {
-    await ensureBootstrapSeed(supabase);
-  } catch (err) {
-    logError("invocation:bootstrap_seed_failed", err);
-    return new Response(
-      JSON.stringify({ ok: false, error: err instanceof Error ? err.message : String(err) }),
-      { status: 500, headers: { "Content-Type": "application/json" } },
-    );
-  }
-
-  // Passo 1: resolver o próximo par (project_id, query_id) pendente.
+  // Passo 1: resolver o próximo par (project_id, query_id) "devido" — mesmo
+  // corte de BW_SYNC_INTERVAL_HOURS já checado no gate barato do handler
+  // principal (recalculado aqui porque, entre o gate e este ponto, o
+  // conjunto de pares devidos não muda dentro da mesma invocação — mas o
+  // filtro precisa estar presente aqui também, senão o round-robin voltaria
+  // a pegar qualquer par pelo simples critério de "mais antigo", ignorando
+  // o intervalo de negócio).
+  const intervalHours = getSyncIntervalHours();
+  const dueCutoffIso = new Date(Date.now() - intervalHours * 3_600_000).toISOString();
   const { data: cursor, error: cursorError } = await supabase
     .from("sync_cursors")
     .select("id, project_id, query_id, last_added_cursor, last_synced_at, backfill_completed_at")
+    .or(`last_synced_at.is.null,last_synced_at.lt.${dueCutoffIso}`)
     .order("last_synced_at", { ascending: true, nullsFirst: true })
     .limit(1)
     .maybeSingle();
@@ -1441,8 +1507,14 @@ async function runSyncInvocation(supabase: SupabaseClient, invocationStartedAt: 
   log("invocation:next_pair", { projectId, queryId, lastSyncedAt: cursor.last_synced_at });
 
   // Passo 2: resolver o access token. TODO (ver CLAUDE.md): ainda minta um
-  // token novo por invocação — cache via Vault/token_expires_at fica para a
-  // próxima leva, antes de agendar via pg_cron de verdade.
+  // token novo por invocação em vez de reusar o cache em
+  // `brandwatch_credentials.access_token_secret_ref`/`token_expires_at` —
+  // deixou de ser bloqueante para agendar via pg_cron (2026-07-11): o gate
+  // de intervalo acima faz o mint só acontecer quando algum par está devido
+  // (a cada BW_SYNC_INTERVAL_HOURS por par, não a cada heartbeat de 15min),
+  // o que é irrelevante para o orçamento de 30 chamadas/10min. Cache do
+  // token continua valendo a pena implementar (evita 1 chamada por par
+  // devido), só não é mais pré-requisito.
   let brandwatchToken: BrandwatchToken;
   try {
     brandwatchToken = await mintBrandwatchAccessToken();
