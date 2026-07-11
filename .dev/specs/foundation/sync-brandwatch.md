@@ -480,6 +480,17 @@ o Executive Overview consomem o resultado (tabelas já sincronizadas).
    `bw_query_top_authors` (agregado oficial) respondem "alcance dos
    autores influentes" sem precisar de nenhuma função — ver `data-model.md`
    §5.
+   ⚠️ **Bug de produção corrigido 2026-07-11**: `ON CONFLICT DO UPDATE
+   command cannot affect row a second time` — a resposta de
+   `data/volume/topauthors/queries` trouxe o mesmo autor mais de uma vez,
+   e o upsert (uma única instrução SQL cobrindo todas as linhas da
+   resposta) não consegue aplicar `DO UPDATE` duas vezes na mesma linha
+   dentro da mesma instrução. `syncTopAuthors()` agora deduplica por
+   `author` antes do upsert (`dedupeByKey()`, mantém a primeira ocorrência
+   — a resposta já vem ordenada por volume/relevância). Mesma correção
+   aplicada preventivamente em `syncTopicsData()` (passo 6.4, dedup por
+   `topic_type::label`) — mesma classe de risco, ainda não observada em
+   produção mas estruturalmente idêntica.
 7. Atualiza `sync_cursors` (`last_added_cursor`, `last_synced_at`,
    `status = 'idle'`, `last_error = null`) e insere uma linha em `sync_log`
    (`status = 'success'`, `rows_processed` = mentions upsertadas).

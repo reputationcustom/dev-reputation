@@ -697,6 +697,19 @@ acelera consultas de "só os influentes".
 > Brandwatch, não amostrados) já são colunas diretas de
 > `bw_query_top_authors`, sem precisar de função nenhuma.
 
+> ⚠️ **Bug de produção corrigido (2026-07-11)**: `syncTopAuthors()` fazia
+> upsert de todas as linhas de uma resposta de `data/volume/topauthors/
+> queries` numa única chamada, sem deduplicar por `author` antes — quando a
+> Brandwatch devolveu o mesmo autor mais de uma vez na mesma resposta,
+> Postgres rejeitou o upsert inteiro com `ON CONFLICT DO UPDATE command
+> cannot affect row a second time` (um único `INSERT ... ON CONFLICT` não
+> pode aplicar `DO UPDATE` duas vezes na mesma linha dentro da mesma
+> instrução). Corrigido com `dedupeByKey()` — deduplica por `author` antes
+> do upsert, mantendo a primeira ocorrência (a resposta já vem ordenada por
+> volume/relevância). Mesma correção aplicada em `bw_query_topics`
+> (`syncTopicsData()`, dedup por `topic_type::label`) — mesma classe de
+> risco, ainda não observada em produção mas estruturalmente idêntica.
+
 ---
 
 ## 6. Narrativas (entidade viva)

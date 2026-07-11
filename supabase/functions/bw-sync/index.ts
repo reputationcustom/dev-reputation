@@ -1157,6 +1157,26 @@ async function syncCategoryDailyAggregate(
   log("syncCategoryDailyAggregate:done", { projectId, queryId, aggregate, rows: rows.length });
 }
 
+// Corrige "ON CONFLICT DO UPDATE command cannot affect row a second time"
+// (erro real de produção em syncTopAuthors — Brandwatch devolveu o mesmo
+// autor mais de uma vez na mesma resposta de data/volume/topauthors/queries):
+// um único INSERT ... ON CONFLICT não consegue aplicar DO UPDATE duas vezes
+// na mesma linha dentro da mesma instrução, então qualquer duplicata na
+// chave de conflito derruba o upsert inteiro. Deduplica antes do upsert,
+// mantendo a primeira ocorrência — os endpoints de chart da Brandwatch
+// devolvem `results`/`topics` ordenados por volume/relevância, então a
+// primeira ocorrência é a mais significativa. Reusado também em
+// syncTopicsData() abaixo, mesma classe de risco (label duplicado dentro do
+// mesmo topic_type).
+function dedupeByKey<T>(rows: T[], keyFn: (row: T) => string): T[] {
+  const seen = new Map<string, T>();
+  for (const row of rows) {
+    const key = keyFn(row);
+    if (!seen.has(key)) seen.set(key, row);
+  }
+  return [...seen.values()];
+}
+
 // =========================================================================
 // Passo 6d — Temas (data/topics) — mecanismo nativo da Brandwatch mais
 // próximo de "clusters temáticos com sentimento/volume/trending" (ver
@@ -1218,9 +1238,19 @@ async function syncTopicsData(
     return;
   }
 
+  const uniqueRows = dedupeByKey(rows, (r) => `${r.topic_type}::${r.label}`);
+  if (uniqueRows.length !== rows.length) {
+    log("syncTopicsData:duplicates_removed", {
+      projectId,
+      queryId,
+      categoryId,
+      removed: rows.length - uniqueRows.length,
+    });
+  }
+
   const { error } = await supabase
     .from("bw_query_topics")
-    .upsert(rows, { onConflict: "project_id,query_id,category_id_key,topic_type,label,metric_week" });
+    .upsert(uniqueRows, { onConflict: "project_id,query_id,category_id_key,topic_type,label,metric_week" });
   if (error) throw new Error(`Erro upsertando bw_query_topics: ${error.message}`);
 
   // Correção 2026-07-11 (pedido do usuário: "retire os cálculos locais
@@ -1345,12 +1375,26 @@ async function syncTopAuthors(
     return;
   }
 
+  // ⚠️ Corrigido 2026-07-11 (erro real de produção: "ON CONFLICT DO UPDATE
+  // command cannot affect row a second time" — a Brandwatch devolveu o
+  // mesmo autor mais de uma vez na mesma resposta de
+  // data/volume/topauthors/queries). Ver dedupeByKey() acima.
+  const uniqueRows = dedupeByKey(rows, (r) => r.author);
+  if (uniqueRows.length !== rows.length) {
+    log("syncTopAuthors:duplicates_removed", {
+      projectId,
+      queryId,
+      categoryId,
+      removed: rows.length - uniqueRows.length,
+    });
+  }
+
   const { error } = await supabase
     .from("bw_query_top_authors")
-    .upsert(rows, { onConflict: "project_id,query_id,category_id_key,author,metric_week" });
+    .upsert(uniqueRows, { onConflict: "project_id,query_id,category_id_key,author,metric_week" });
   if (error) throw new Error(`Erro upsertando bw_query_top_authors: ${error.message}`);
 
-  log("syncTopAuthors:done", { projectId, queryId, categoryId, rows: rows.length });
+  log("syncTopAuthors:done", { projectId, queryId, categoryId, rows: uniqueRows.length });
 }
 
 async function isTopAuthorsStale(
