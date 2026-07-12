@@ -2570,6 +2570,7 @@ const SYNC_STEPS = [
   "metadata",
   "mentions",
   "daily_metrics",
+  "hourly_metrics",
   "weekly_monthly",
   "topics",
   "platform_by_narrative",
@@ -2580,6 +2581,7 @@ const SYNC_STEPS = [
   "top_sites",
   "top_shared_sites",
   "demographics",
+  "full_text_enrichment",
   "sov",
 ] as const;
 type SyncStep = typeof SYNC_STEPS[number];
@@ -2697,9 +2699,27 @@ async function runDailyMetricsStep(
   metricsStartDate: Date,
   now: Date,
 ): Promise<StepResult> {
+  // ⚠️ Correção 2026-07-13 (bug de produção real: "callBrandwatch:429" em
+  // netSentiment/queries/days, 3 tentativas esgotadas, invocação inteira
+  // falhando) — esta fase nunca teve nenhum `hasBrandwatchCallBudget()`,
+  // diferente de toda outra fase (weekly_monthly/topics/top_authors/etc.).
+  // Ela sempre fez 1 chamada de sentimento POR categoryTarget (query
+  // inteira + cada Narrativa) mais 10 chamadas fixas de agregado
+  // (reachEstimate/engagementScore/authors/impressions/netSentiment ×
+  // categories+queries) mais 4 de plataforma — com Narrativas suficientes
+  // (ou mesmo sem nenhuma, já são 14 chamadas fixas em toda invocação),
+  // essa soma sozinha pode ultrapassar o teto real da Brandwatch (30
+  // chamadas/10min), quanto mais somada a outras invocações recentes na
+  // mesma janela. Cada chamada agora é guardada por
+  // `hasBrandwatchCallBudget()`, interrompendo a fase assim que o
+  // orçamento acaba — o que ficar sem fazer aqui é retomado no próximo
+  // ciclo completo desta mesma fase (idempotente, sem perda de dado, só
+  // atraso).
+  //
   // Sempre roda (não é throttled) — query inteira (category=null) + cada
   // Category vinculada a alguma Narrativa deste projeto.
   for (const categoryId of categoryTargets) {
+    if (!hasBrandwatchCallBudget()) return { didWork: true };
     await syncSentimentMetrics(supabase, token, "days", projectId, queryId, categoryId, metricsStartDate, now);
   }
   // Reach/engajamento/autores únicos por Narrativa não amostrados: 3
@@ -2707,12 +2727,15 @@ async function runDailyMetricsStep(
   // `categories`) — é aqui que a resposta de ~4825 linhas observada no
   // crash de produção é processada; isolar esta fase das demais é o que
   // reduz o pico de CPU por invocação.
+  if (!hasBrandwatchCallBudget()) return { didWork: true };
   await syncCategoryDailyAggregate(
     supabase, token, projectId, queryId, "reachEstimate", "reach_estimate", metricsStartDate, now,
   );
+  if (!hasBrandwatchCallBudget()) return { didWork: true };
   await syncCategoryDailyAggregate(
     supabase, token, projectId, queryId, "engagementScore", "engagement_score", metricsStartDate, now,
   );
+  if (!hasBrandwatchCallBudget()) return { didWork: true };
   await syncCategoryDailyAggregate(
     supabase, token, projectId, queryId, "authors", "unique_authors", metricsStartDate, now,
   );
@@ -2722,6 +2745,7 @@ async function runDailyMetricsStep(
   // syncAuthorImpressions) e por mention individual (X), mas nunca no
   // nível de Narrativa/Query inteira — mesmo agregado, mesma dimensão
   // `categories` já usada por reach/engagement/authors acima.
+  if (!hasBrandwatchCallBudget()) return { didWork: true };
   await syncCategoryDailyAggregate(
     supabase, token, projectId, queryId, "impressions", "impressions", metricsStartDate, now,
   );
@@ -2731,6 +2755,7 @@ async function runDailyMetricsStep(
   // que a tabela interativa de Narrativas (indicador Sentimento, 7
   // faixas) realmente lê. Mesmo aggregate/dimensão de reach/engagement/
   // authors/impressions acima.
+  if (!hasBrandwatchCallBudget()) return { didWork: true };
   await syncCategoryDailyAggregate(
     supabase, token, projectId, queryId, "netSentiment", "net_sentiment", metricsStartDate, now,
   );
@@ -2738,36 +2763,353 @@ async function runDailyMetricsStep(
   // sido populados para category_id is null (dimensão `categories` nunca
   // inclui a Query inteira) — mesma correção cobre a captura nova de
   // unique_authors/impressions pra essa mesma linha.
+  if (!hasBrandwatchCallBudget()) return { didWork: true };
   await syncQueryDailyAggregate(
     supabase, token, projectId, queryId, "reachEstimate", "reach_estimate", metricsStartDate, now,
   );
+  if (!hasBrandwatchCallBudget()) return { didWork: true };
   await syncQueryDailyAggregate(
     supabase, token, projectId, queryId, "engagementScore", "engagement_score", metricsStartDate, now,
   );
+  if (!hasBrandwatchCallBudget()) return { didWork: true };
   await syncQueryDailyAggregate(
     supabase, token, projectId, queryId, "authors", "unique_authors", metricsStartDate, now,
   );
+  if (!hasBrandwatchCallBudget()) return { didWork: true };
   await syncQueryDailyAggregate(
     supabase, token, projectId, queryId, "impressions", "impressions", metricsStartDate, now,
   );
+  if (!hasBrandwatchCallBudget()) return { didWork: true };
   await syncQueryDailyAggregate(
     supabase, token, projectId, queryId, "netSentiment", "net_sentiment", metricsStartDate, now,
   );
   // Breakdown de plataforma — sempre roda, query inteira (sem quebra por
   // Narrativa).
+  if (!hasBrandwatchCallBudget()) return { didWork: true };
   await syncPlatformMetrics(supabase, token, projectId, queryId, null, metricsStartDate, now);
   // Autores únicos/engajamento/sentimento líquido por plataforma (query
   // inteira) — ver nota em syncPlatformAggregate() acima.
+  if (!hasBrandwatchCallBudget()) return { didWork: true };
   await syncPlatformAggregate(
     supabase, token, projectId, queryId, "authors", "unique_authors", metricsStartDate, now,
   );
+  if (!hasBrandwatchCallBudget()) return { didWork: true };
   await syncPlatformAggregate(
     supabase, token, projectId, queryId, "engagementScore", "engagement_score", metricsStartDate, now,
   );
+  if (!hasBrandwatchCallBudget()) return { didWork: true };
   await syncPlatformAggregate(
     supabase, token, projectId, queryId, "netSentiment", "net_sentiment", metricsStartDate, now,
   );
   return { didWork: true };
+}
+
+// =========================================================================
+// Passo 6.3e — grão horário (event-radar / Velocidade), especificado
+// 2026-07-13 (.dev/specs/_pending.md, gap técnico #2 de foundation).
+// Restrito a uma janela móvel de 30 dias (não histórico/BI como
+// bw_query_metrics_daily — ver prune_bw_query_metrics_hourly(), migration
+// `20260713040000`) e roda em TODA invocação (sem throttle de frescor — o
+// valor de existir é estar sempre atualizado). Orçamento: 3 chamadas fixas
+// (não escala com o número de categoryTargets): volume/sentiment da Query
+// inteira + netSentiment via dimensão `categories` (todas as Narrativas
+// numa chamada só, mesmo padrão de syncCategoryDailyAggregate) +
+// netSentiment da Query inteira.
+// =========================================================================
+
+const HOURLY_METRICS_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
+
+function toHourTimestamp(isoString: string): string {
+  const d = new Date(isoString);
+  d.setUTCMinutes(0, 0, 0);
+  return d.toISOString();
+}
+
+interface HourlySentimentPoint {
+  hour: string;
+  total: number;
+  positive: number;
+  neutral: number;
+  negative: number;
+}
+
+function pivotHourlySentimentChart(
+  json: { results?: { id: string; values?: { id: string; value: number }[] }[] },
+): HourlySentimentPoint[] {
+  const byHour = new Map<string, HourlySentimentPoint>();
+  for (const bucket of json.results ?? []) {
+    for (const point of bucket.values ?? []) {
+      const hourKey = toHourTimestamp(point.id);
+      const entry = byHour.get(hourKey) ?? { hour: hourKey, total: 0, positive: 0, neutral: 0, negative: 0 };
+      if (bucket.id === "positive") entry.positive = point.value;
+      else if (bucket.id === "negative") entry.negative = point.value;
+      else if (bucket.id === "neutral") entry.neutral = point.value;
+      entry.total = entry.positive + entry.neutral + entry.negative;
+      byHour.set(hourKey, entry);
+    }
+  }
+  return Array.from(byHour.values());
+}
+
+async function syncHourlySentimentMetrics(
+  supabase: SupabaseClient,
+  token: string,
+  projectId: number,
+  queryId: number,
+  startDate: Date,
+  endDate: Date,
+): Promise<void> {
+  const params = new URLSearchParams({
+    queryId: String(queryId),
+    startDate: formatBrandwatchDate(startDate),
+    endDate: formatBrandwatchDate(endDate),
+    timezone: TIMEZONE,
+  });
+
+  const json = await callBrandwatch(`/projects/${projectId}/data/volume/sentiment/hours?${params.toString()}`, token);
+  const points = pivotHourlySentimentChart(json);
+
+  if (points.length === 0) {
+    log("syncHourlySentimentMetrics:empty", { projectId, queryId });
+    return;
+  }
+
+  const rows = points.map((p) => ({
+    project_id: projectId,
+    query_id: queryId,
+    category_id: null,
+    metric_hour: p.hour,
+    total_mentions: p.total,
+    sentiment_positive: p.positive,
+    sentiment_neutral: p.neutral,
+    sentiment_negative: p.negative,
+    synced_at: new Date().toISOString(),
+  }));
+
+  const { error } = await supabase
+    .from("bw_query_metrics_hourly")
+    .upsert(rows, { onConflict: "project_id,query_id,category_id_key,metric_hour" });
+  if (error) throw new Error(`Erro upsertando bw_query_metrics_hourly: ${error.message}`);
+  log("syncHourlySentimentMetrics:done", { projectId, queryId, rows: rows.length });
+}
+
+// Mesma validação de FK contra bw_categories já usada em
+// syncCategoryDailyAggregate() — a dimensão `categories` pode devolver IDs
+// fora do universo cacheado.
+async function syncHourlyNetSentiment(
+  supabase: SupabaseClient,
+  token: string,
+  projectId: number,
+  queryId: number,
+  dimension: "categories" | "queries",
+  startDate: Date,
+  endDate: Date,
+): Promise<void> {
+  const params = new URLSearchParams({
+    queryId: String(queryId),
+    startDate: formatBrandwatchDate(startDate),
+    endDate: formatBrandwatchDate(endDate),
+    timezone: TIMEZONE,
+  });
+
+  const json = await callBrandwatch(`/projects/${projectId}/data/netSentiment/${dimension}/hours?${params.toString()}`, token);
+  const results = (json.results ?? []) as { id: string | number; values?: { id: string; value: number }[] }[];
+
+  let knownCategoryIds: Set<number> | null = null;
+  if (dimension === "categories") {
+    const { data: knownCategories, error: knownCategoriesError } = await supabase
+      .from("bw_categories")
+      .select("id")
+      .eq("project_id", projectId);
+    if (knownCategoriesError) throw new Error(`Erro lendo bw_categories para validação de FK: ${knownCategoriesError.message}`);
+    knownCategoryIds = new Set((knownCategories ?? []).map((c: any) => c.id as number));
+  }
+
+  const rows: Record<string, unknown>[] = [];
+  const skippedCategoryIds = new Set<number>();
+  for (const series of results) {
+    let categoryId: number | null = null;
+    if (dimension === "categories") {
+      categoryId = Number(series.id);
+      if (!Number.isFinite(categoryId)) continue;
+      if (!knownCategoryIds!.has(categoryId)) {
+        skippedCategoryIds.add(categoryId);
+        continue;
+      }
+    }
+    for (const point of series.values ?? []) {
+      rows.push({
+        project_id: projectId,
+        query_id: queryId,
+        category_id: categoryId,
+        metric_hour: toHourTimestamp(point.id),
+        net_sentiment: point.value,
+        synced_at: new Date().toISOString(),
+      });
+    }
+  }
+
+  if (skippedCategoryIds.size > 0) {
+    log("syncHourlyNetSentiment:unknown_categories_skipped", {
+      projectId, queryId, dimension, categoryIds: Array.from(skippedCategoryIds),
+    });
+  }
+
+  if (rows.length === 0) {
+    log("syncHourlyNetSentiment:empty", { projectId, queryId, dimension });
+    return;
+  }
+
+  for (const chunk of chunkArray(rows, 1000)) {
+    const { error } = await supabase
+      .from("bw_query_metrics_hourly")
+      .upsert(chunk, { onConflict: "project_id,query_id,category_id_key,metric_hour" });
+    if (error) throw new Error(`Erro upsertando bw_query_metrics_hourly (net_sentiment, ${dimension}): ${error.message}`);
+  }
+
+  log("syncHourlyNetSentiment:done", { projectId, queryId, dimension, rows: rows.length });
+}
+
+async function runHourlyMetricsStep(
+  supabase: SupabaseClient,
+  token: string,
+  projectId: number,
+  queryId: number,
+  now: Date,
+): Promise<StepResult> {
+  const windowStart = new Date(now.getTime() - HOURLY_METRICS_WINDOW_MS);
+  await syncHourlySentimentMetrics(supabase, token, projectId, queryId, windowStart, now);
+  await syncHourlyNetSentiment(supabase, token, projectId, queryId, "categories", windowStart, now);
+  await syncHourlyNetSentiment(supabase, token, projectId, queryId, "queries", windowStart, now);
+  return { didWork: true };
+}
+
+// =========================================================================
+// Busca seletiva de full_text (.dev/specs/_pending.md, gap técnico #3 de
+// foundation; foundation/data-model.md §3, "full_text deixa de ser sempre
+// null"). Não substitui a decisão original (full_text=null como default no
+// polling de mentions, ver upsertMentions() — buscar pra toda mention
+// dobraria as chamadas de todo poll); complementa com uma busca dirigida,
+// só para mentions já sincronizadas localmente, já vinculadas a uma
+// Narrativa (bw_category_id) e de fonte não redigida — top-N (por
+// reach_estimate) por Narrativa/dia, bounded por Narrativa×dia (não por
+// mention). Roda no máximo uma Narrativa/dia por invocação (mesmo padrão
+// "para no primeiro que precisar de trabalho" de weekly_monthly/topics).
+//
+// ⚠️ Fontes excluídas (X/Reddit/LinkedIn/Online News — mesma lista de
+// `data-restrictions-compliance.md`, texto ausente/truncado nessas 4) usam
+// valores de `content_source` inferidos da mesma convenção já usada em
+// `contentSource`/`pageType` (ex.: "twitter", "news") — "reddit"/"linkedin"
+// especificamente não têm um payload real confirmando a string exata.
+// Mentions com `content_source` ainda null (sincronizadas antes da
+// migration `20260710010000`) são tratadas como elegíveis por padrão (não
+// sabemos que são de fonte redigida, então não excluímos preventivamente).
+// Revisar contra logs [bw-sync] reais após o deploy.
+// =========================================================================
+
+const FULL_TEXT_ENRICHMENT_TOP_N = 8;
+const FULL_TEXT_RESTRICTED_SOURCES = ["twitter", "reddit", "linkedin", "news"];
+const FULL_TEXT_SOURCE_FILTER = `content_source.is.null,content_source.not.in.(${FULL_TEXT_RESTRICTED_SOURCES.join(",")})`;
+
+async function findPendingFullTextDay(
+  supabase: SupabaseClient,
+  queryId: number,
+  categoryId: number,
+): Promise<string | null> {
+  const { data, error } = await supabase
+    .from("mentions")
+    .select("mention_date")
+    .eq("query_id", queryId)
+    .contains("category_ids", [categoryId])
+    .is("full_text", null)
+    .or(FULL_TEXT_SOURCE_FILTER)
+    .order("mention_date", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) throw new Error(`Erro checando full_text pendente: ${error.message}`);
+  return (data?.mention_date as string | undefined) ?? null;
+}
+
+async function enrichFullTextForNarrativeDay(
+  supabase: SupabaseClient,
+  token: string,
+  projectId: number,
+  queryId: number,
+  categoryId: number,
+  day: string,
+): Promise<number> {
+  const { data: candidates, error: candidatesError } = await supabase
+    .from("mentions")
+    .select("resource_id")
+    .eq("query_id", queryId)
+    .eq("mention_date", day)
+    .contains("category_ids", [categoryId])
+    .is("full_text", null)
+    .or(FULL_TEXT_SOURCE_FILTER)
+    .order("reach_estimate", { ascending: false, nullsFirst: false })
+    .limit(FULL_TEXT_ENRICHMENT_TOP_N);
+
+  if (candidatesError) throw new Error(`Erro lendo candidatos de full_text: ${candidatesError.message}`);
+  const resourceIds = new Set((candidates ?? []).map((m: any) => String(m.resource_id)));
+  if (resourceIds.size === 0) {
+    log("enrichFullTextForNarrativeDay:no_candidates", { projectId, queryId, categoryId, day });
+    return 0;
+  }
+
+  const dayStart = new Date(`${day}T00:00:00.000Z`);
+  const dayEnd = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000);
+  const params = new URLSearchParams({
+    queryId: String(queryId),
+    category: String(categoryId),
+    startDate: formatBrandwatchDate(dayStart),
+    endDate: formatBrandwatchDate(dayEnd),
+    pageSize: "1000",
+    orderBy: "date",
+    orderDirection: "desc",
+  });
+
+  const json = await callBrandwatch(`/projects/${projectId}/data/mentions/fulltext?${params.toString()}`, token);
+  const results = (json.results ?? []) as any[];
+
+  let updated = 0;
+  for (const m of results) {
+    const resourceId = String(m.resourceId);
+    if (!resourceIds.has(resourceId)) continue;
+    const fullText = m.fullText ?? null;
+    if (!fullText) continue;
+    const { error: updateError } = await supabase
+      .from("mentions")
+      .update({ full_text: fullText })
+      .eq("query_id", queryId)
+      .eq("resource_id", resourceId)
+      .eq("mention_date", day);
+    if (updateError) throw new Error(`Erro atualizando full_text: ${updateError.message}`);
+    updated++;
+  }
+
+  log("enrichFullTextForNarrativeDay:done", {
+    projectId, queryId, categoryId, day, candidates: resourceIds.size, updated,
+  });
+  return updated;
+}
+
+async function runFullTextEnrichmentStep(
+  supabase: SupabaseClient,
+  token: string,
+  projectId: number,
+  queryId: number,
+  categoryTargets: (number | null)[],
+): Promise<StepResult> {
+  const narrativeCategoryIds = categoryTargets.filter((c): c is number => c !== null);
+  for (const categoryId of narrativeCategoryIds) {
+    if (!hasBrandwatchCallBudget()) break;
+    const pendingDay = await findPendingFullTextDay(supabase, queryId, categoryId);
+    if (!pendingDay) continue;
+    await enrichFullTextForNarrativeDay(supabase, token, projectId, queryId, categoryId, pendingDay);
+    return { didWork: true };
+  }
+  return { didWork: false };
 }
 
 async function runWeeklyMonthlyStep(
@@ -3224,6 +3566,9 @@ async function runSyncInvocation(supabase: SupabaseClient, invocationStartedAt: 
         case "daily_metrics":
           result = await runDailyMetricsStep(supabase, token, projectId, queryId, categoryTargets, metricsStartDate, now);
           break;
+        case "hourly_metrics":
+          result = await runHourlyMetricsStep(supabase, token, projectId, queryId, now);
+          break;
         case "weekly_monthly":
           result = await runWeeklyMonthlyStep(supabase, token, projectId, queryId, categoryTargets, metricsStartDate, now);
           break;
@@ -3253,6 +3598,9 @@ async function runSyncInvocation(supabase: SupabaseClient, invocationStartedAt: 
           break;
         case "demographics":
           result = await runDemographicsStep(supabase, token, projectId, queryId, metricsStartDate, now);
+          break;
+        case "full_text_enrichment":
+          result = await runFullTextEnrichmentStep(supabase, token, projectId, queryId, categoryTargets);
           break;
         case "sov":
           result = await runSovStep(supabase, token, projectId, queryId, metricsStartDate, now);

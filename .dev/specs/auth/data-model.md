@@ -27,6 +27,7 @@ esta tabela, não `auth.users` direto.
 | `full_name`   | `text`         | não         | Nome de exibição; `null` até o usuário (ou o admin, ao convidar) preencher |
 | `is_admin`    | `boolean`      | sim         | Default `false`. Concede acesso a `/admin/users` e às Edge Functions administrativas |
 | `is_principal`| `boolean`      | sim         | Default `false`. No máximo um punhado de linhas terá `true` (MVP: exatamente uma, ver seed abaixo) — marca a conta que **nunca** pode ser excluída nem perder `is_admin`, ver trigger abaixo |
+| `timezone`    | `text`         | sim         | ✅ **Adicionado 2026-07-13** (migration `20260713060000`, regra global "Fuso horário do usuário" em CLAUDE.md). Nome IANA, default `America/Sao_Paulo`. Só controla exibição no frontend — nenhuma data é armazenada em fuso local em nenhuma tabela do produto. Editável pelo próprio usuário em `/perfil`, via a Edge Function `update-my-timezone` (única escrita self-service em `user_profiles` — todas as outras são administrativas, ver `user-management.md`) |
 | `created_at`  | `timestamptz`  | sim         | `now()`                                                            |
 | `updated_at`  | `timestamptz`  | sim         | Atualizado via trigger `set_updated_at` (já definida em `foundation`) |
 
@@ -103,14 +104,16 @@ $$;
 | SELECT    | o próprio usuário                    | `id = auth.uid()`                                       |
 | SELECT    | qualquer admin                       | `is_current_user_admin()` — necessário pra popular a tabela de `/admin/users` |
 | INSERT    | ninguém via client                   | sem policy — só a Edge Function `admin-invite-user` (via `SUPABASE_SECRET_KEY`, bypassa RLS) cria linhas |
-| UPDATE    | ninguém via client                   | sem policy — só as Edge Functions administrativas (`admin-set-user-role`) escrevem, sempre passando pelo trigger `protect_principal_account_trigger` |
+| UPDATE    | ninguém via client                   | sem policy — só Edge Functions escrevem (via `SUPABASE_SECRET_KEY`, bypassa RLS), sempre passando pelo trigger `protect_principal_account_trigger`: `admin-set-user-role` (administrativa, qualquer linha) e ✅ `update-my-timezone` (adicionada 2026-07-13, self-service — só a própria linha, `id = auth.getUser(token).id`, nunca um `user_id` recebido no body) |
 | DELETE    | ninguém via client                   | sem policy — exclusão de usuário é uma operação de Admin API (`auth.admin.deleteUser`), nunca um `DELETE` direto na tabela |
 
 > Nenhuma policy de INSERT/UPDATE/DELETE para o client é proposital, não
-> esquecimento — toda escrita em `user_profiles` é decisão administrativa
-> (Princípio técnico 2: sem lógica de negócio no frontend). Um usuário
-> comum só lê a própria linha (ex: pra saber seu `full_name`/`is_admin` e
-> decidir se mostra o item de menu "Administração").
+> esquecimento — toda escrita em `user_profiles` passa por uma Edge
+> Function (Princípio técnico 2: sem lógica de negócio no frontend), seja
+> ela uma decisão administrativa (`admin-*`) ou self-service restrita à
+> própria linha (`update-my-timezone`). Um usuário comum só lê a própria
+> linha diretamente (ex: pra saber seu `full_name`/`is_admin` e decidir se
+> mostra o item de menu "Administração").
 
 ## Relacionamentos
 

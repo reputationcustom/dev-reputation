@@ -2,11 +2,19 @@
 tipo: feature-spec
 módulo: auth
 funcionalidade: password-recovery
-status: pronto
+status: implementado
 atualizado: 2026-07-13
 ---
 
 # Recuperação de Senha
+
+> ✅ **Implementado (2026-07-13)**: `app/forgot-password/` +
+> `app/reset-password/`. Único acréscimo além do texto do spec: após
+> `updateUser({ password })` bem-sucedido, o formulário chama
+> `supabase.auth.signOut()` antes de redirecionar para `/login` — necessário
+> para cumprir literalmente "não faz login automático" (a sessão de
+> recuperação usada por `updateUser` já deixa o usuário autenticado, então
+> sem esse `signOut()` explícito ele continuaria logado).
 
 ## Objetivo
 

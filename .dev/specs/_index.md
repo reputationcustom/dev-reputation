@@ -179,7 +179,7 @@ deve ser conferido contra esta lista antes de ser considerado pronto.
 | Módulo                 | Descrição curta                                                              | Status geral | Sprint | Specs |
 |-------------------------|-------------------------------------------------------------------------------|--------------|--------|-------|
 | `foundation`            | Sync serial+rate-limited da Brandwatch → Supabase (`sync-brandwatch`, `narratives`) — **implementado**, ver `CLAUDE.md`. Só backend, nenhuma rota própria (ver "Executive Overview movida" em `foundation/overview.md`) | pronto | 1 | [foundation/overview.md](foundation/overview.md) |
-| `auth`                  | Login/recuperação de senha via Supabase Auth + administração de usuários restrita a admins (`user_profiles`) — **pré-requisito de todo o resto**, nenhuma página é acessível sem sessão | `data-model.md` implementado, restante pronto — não implementado | 2 | [auth/overview.md](auth/overview.md) |
+| `auth`                  | Login/recuperação de senha via Supabase Auth + administração de usuários restrita a admins (`user_profiles`) — **pré-requisito de todo o resto**, nenhuma página é acessível sem sessão | **implementado** (2026-07-13, `middleware.ts` + `/login` + `/forgot-password` + `/reset-password` + `/admin/users` + as 6 Edge Functions administrativas — ver `CLAUDE.md` "Módulo auth") | 2 | [auth/overview.md](auth/overview.md) |
 | `entities`              | Cadastro Nacional de Entidades (EAV via entity_tags) + enriquecimento de mentions | rascunho | 2      | — |
 | `intelligence-center`   | Todas as páginas do frontend (Sprint 2): Executive Overview (entrada pós-login) + Exploração de Narrativas + Sentimento + Plataformas + Pautas Eleitorais — inclui `cases` (ações/decisões por Narrativa, ex-`command-center`, ver "Módulo `command-center` removido" abaixo) | pronto — não implementado | 2 | [intelligence-center/overview.md](intelligence-center/overview.md) |
 | `aggregated-metrics`    | Camada de agregação/envelope JSON único, reaproveitada por todas as páginas do frontend (Sprints 2-4) e pela síntese de IA — ver "Fusão de módulos" abaixo | pronto — não implementado | 2-4 | [aggregated-metrics/overview.md](aggregated-metrics/overview.md) |
@@ -283,25 +283,23 @@ deve ser conferido contra esta lista antes de ser considerado pronto.
 
 ### Pacote Auth — `auth` (implementar primeiro de todos)
 
-Pré-requisito de publicação de qualquer página — ordem interna (ver
-`auth/overview.md`, "Ordem de implementação"):
+✅ **Completo (2026-07-13)** — os 4 itens abaixo estão todos implementados,
+ver `CLAUDE.md` "Módulo auth (Sprint 2)" para o detalhe de cada um:
 
-1. [auth/data-model.md](auth/data-model.md) — ✅ **já implementado**
+1. [auth/data-model.md](auth/data-model.md) — ✅ **implementado**
    (migration `20260713000000_user_profiles_and_principal_admin.sql`):
    `user_profiles` + trigger de proteção do admin principal + admin
    principal cadastrado (`lidiane.carvalho@gmail.com`).
-2. [auth/login.md](auth/login.md) — login + `middleware.ts` de proteção de
-   rota. **É o que efetivamente bloqueia acesso não-autenticado** — deve
-   existir antes de qualquer página de `intelligence-center` ir ao ar,
-   mesmo que só como middleware "esqueleto" enquanto as demais páginas
-   ainda não existem.
-3. [auth/password-recovery.md](auth/password-recovery.md) — não bloqueia
-   mais nada, mas é rápido de fazer logo em seguida (reusa o layout do
-   login) e destrava trocar a senha fraca do admin principal.
-4. [auth/user-management.md](auth/user-management.md) — não bloqueia as 5
-   páginas de `intelligence-center` (o admin principal já existe via
-   seed), mas é necessário antes de qualquer usuário real além dele
-   precisar de acesso.
+2. [auth/login.md](auth/login.md) — ✅ **implementado**: `/login` +
+   `middleware.ts` de proteção de rota. **É o que efetivamente bloqueia
+   acesso não-autenticado** — protege toda rota não-pública do produto
+   desde já, mesmo enquanto as páginas de `intelligence-center` ainda não
+   existem.
+3. [auth/password-recovery.md](auth/password-recovery.md) — ✅
+   **implementado**: `/forgot-password` + `/reset-password`, reaproveitando
+   o layout do login — já destrava trocar a senha fraca do admin principal.
+4. [auth/user-management.md](auth/user-management.md) — ✅ **implementado**:
+   `/admin/users` + as 6 Edge Functions administrativas.
 
 Pode rodar **em paralelo** com o Pacote Backend abaixo (não há dependência
 entre os dois — `auth` não usa o envelope de `aggregated-metrics`, e

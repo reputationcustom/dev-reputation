@@ -2,11 +2,24 @@
 tipo: feature-spec
 módulo: auth
 funcionalidade: login
-status: pronto
+status: implementado
 atualizado: 2026-07-13
 ---
 
 # Login
+
+> ✅ **Implementado (2026-07-13)**: `middleware.ts` (raiz do projeto) +
+> `app/login/page.tsx`/`login-form.tsx`. Segue o spec como escrito —
+> `PUBLIC_ROUTES = ['/login', '/forgot-password', '/reset-password']`,
+> redirect com `?next=`, mensagens de erro genéricas (nunca revela
+> banido/inexistente). Único desvio: o redirect pós-login aponta para
+> `/overview`, que ainda **não existe** (`intelligence-center/executive-overview.md`
+> não implementado) — resulta em 404 até essa página ser construída; não
+> corrigido aqui por ser fora do escopo deste módulo, ver `CLAUDE.md`
+> "Módulo auth (Sprint 2)". Também adiciona a fonte Manrope e os tokens de
+> cor de `_design-tokens.md` a `tailwind.config.ts`/`app/layout.tsx` (antes
+> inexistentes no projeto) — reaproveitável pelas páginas de
+> `intelligence-center` quando forem implementadas.
 
 ## Objetivo
 

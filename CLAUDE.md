@@ -21,17 +21,18 @@ to invent silently.
 - `.dev/specs/_glossary.md` — domain terms (Project, Query, Query Group,
   Category/Narrativa, Mention) and the Portuguese↔English naming mapping.
 - `.dev/specs/[module]/overview.md`, `[feature].md`, `data-model.md` — per
-  module. Only `foundation` (Sprint 1) exists so far.
+  module. See `.dev/specs/_index.md` "Módulos" for the full, current list
+  and status of every module — this file's own module list below is a
+  summary, not the source of truth; check `_index.md` when in doubt.
 
-Sprint scope is fixed (do not scope-creep without the user). **Reconfirmed
-2026-07-10**: Sprint 1 is *entirely* the Brandwatch integration —
-`sync-brandwatch` + `narratives` (`foundation`), no UI. It's substantially
-implemented — see "Brandwatch sync model" below for the current state.
-Sprint 2 is the web interface with the charts/dashboards, opening with
-`executive-overview` (`foundation/executive-overview.md` — spec exists,
-implementation not started) and continuing with `entities`,
-`command-center`, `intelligence-center`. Sprints 3-4 (`threshold-engine`,
-`intelligent-feed`, `propagation-graph`, `decision-center`,
+Sprint scope is fixed (do not scope-creep without the user). Sprint 1
+(`foundation` — Brandwatch integration, no UI) and the `auth` module (login,
+password recovery, user administration — see "Auth module (Sprint 2)"
+below) are both implemented. The rest of Sprint 2 is `intelligence-center`
+(5 pages: Executive Overview, Narrativas, Sentimento, Plataformas, Pautas
+Eleitorais) plus the `aggregated-metrics` backend it depends on — see
+`_index.md` "Sequência de implantação — Sprint 2" for the exact build
+order. Sprints 3-4 (`event-radar`, `propagation-graph`, `decision-center`,
 `executive-reports`) are not started.
 
 ## Commands
@@ -81,6 +82,320 @@ These apply project-wide, to every sprint (from `.dev/specs/_index.md`):
    (single cross-org role for internal BI use), which is why the frontend
    never queries `reporting.*` directly — see the `public.narratives_overview`
    split below.
+
+## Deploy (Hostinger) — global rules
+
+✅ **Added 2026-07-13**, after the `auth` middleware (see "Auth module
+(Sprint 2)" below) briefly broke this without anyone noticing until it was
+reviewed: `middleware.ts` redirected *every* unauthenticated request,
+including Hostinger's health check hitting `/`, to `/login`. A 307 on `/`
+reads as "unhealthy" to the platform, which restarts the container in a
+loop — it never stabilizes, so users only ever see a persistent 503. Fixed
+in `middleware.ts` (early `return NextResponse.next()` when
+`pathname === "/"`, before any auth check runs) and `app/page.tsx` (now a
+client component, see rule 2 below). These four rules are why — apply them
+to any future change that touches routing, the root page, `next.config.ts`,
+or app icons, not just at initial setup:
+
+1. **Node.js version is pinned to `>=24.0.0`** — `.nvmrc` (`24`) and
+   `package.json#engines.node`. When deploying via hPanel, the Node version
+   selector in the panel must also be set to 24.x — the panel doesn't read
+   `.nvmrc` automatically, it's a separate setting that has to match.
+2. **Never set `output: 'standalone'` in `next.config.ts`.** Hostinger's own
+   builder runs `npm install` + `npm run build` and starts the app with
+   `npm start` (`next start`) — the standard non-standalone server. `output:
+   'standalone'` instead produces `.next/standalone/server.js`, which only
+   works if the deploy process knows to run that exact file *and* manually
+   copies `public/` and `.next/static/` into it — the panel does neither.
+   Result: the build succeeds, but `npm start` never actually serves the
+   app. Keep `next.config.ts` without an `output` override.
+3. **`/` must never redirect on the server** — not from `middleware.ts`
+   (this project's proxy layer), not from `redirect()` in a Server
+   Component. Hostinger's health check requests `/` and requires a bare
+   HTTP 200; a 307/308 there is read as "app not healthy" and triggers the
+   restart loop described above, which never resolves into an available
+   app. Correct pattern (see `middleware.ts` and `app/page.tsx`):
+   `middleware.ts` lets `/` pass straight through
+   (`return NextResponse.next()`, before the auth check), and
+   `app/page.tsx` is a **client component** that renders nothing and
+   redirects via `router.replace()` inside a `useEffect` — i.e. only after
+   the server has already answered 200 with an (empty) HTML body. Any
+   route that legitimately needs a server-side redirect is fine anywhere
+   *except* `/` itself.
+4. **Next.js App Router icon/favicon file-name conventions are exact and
+   silent when violated.** An icon is only served automatically if the
+   filename matches the convention precisely: `app/favicon.ico`,
+   `app/icon.{ico,jpg,jpeg,png,svg}`, `app/apple-icon.{jpg,jpeg,png}`. A
+   file with any other name (e.g. `favicon.svg`, `app-icon.png`) sits in
+   the directory unused and is **never served**, even if it's referenced
+   manually in `metadata.icons` — there's no error or warning, it just
+   silently doesn't work. No icon exists in this project yet; when one is
+   added, name it per this convention from the start.
+
+## User timezone — global rules
+
+Added 2026-07-13. All dates in the product are stored in UTC
+(`timestamptz`) — never store local/wall-clock time in any table. Every
+display of a date converts UTC → the viewing user's timezone exclusively in
+the frontend; the server (Postgres, Edge Functions) always works in and
+returns UTC, never does timezone math for display purposes.
+
+- **Where the user's timezone lives**: `user_profiles.timezone` (migration
+  `20260713060000`, IANA name, default `America/Sao_Paulo`). Read via
+  `hooks/use-user-profile.ts` (`useUserProfile()` — 3-state, see "Backend
+  communication failures" below), written via the `update-my-timezone`
+  Edge Function — the only Edge Function in the project that lets a user
+  write their own `user_profiles` row directly, as opposed to the
+  `admin-*` functions, which are all administrative actions on *other*
+  users' rows.
+- **`/perfil`** (`app/perfil/page.tsx`) is the only UI that edits this —
+  an IANA timezone `<select>` populated via
+  `Intl.supportedValuesOf('timeZone')` (built into the JS/Deno runtime, no
+  extra dependency needed for the list itself; `update-my-timezone`
+  validates against the same API server-side).
+- **Formatting utilities**: `lib/date/format.ts` — `formatDate`
+  (`dd/MM/yyyy`, transaction dates), `formatDateTime` (`dd/MM/yyyy HH:mm`),
+  `formatRelativeDate` (`Hoje`/`Ontem`/`há N dias`, falls back to
+  `formatDate` beyond that), `getMonthRange` (start/end of a given month,
+  computed in the user's timezone, returned as real UTC `Date` instants
+  ready to use as `gte`/`lte` filters against a `timestamptz` column — this
+  is what "Este mês"/"Mês anterior" period filters must use, never a naive
+  server-local month boundary). Built on `date-fns-tz`
+  (`toZonedTime`/`fromZonedTime`/`formatInTimeZone`) + `date-fns`.
+- **Pattern**: `const { timezone } = useUserProfile()`, then
+  `formatDate(someUtcDate, timezone)` — never format a date without an
+  explicit timezone; the functions' `America/Sao_Paulo` default is a
+  last-resort fallback, not the intended normal path.
+
+## Cross-cutting UX rules
+
+Added 2026-07-13, apply to every page/component going forward, not just
+`auth`:
+
+1. **Skeleton loading, never a blank screen**, while data loads. See
+   `components/ui/skeleton.tsx` and its use in
+   `app/admin/users/users-admin-view.tsx` (renders `SKELETON_ROWS` fake
+   table rows shaped like the real table, not a bare spinner) — the
+   pattern any future data table should copy. A spinner-in-button is still
+   correct for *submit* actions (rule 5 below), just not for a page's
+   initial data load.
+2. **Empty state always shows the page's primary action**, never just a
+   "nothing here" message with no way forward. In `/admin/users` this is
+   automatic by construction — "Convidar usuário" lives in the page
+   header, outside the loading/error/empty/loaded conditional, so it's
+   always visible regardless of table state.
+3. **Every side-effecting user action produces a toast** (confirmation or
+   error) — `components/ui/toast.tsx`. This includes actions the original
+   per-feature spec text marked "no toast" before this rule existed — e.g.
+   `user-management.md`'s admin-toggle was originally "sem toast"
+   (optimistic, silent unless it fails); this rule supersedes that, and
+   `users-admin-view.tsx`'s `handleToggleAdmin` now toasts on success too.
+   If a future spec explicitly says "no toast" for a new action, treat
+   that as a conflict with this rule and flag it rather than silently
+   picking one.
+4. **Form validation**: client-side check before submit, but the server is
+   always authoritative (Edge Function/Postgres re-validates everything —
+   Principle 2). Server-returned errors render next to the relevant field,
+   not as a generic banner — see `invite-user-modal.tsx`/
+   `edit-organizations-modal.tsx` (`emailError`/`organizationsError`
+   inline under their respective inputs; a `formError` banner is reserved
+   for errors that genuinely aren't attributable to one field).
+   **Exception**: `login.md`'s credential error ("E-mail ou senha
+   incorretos") stays a generic top-of-form banner on purpose —
+   attributing it to email-vs-password specifically would leak which one
+   was wrong, defeating the account-enumeration protection that's the
+   whole point of that message (`login.md`, "Fluxos alternativos e
+   erros"). Security-motivated spec decisions like this one win over the
+   generic UX rule.
+5. **Buttons disable + show a spinner while their action is in flight**,
+   and nothing with a side effect can be double-clicked into firing twice.
+   Beyond the obvious (every submit button in this project's forms), this
+   also covers non-button controls: `users-admin-view.tsx` tracks
+   `pendingUserIds` and disables both the admin-toggle checkbox and the
+   row's `⋮` actions menu for a user while a toggle/revoke call for that
+   row is in flight.
+6. **Pagination defaults to 10 items per page** on every list, unless a
+   different value is explicitly called for. `components/ui/pagination.tsx`
+   exports `DEFAULT_PAGE_SIZE = 10` — import it rather than hardcoding
+   `10` again in a new list. `users-admin-view.tsx` is the reference
+   implementation (client-side slicing over the already-fetched
+   `admin-list-users` result; a list backed by a paginated query instead
+   would page at the query level, but the constant/component are the
+   same).
+
+## Backend communication failures
+
+Added 2026-07-13. Any failure talking to the backend — an Edge Function
+call, a direct PostgREST/`supabase-js` query, or any other `fetch` — must
+surface a friendly message to the user. **A UI stuck in an indefinite
+loading spinner after a failed request is always a bug**, never an
+acceptable state.
+
+- **Every initial-mount data fetch** (`useEffect` on mount, or a Server
+  Component `await`) must have 3 states, never 2: **loading**, **error**
+  (friendly message + "Tentar novamente"/retry — see
+  `components/ui/error-message.tsx`'s `onRetry` prop — never leave the
+  previous spinner/skeleton showing forever, never silently fall back to a
+  default value), **success**. `hooks/use-user-profile.ts`,
+  `app/admin/users/users-admin-view.tsx`'s `loadUsers`, and
+  `app/reset-password/reset-password-form.tsx`'s session check are the
+  reference implementations.
+- **Forbidden anti-pattern** (the most common cause of the "stuck loading
+  forever" bug): reading only `data` from a Supabase client call and
+  ignoring `error`. `.single()` and most `supabase-js` methods **don't
+  throw** — they resolve `{ data: null, error }` — so `error` must be
+  checked explicitly; a `try/catch` alone does not catch this. Two real
+  instances of this exact bug were found and fixed in this same revision:
+  `app/admin/users/page.tsx` (Server Component reading
+  `user_profiles.is_admin` — used to silently redirect a real admin to
+  `/overview` on a transient DB error, now throws and lets `app/error.tsx`
+  handle it) and `app/reset-password/reset-password-form.tsx`
+  (`getSession()` — used to render "link expired" on a connectivity
+  error, now has a distinct `error` session-state with its own retry).
+- **User-triggered actions** (form submit, button click) are already
+  correctly handled by the existing `try/catch` + `setError()`/toast
+  pattern used throughout `login`/`password-recovery`/`user-management` —
+  this rule doesn't change that pattern, it targets the initial-load case
+  specifically, which historically didn't have equivalent treatment.
+- **`app/error.tsx`** is the root error boundary — catches any uncaught
+  Server Component exception (e.g. the `admin/users/page.tsx` case above)
+  anywhere under the root layout that doesn't have a more specific
+  `error.tsx`, and renders `BACKEND_ERROR_MESSAGE` + retry instead of
+  Next's default crash page.
+- **`lib/errors.ts`** exports `BACKEND_ERROR_MESSAGE` ("Não foi possível
+  conectar ao servidor. Tente novamente em instantes.") — the fallback
+  wording when no more specific message applies to the context. Prefer a
+  specific contextual message when one is available (e.g. "Não foi
+  possível carregar os usuários." in `users-admin-view.tsx`) — this
+  constant is for the generic case, not a replacement for good per-screen
+  messages.
+- **`lib/supabase/call-function.ts`**'s `callFunction()` is the shared
+  wrapper for calling any Edge Function from the browser — always checks
+  `error` from `supabase.functions.invoke()`, decodes the Edge Function's
+  JSON error body when present, and falls back to `BACKEND_ERROR_MESSAGE`
+  otherwise. Use this instead of calling `supabase.functions.invoke()`
+  directly in new code — `users-admin-view.tsx` and `app/perfil/page.tsx`
+  both go through it.
+
+## Database security (Security Advisor)
+
+Added 2026-07-13. Running Supabase's Security Advisor (Dashboard →
+Advisors → Security) is a mandatory part of validating any phase that
+creates tables, views, functions, or Storage buckets — before marking that
+phase done. The rules below prevent the findings this audit already turned
+up once (migration `20260713070000` fixes all three real findings — see
+that file for the full rationale on each):
+
+1. **Every view over an RLS-protected table needs `security_invoker =
+   true`.** Postgres runs a view without this option as the view *owner*,
+   not the querying user — which makes the view **ignore the base tables'
+   RLS**. ⚠️ **This was a real, confirmed cross-tenant data leak in this
+   project**: `public.narratives_overview` (exposed to `authenticated` via
+   PostgREST, consumed by the Executive Overview UI) had no
+   `security_invoker`, so any authenticated user of any organization could
+   see every organization's Narrativas through it — the view's own old
+   comment claimed the opposite ("RLS applies normally since there's no
+   special security_invoker/definer"), which was backwards. Fixed via
+   `ALTER VIEW ... SET (security_invoker = true)` on
+   `public.narratives_overview` and, for defense-in-depth/consistency (not
+   because they were exploitable — `reporting.*` is never in
+   `db.schemas`/PostgREST and `bi_reader` bypasses RLS by role attribute
+   regardless of view mode, Principle 6), `reporting.narratives_overview`
+   and `reporting.mentions_daily` too. New views over RLS tables must
+   include this from the start — `create or replace view ... with
+   (security_invoker = true) as ...`, or an `alter view` right after if
+   the tool/pattern being used generates `create or replace view` without
+   inline reloptions.
+2. **Every function needs a fixed `search_path`.** Without one, a function
+   is vulnerable to search-path hijacking — an unqualified reference
+   inside it can resolve to an object planted in a schema that comes first
+   in the *caller's* session search path instead of the intended one. Use
+   `set search_path = public` (this project's tables are referenced
+   unqualified inside function bodies, so `search_path = ''` would break
+   them) — matches the pattern already used by `auth_organization_ids()`,
+   `create_mentions_partition()`, `is_current_user_admin()` since earlier
+   migrations. 6 functions were missing this and got it added via `alter
+   function ... set search_path = public` in `20260713070000`:
+   `set_updated_at`, `narrative_matched_mentions`,
+   `refresh_narrative_metrics`, `try_acquire_bw_sync_lock`,
+   `release_bw_sync_lock`, `protect_principal_account`.
+3. **Every RLS-enabled table needs at least one explicit policy**, even a
+   deny-all one. `enable row level security` with zero policies already
+   denies everyone but `service_role`/`SUPABASE_SECRET_KEY` — correct for
+   `bw_sync_lock`/`sync_cursors`/`sync_log` (internal, Edge-Function-only
+   tables, see "Brandwatch sync model" above) — but the Advisor can't tell
+   "forgot the policy" from "deliberately admin-only", so it flags either
+   way. Make the intent explicit: `create policy "<table>: sem acesso
+   direto" on <table> for all using (false);` — added for those 3 tables
+   in `20260713070000`.
+4. **Public Storage buckets don't need (and shouldn't have) a broad
+   SELECT policy on `storage.objects`.** A `public = true` bucket already
+   serves files by URL via `getPublicUrl()` without going through RLS at
+   all — a permissive `SELECT` policy on top of that doesn't enable that,
+   it only additionally allows *listing/enumerating* every file in the
+   bucket via the API (names, dates, metadata), a separate Advisor finding
+   ("Public Bucket Allows Listing"). Don't add one unless the use case
+   genuinely needs API-driven listing, not just serving an image by URL.
+   No Storage buckets exist in this project yet — apply this the first
+   time one is added.
+5. **Leaked Password Protection** (Dashboard → Authentication →
+   Policies/Attack Protection) should be enabled — checks a chosen
+   password against the HaveIBeenPwned breach corpus on signup/password
+   change. This is a Dashboard toggle, not something a migration or this
+   codebase can set — noted here so it doesn't get missed during setup,
+   not something that can be applied from code.
+6. **Supabase-internal `SECURITY DEFINER` functions** (not defined in any
+   of this project's migrations — e.g. platform-managed functions the
+   Advisor may still flag) should never be altered/dropped directly. If
+   one doesn't need to be callable via the API, revoke `EXECUTE` from the
+   API roles only (`PUBLIC`, `anon`, `authenticated`), always guarded:
+   `do $$ begin if exists (...) then revoke execute on function ... from
+   public, anon, authenticated; end if; end $$;` — the guard is needed
+   because the function may not exist in every environment.
+
+This audit (`20260713070000`) covered functions/views/policies added
+through 2026-07-13 — it is not a guarantee every migration ever written
+passes the Advisor with zero findings; run the Advisor for real against
+the Supabase Dashboard periodically. This migration just fixes what a
+grep-based pass from this codebase could confirm without live DB access.
+
+## Edge Function error handling
+
+Added 2026-07-13, applies to every Edge Function (not just `admin-*` — the
+principle already existed informally via `bw-sync`'s try/catch, this makes
+it explicit):
+
+- **Every handler is wrapped in one top-level `try/catch`.** Without it,
+  an uncaught exception (a malformed body breaking `req.json()`, `atob()`
+  on invalid base64, etc.) crashes the response *before* `corsHeaders` are
+  attached — the client sees a confusing CORS error instead of the real
+  failure, exactly the kind of symptom that wastes debugging time chasing
+  the wrong cause. All `admin-*` functions and `update-my-timezone`
+  already follow this — see any of them for the pattern (`Deno.serve(async
+  (req) => { if (OPTIONS) ...; try { ... } catch (err) {
+  console.error(...); return jsonResponse({ error: "..." }, 500); } })`).
+- **Log every DB/Storage/Auth error** with `console.error('[function-name]
+  context', error)` before responding — passing the raw error object, not
+  just `.message` (preserves stack/detail) — this is what shows up in
+  Dashboard → Edge Functions → Logs and is the only way to debug
+  production without reproducing the issue locally.
+- **Never return a raw Postgres/PostgREST `error.message` to the client.**
+  Messages like `Could not find the 'phone_verified' column of
+  'user_profiles' in the schema cache` are internal jargon that means
+  nothing to an end user and leaks schema details. Always translate to a
+  generic, friendly message (`"Não foi possível salvar. Tente novamente."`
+  is the standard wording used across `admin-*`/`update-my-timezone`),
+  reserving the technical detail exclusively for the `console.error` call.
+  Where a function needs to distinguish cases for the *client* (e.g.
+  "e-mail já cadastrado" vs. a generic failure), inspect the raw error
+  server-side to decide which friendly string to send — never forward the
+  raw string itself (see `admin-invite-user`/`admin-set-user-role`/
+  `admin-delete-user` checking `error.message` content internally to pick
+  between two fixed friendly strings, never echoing the checked message
+  back).
+- **Exception**: operational/monitoring endpoints not meant for end users
+  (e.g. a health check) may return technical detail in the body — whoever
+  consumes those is a monitoring tool, not a person looking at a screen.
 
 ## Architecture
 
@@ -670,6 +985,65 @@ used to apply to `bw-sync`.)
   - See `foundation/data-model.md` §5 for the full per-endpoint rationale
     and confirmation evidence on every item above.
 
+- **`foundation` gap closure + a production bug fix (2026-07-13)** — user
+  request: "Implemente as pendências do módulo foundation" (implement the
+  remaining pending items of the foundation module), tracked in
+  `.dev/specs/_pending.md`. Two genuine gaps closed (a third,
+  `bw_query_topics.daily_series`/`page_type_breakdown`, turned out to
+  already be implemented since migration `20260712040000` — the tracker
+  just hadn't been updated; token caching in Vault stays deferred per the
+  user's own 2026-07-13 note in `_pending.md`):
+  - **`bw_query_metrics_hourly` + new `hourly_metrics` phase** (migration
+    `20260713040000`) — hourly volume/sentiment/`net_sentiment`, rolling
+    30-day window fetched on every invocation (not stale-gated — the whole
+    point is staying fresh for short-term detection), 3 fixed Brandwatch
+    calls regardless of Narrativa count (whole-query volume/sentiment +
+    `netSentiment` via the `categories` dimension, covering every
+    Narrativa in one call, same pattern as `syncCategoryDailyAggregate` +
+    `netSentiment` via `queries` for the whole-query row). Schema and the
+    "no retention/pruning job" decision were already fully specified in
+    `foundation/data-model.md` from an earlier revision — this migration
+    only materializes it. Feeds `event-radar`'s intraday detection and
+    `aggregated-metrics`' Velocidade indicator.
+  - **Selective `full_text` enrichment** (new `full_text_enrichment`
+    phase, no migration — `mentions.full_text` already existed as a
+    column, always `null`). For each Narrativa (`bw_category_id`), finds
+    the most recent day with mentions still missing `full_text` from a
+    non-redacted source (`content_source` outside
+    `twitter`/`reddit`/`linkedin`/`news` — same 4 sources
+    `data-restrictions-compliance.md` flags as redacted/limited; a still-`null`
+    `content_source`, e.g. from before migration `20260710010000`, is
+    treated as eligible rather than excluded), picks the top 8 by
+    `reach_estimate` **locally** (an `ORDER BY` over mentions already
+    synced — not a new aggregate call, so it doesn't reopen the
+    "never sum/aggregate over sampled `mentions`" premise), and calls
+    `/data/mentions/fulltext` scoped to that single day + Category to
+    update just those rows. Bounded to one Narrativa×day per invocation,
+    same "stop at the first that needs work" pattern as the other
+    stale-gated phases. ⚠️ Two things not confirmed against a real
+    payload: the response field name (`fullText`) and the exact
+    `content_source` string values for `reddit`/`linkedin` specifically —
+    inferred from the same naming convention already used for
+    `contentSource`/`pageType` elsewhere in this file.
+  - **Production bug found and fixed while implementing the above**: user
+    reported `HTTP 429` on `data/netSentiment/queries/days`, retries
+    exhausted, invocation failing outright. Root cause:
+    `runDailyMetricsStep()` (the `daily_metrics` phase) was the *only*
+    phase in the whole file with no `hasBrandwatchCallBudget()` guard
+    anywhere — it always made 1 sentiment call per `categoryTarget` (every
+    Narrativa + the whole query) plus 10 fixed aggregate calls
+    (`reachEstimate`/`engagementScore`/`unique_authors`/`impressions`/
+    `net_sentiment` × the `categories`+`queries` dimensions, the last pair
+    added just the day before by the `net_sentiment` work) plus 4 platform
+    calls. With enough Narrativas that total alone can exceed Brandwatch's
+    real 30-calls/10min ceiling in a single invocation, before even
+    accounting for other recent invocations in the same window. Fixed by
+    guarding every call in this phase with `hasBrandwatchCallBudget()`,
+    the same pattern every other phase already uses — once the budget
+    runs out the phase stops (`didWork: true`, invocation ends there) and
+    whatever's left is picked up on the next full cycle through this same
+    phase (idempotent upserts, no data lost, just delayed).
+
 ### Reporting/BI split
 
 `reporting.narratives_overview` and `reporting.mentions_daily` exist for
@@ -679,10 +1053,99 @@ canonical view logic lives in `public.narratives_overview` — RLS-respecting,
 used by the Executive Overview UI — and `reporting.narratives_overview` is a
 thin `select *` wrapper over it for the `bi_reader` role.
 
+### Auth module (Sprint 2)
+
+Implemented 2026-07-13 from `.dev/specs/auth/{login,password-recovery,
+user-management}.md` (`data-model.md` — `user_profiles` + principal-admin
+protection — was already implemented, see migration `20260713000000`
+above). This is the first frontend code in the project (Sprint 1 was
+backend-only) and the first Edge Functions besides `bw-sync`.
+
+- **Route protection is exactly one gate**: `middleware.ts` (project root)
+  redirects any unauthenticated request to `/login?next=<path>`, except
+  `PUBLIC_ROUTES = ['/login', '/forgot-password', '/reset-password']` (plus
+  static assets via the `matcher` config). An authenticated user hitting
+  `/login` is redirected to `next` or `/overview`. No other page
+  re-implements this check — per `login.md`, "Proteção de rota". Uses the
+  standard `@supabase/ssr` middleware pattern (mutable `response`
+  re-created inside `cookies.setAll` so refreshed auth cookies propagate).
+- **⚠️ Known gap, not fixed here (out of this module's scope)**: the
+  post-login redirect target is `/overview`
+  (`intelligence-center/executive-overview.md`), which doesn't exist yet —
+  hitting it 404s until that page is built. Login itself still works
+  (session is created); only the redirect destination is a dead route for
+  now. `/admin/users` does exist and is reachable directly.
+- **`/admin/users` gate is a second, independent check** — `is_admin` is
+  read server-side in `app/admin/users/page.tsx` via a bare
+  `select('is_admin')` (no explicit `.eq('id', ...)` — RLS's
+  `user_profiles_select_own` policy already scopes it to the caller) and
+  `redirect('/overview')`s non-admins before the page ever renders, per
+  `user-management.md` ("a rota nunca renderiza para não-admin"). The
+  client-side table itself trusts nothing — every mutation goes through an
+  Edge Function that re-checks `is_admin` again server-side.
+- **Edge Function admin-auth pattern** (all 6 `admin-*` functions,
+  self-sufficient per Principle 5 — the boilerplate below is duplicated,
+  not shared): read the `Authorization: Bearer <jwt>` header the browser
+  client attaches automatically via `supabase.functions.invoke()`, then
+  call `supabaseAdmin.auth.getUser(token)` (the **service-role client's**
+  `getUser(jwt)` overload validates an arbitrary JWT directly) instead of
+  building a second client with the publishable/anon key just to identify
+  the caller — one fewer env var to wire up per function. Only after
+  confirming `user_profiles.is_admin = true` for that caller does the
+  function touch `auth.admin.*`.
+- **Resolved the `user-management.md` ⚠️ DECISÃO PENDENTE** (banning the
+  principal admin isn't blocked by `protect_principal_account_trigger`,
+  which only covers `user_profiles`, not `auth.users.banned_until`):
+  implemented the spec's own recommended mitigation —
+  `admin-revoke-user-access` checks `user_profiles.is_principal` and
+  refuses `revoke: true` for that account, on top of the UI already hiding
+  the action on that row. Low-cost (one extra query), closes a real gap the
+  spec flagged but left optional.
+- **`SITE_URL`** (new Edge Function secret, optional): `admin-invite-user`
+  passes `redirectTo: \`${SITE_URL}/reset-password\`` to
+  `inviteUserByEmail()` when set, so invite emails land on this app's reset
+  page instead of Supabase's default. Falls back to whatever redirect URL
+  is configured in the Supabase Dashboard when unset — not a hard
+  dependency, no migration or `.env.local.example` change needed (it's an
+  Edge Function secret, not a `NEXT_PUBLIC_*`/Next.js var).
+- **No toast library introduced**: `/admin/users` needs transient
+  success/error feedback (spec's "Notificações / Feedback ao usuário"
+  table) but the project had no toast system yet. Built the smallest thing
+  that satisfies the spec — `components/ui/toast.tsx`, one fixed-position
+  message driven by local state in `users-admin-view.tsx`, auto-dismissed
+  after 4s via `setTimeout`. Revisit if a second page needs the same thing
+  and duplication starts to hurt.
+- **Design tokens landed in code for the first time**: `tailwind.config.ts`
+  gained the neutral/accent colors from `_design-tokens.md` that the auth
+  screens actually use (`bg-page`, `bg-card`, `border-default`,
+  `text-primary/secondary/tertiary`, `accent-blue`, `accent-blue-bg` — not
+  the full sentiment/risk/platform palette, which has no consumer yet) plus
+  `fontFamily.sans` wired to Manrope; `app/layout.tsx` loads the font via
+  `next/font/google`. `intelligence-center` pages should extend this same
+  config rather than redefining tokens locally.
+- **Shared UI primitives** (`components/ui/`): `Spinner`, `ErrorMessage`
+  (with optional retry), `EmptyState`, `Modal`, `ConfirmDialog`,
+  `OrganizationsMultiSelect`, `Toast`, `AuthCard` (login/forgot/reset
+  card shell). `OrganizationsMultiSelect` is reused as-is between the
+  invite modal and the "editar organizações" modal, per
+  `user-management.md`'s explicit "não duplicar UI" instruction.
+- **`admin-update-user-organizations` does a real diff**, never a blind
+  replace: fetches current `organization_members` rows for the user,
+  computes which org IDs to insert vs. delete, and only touches those —
+  matches the spec's explicit requirement, and avoids clobbering
+  `created_at` on unrelated existing memberships.
+- **`admin-list-users`** is the only function that reads (never writes) —
+  combines `auth.admin.listUsers({ perPage: 1000 })` (no pagination UI;
+  fine at MVP scale, revisit if the platform user count grows past that)
+  with `user_profiles` and `organization_members`/`organizations` into one
+  response, so the frontend never makes 3 separate calls per
+  `user-management.md`.
+
 ## Directory structure
 
 ```
-app/                          Next.js App Router pages (minimal so far)
+app/                          Next.js App Router pages (auth: login,
+                               forgot-password, reset-password, admin/users)
 lib/supabase/{client,server}.ts   The only two files that import @supabase/ssr
 types/database.types.ts       Placeholder — regenerate once linked to a real project
 supabase/migrations/          One SQL file per logical schema change

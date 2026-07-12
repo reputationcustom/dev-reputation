@@ -2,11 +2,24 @@
 tipo: feature-spec
 módulo: auth
 funcionalidade: user-management
-status: pronto
+status: implementado
 atualizado: 2026-07-13
 ---
 
 # Administração de Usuários
+
+> ✅ **Implementado (2026-07-13)**: `app/admin/users/` (gate de `is_admin`
+> no Server Component, tabela + modais em Client Components) + as 6 Edge
+> Functions em `supabase/functions/admin-*`. Uma decisão tomada durante a
+> implementação, sobre a ⚠️ DECISÃO PENDENTE de "Regras de negócio"
+> (banimento do admin principal não coberto pelo trigger de banco): optei
+> por **implementar o reforço recomendado** — `admin-revoke-user-access`
+> agora bloqueia `revoke: true` quando `user_profiles.is_principal`, além
+> da UI já ocultar a ação nessa linha. Custo baixo (uma query a mais) pelo
+> ganho de fechar o gap descrito no próprio spec; ver o comentário no topo
+> do arquivo da function. Ver `CLAUDE.md` "Módulo auth (Sprint 2)" para o
+> resto do detalhe de implementação (padrão de autenticação das Edge
+> Functions, toasts sem biblioteca externa, etc).
 
 ## Objetivo
 
@@ -160,7 +173,7 @@ outro usuário autenticado que tente acessar `/admin/users` é bloqueado
 | Evento                        | Feedback                                                   |
 |-----------------------------------|------------------------------------------------------------------|
 | Convite enviado                   | Toast: "Convite enviado para [e-mail]"                            |
-| Admin alternado                   | Sem toast — toggle reflete o novo estado imediatamente (otimista, com rollback se a Edge Function falhar) |
+| Admin alternado                   | ✅ **Alterado 2026-07-13** (regra global "Regras transversais de UX" #3 em CLAUDE.md: toda ação com efeito colateral produz toast): toast de sucesso além do toggle otimista — texto original desta linha ("sem toast") ficou superado pela regra global, que tem precedência |
 | Acesso revogado/restaurado        | Toast: "Acesso revogado para [nome]" / "Acesso restaurado para [nome]" |
 | Organizações atualizadas          | Toast: "Organizações de [nome] atualizadas"                       |
 | Usuário excluído                  | Toast: "[nome] foi removido"                                      |

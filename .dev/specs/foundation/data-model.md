@@ -259,23 +259,27 @@ Campos originais: `organization_id`, `project_id`,
 > somado localmente) e domínios grandes passam facilmente de 2.1 bilhões
 > de visitantes mensais estimados. Widened pra `bigint`.
 
-> ⚠️ **`full_text` deixa de ser sempre `null` — busca seletiva planejada
-> (2026-07-11, revisão de spec pré-implementação)**: a decisão original
-> (`full_text = null` geral, ver `sync-brandwatch.md` passo 5) continua
-> certa como *default* — buscar `/data/mentions/fulltext` pra toda mention
-> dobraria as chamadas de todo poll, o que não se sustenta no orçamento de
-> 25/invocação. Mas `snippet` sozinho pode não ser suficiente insumo de
-> texto pra síntese de Narrativa (Sprint 4) nas fontes que **não** são
-> redigidas pela Brandwatch (Facebook/Instagram/YouTube/TikTok/fóruns —
-> diferente de X/Reddit/LinkedIn, ver "Validação de viabilidade" em
-> `overview.md`). Plano: `bw-sync` busca `full_text` **seletivamente**, só
-> para mentions de fonte não-redigida já vinculadas a uma Narrativa
-> (`bw_category_id` resolvido ou casada via `narrative_signals`/
-> `narrative_matched_mentions()`), limitado a top-N (5–10) por
-> engajamento/`reach_estimate` por Narrativa/dia — ver `sync-brandwatch.md`
-> passo 5 (nota). Baixo custo incremental de chamadas (bounded por
-> Narrativa×dia, não por mention), ainda sem migration/código
-> correspondente.
+> ✅ **`full_text` deixa de ser sempre `null` — busca seletiva implementada
+> (2026-07-13, .dev/specs/_pending.md gap técnico #3 de foundation)**: a
+> decisão original (`full_text = null` geral no poll principal, ver
+> `sync-brandwatch.md` passo 5) continua valendo como *default* — buscar
+> `/data/mentions/fulltext` pra toda mention dobraria as chamadas de todo
+> poll, o que não se sustenta no orçamento de 25/invocação. Complementada
+> por uma fase própria (`full_text_enrichment`, `runFullTextEnrichmentStep()`
+> em `bw-sync/index.ts`, entre `demographics` e `sov` em `SYNC_STEPS`, sem
+> migration — a coluna já existia): busca `full_text` **seletivamente**, só
+> para mentions de fonte não-redigida (`content_source` fora de
+> `twitter`/`reddit`/`linkedin`/`news`; `content_source` ainda `null` é
+> tratado como elegível, não excluído preventivamente) já vinculadas a uma
+> Narrativa (`bw_category_id`, via `categoryTargets`), limitado às top-N
+> (`FULL_TEXT_ENRICHMENT_TOP_N = 8`) por `reach_estimate` por Narrativa/dia
+> — a seleção do top-N é só um `ORDER BY` local sobre mentions já
+> sincronizadas, não uma estatística agregada sobre a amostra. Throttle:
+> no máximo 1 Narrativa×dia pendente por invocação, mesmo padrão das
+> demais fases "stale-gated". Ver `sync-brandwatch.md` passo 5 (nota) pro
+> fluxo completo e as duas incertezas de payload ainda não confirmadas
+> (`fullText` como nome do campo de resposta; valores exatos de
+> `content_source` pra `reddit`/`linkedin`).
 
 > ✅ **Decisão fechada (2026-07-10)**: a ⚠️ DECISÃO PENDENTE sobre campos de
 > engajamento (likes/shares/comentários) foi resolvida — pesquisa direta em
@@ -1781,9 +1785,11 @@ revoke all on schema public from bi_reader;
       `narrative_metrics`, via `mentions_sample` de
       `refresh_narrative_metrics()` (migration `20260711010000` — ver
       premissa fixada na tabela `narrative_metrics`)
-      → colunas `bw_query_topics.daily_series`/`page_type_breakdown` (§5),
-      busca seletiva de `full_text` por Narrativa/top-N (§3) — ⚠️ ainda
-      pendentes de implementação, ver `sync-brandwatch.md` passo 5
+      → colunas `bw_query_topics.daily_series`/`page_type_breakdown` (§5,
+      migration `20260712040000`, via o endpoint legado de Topics — ver
+      `sync-brandwatch.md` passo 6.4c) e busca seletiva de `full_text` por
+      Narrativa/top-N (§3, fase `full_text_enrichment`, sem migration —
+      ver `sync-brandwatch.md` passo 5) — ✅ ambas implementadas
       → heartbeat `pg_cron`/`pg_net` pra `bw-sync` a cada 15min (URL
       hardcoded, não é segredo), gated por `BW_SYNC_INTERVAL_HOURS`
       (migration `20260711020000`) → `sync_cursors.next_step` (execução em
@@ -1829,10 +1835,17 @@ revoke all on schema public from bi_reader;
       `runDailyMetricsStep()` em `bw-sync/index.ts`), `refresh_narrative_metrics()`
       e `reporting.narratives_overview` atualizados para ler o score oficial
       — resolve o gap de Sentimento por Narrativa
-      → ⚠️ **ainda pendente de implementação**: nova tabela
-      `bw_query_metrics_hourly` + nova fase `hourly_metrics` em
+      → ✅ **implementado (2026-07-13, migration `20260713040000`)**: nova
+      tabela `bw_query_metrics_hourly` + nova fase `hourly_metrics` em
       `SYNC_STEPS` (ver `sync-brandwatch.md` passo 6.3e) — resolve a
       detecção intra-dia do `event-radar`
+      → ✅ **correção de bug de produção (2026-07-13)**: `daily_metrics`
+      (`runDailyMetricsStep()`) era a única fase sem `hasBrandwatchCallBudget()`
+      — relatado em produção como `429` esgotando os retries de
+      `callBrandwatch()` em `netSentiment/queries/days`. Cada chamada da
+      fase agora é guardada pelo mesmo orçamento usado em toda fase
+      "stale-gated" (ver `sync-brandwatch.md`, nota logo após a tabela de
+      fases)
 - [ ] Triggers `set_updated_at` em `organizations`, `brandwatch_credentials`, `narratives`
 - [ ] RLS habilitada em **todas** as tabelas deste módulo (inclusive
       `sync_cursors`/`sync_log`, deny-all)

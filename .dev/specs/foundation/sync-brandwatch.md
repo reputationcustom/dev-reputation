@@ -54,8 +54,8 @@ computação síncrona, diferente de esperar rede).
 |---|---|
 | `metadata` | Passo 3 (bootstrap/refresh condicional) |
 | `mentions` | Passo 5 (polling paginado) |
-| `daily_metrics` | Passos 6, 6.3, 6.3b, 6.3d (sentimento diário + reach/engagement/autores únicos/impressões/**net sentiment** por Narrativa e Query inteira + plataforma incl. autores/engajamento/sentimento líquido por plataforma — sempre rodam, não são "stale-gated") |
-| `hourly_metrics` | ⚠️ Passo 6.3e — **especificado 2026-07-13, ainda sem migration**: volume/sentimento/net sentiment em grão horário (`bw_query_metrics_hourly`), janela móvel de 30 dias — sempre roda, não é "stale-gated" (é o oposto do throttle semanal: precisa estar sempre fresco pra detecção de curto prazo) |
+| `daily_metrics` | Passos 6, 6.3, 6.3b, 6.3d (sentimento diário + reach/engagement/autores únicos/impressões/**net sentiment** por Narrativa e Query inteira + plataforma incl. autores/engajamento/sentimento líquido por plataforma — sempre rodam, não são "stale-gated", mas cada chamada agora é guardada por `hasBrandwatchCallBudget()`, ver nota logo abaixo) |
+| `hourly_metrics` | ✅ Passo 6.3e — **implementado 2026-07-13, migration `20260713040000`**: volume/sentimento/net sentiment em grão horário (`bw_query_metrics_hourly`), janela móvel de 30 dias buscada a cada invocação — sempre roda, não é "stale-gated" (é o oposto do throttle semanal: precisa estar sempre fresco pra detecção de curto prazo). Sem job de retenção/limpeza — mesma filosofia de histórico acumulando indefinidamente já aplicada a `daily`/`weekly`/`monthly` (ver `data-model.md`) |
 | `weekly_monthly` | Passo 6.1 (semanal/mensal, throttle 7/30 dias) |
 | `topics` | Passo 6.4 (temas — endpoint novo `data/topics` + endpoint legado `data/volume/topics/queries`, throttle 7 dias) |
 | `platform_by_narrative` | Passo 6.3c (breakdown de plataforma por Narrativa, throttle 7 dias) |
@@ -66,13 +66,17 @@ computação síncrona, diferente de esperar rede).
 | `top_sites` | Passo 6.8 (ranking de sites/domínios de onde as mentions vêm, throttle 7 dias) |
 | `top_shared_sites` | ✅ Passo 6.8b — **novo** (2026-07-12): ranking de domínios mais compartilhados/linkados dentro do conteúdo das mentions (`data/sharedsites`, `bw_query_top_shared_sites`), distinto de `top_sites` — throttle 7 dias |
 | `demographics` | Passo 6.6 (demografia — gender/localização + sentimento líquido por localização, throttle 7 dias) |
+| `full_text_enrichment` | ✅ Passo 5 (nota) — **implementado 2026-07-13**: busca seletiva de `full_text` (top-N por engajamento/`reach_estimate`, por Narrativa/dia, só fontes não-redigidas), throttle "1 Narrativa×dia pendente por invocação" (ver nota própria abaixo) |
 | `sov` | Passo 6.2 (Share of Voice de Query Group + reach por candidato, throttle 7 dias) |
 
-Todas as fases acima estão ✅ **implementadas**, incluindo a coluna
+Todas as 16 fases acima estão ✅ **implementadas** — incluindo a coluna
 `net_sentiment` dentro de `daily_metrics` (passo 6.3d, migration
-`20260713030000`, 2026-07-13). Única exceção ainda só especificada (sem
-migration): `hourly_metrics` (fase nova, passo 6.3e) — ver nota no passo
-6.3e acima e `data-model.md`, "Checklist antes de aplicar a migration".
+`20260713030000`, 2026-07-13), `hourly_metrics` (passo 6.3e, migration
+`20260713040000`) e `full_text_enrichment` (passo 5, mesma data). Nenhuma
+fase fica mais só "especificada" — ver `.dev/specs/_pending.md`, seção
+"Gaps técnicos" de `foundation`, que ficou vazia depois desta rodada
+(token caching do Vault continua deferido à parte, não é uma fase de
+`SYNC_STEPS`).
 `x_insights`,
 `top_sites`, `demographics` (mais `reach_estimate` em `sov`) foram
 priorizadas depois de validar o modelo de dados contra um export real de
@@ -86,17 +90,36 @@ distintos (não cobertos por engano como "a mesma coisa" que `top_authors`/
 Cada invocação lê `next_step` do par escolhido, executa **só essa fase**, e
 avança o cursor pra próxima. Fases "stale-gated" (`weekly_monthly`,
 `topics`, `x_insights`, `top_authors`, `top_tweeters`, `author_enrichment`,
-`top_sites`, `top_shared_sites`, `demographics`, `sov`) percorrem os
+`top_sites`, `top_shared_sites`, `demographics`, `full_text_enrichment`,
+`sov`) percorrem os
 `categoryTargets`/candidatos/dimensões e param no **primeiro** que
 precisar de trabalho real — os demais
 continuam "stale" e são retomados numa invocação futura da mesma fase, não
 na mesma invocação (é isso que limita o pico de CPU; verificações de
 frescor que não acham nada pra fazer são baratas e não avançam por si só o
 "orçamento" de CPU, só avançam pra próxima fase dentro da mesma
-invocação). O ciclo completo (as 12 fases) só fecha — e só então
+invocação). O ciclo completo (as 16 fases) só fecha — e só então
 `sync_cursors.last_synced_at` avança, rearmando o gate de
 `BW_SYNC_INTERVAL_HOURS` do passo 0.5b — quando a última fase (`sov`) roda
 (ou é pulada por não ter trabalho).
+
+⚠️ **Bug de produção corrigido (2026-07-13)**: `daily_metrics`
+(`runDailyMetricsStep()`) era a única fase sem nenhum
+`hasBrandwatchCallBudget()` — sempre fez 1 chamada de sentimento **por
+categoryTarget** (query inteira + cada Narrativa) mais 10 chamadas fixas de
+agregado (`reachEstimate`/`engagementScore`/`unique_authors`/`impressions`/
+`net_sentiment` × dimensões `categories`+`queries`) mais 4 de plataforma.
+Com Narrativas suficientes (relatado em produção: `429` em
+`netSentiment/queries/days`, a última chamada da sequência, 3 tentativas
+de retry esgotadas, invocação inteira falhando), essa soma sozinha estoura
+o teto real da Brandwatch (30 chamadas/10min) **numa única invocação**,
+antes mesmo de considerar chamadas de invocações anteriores na mesma
+janela. Corrigido: cada chamada da fase agora é guardada por
+`hasBrandwatchCallBudget()`, mesmo padrão já usado em toda fase
+"stale-gated" — assim que o orçamento acaba, a fase para (retorna
+`didWork: true`, fecha a invocação) e o que ficou pra trás é retomado no
+próximo ciclo completo desta mesma fase (idempotente, sem perda de dado,
+só atraso).
 
 ⚠️ **Trade-off aceito**: como as fases "stale-gated" agora processam no
 máximo um `categoryTarget`/grupo/dimensão por invocação (em vez de todos
@@ -468,20 +491,37 @@ própria `platform_by_narrative` (passo 6.3c abaixo) — ver `data-model.md`
    `/data/mentions/fulltext` dobraria as chamadas por poll; decisão
    deliberada, revisar se o produto precisar de texto completo (ex:
    matching de narrativa por `keyword` em fontes sem restrição).
-   ⚠️ **Busca seletiva planejada (2026-07-11, revisão de spec pré-
-   implementação — ainda sem código/migration)**: `snippet` sozinho pode
-   não bastar como insumo de texto pra síntese de Narrativa (Sprint 4,
-   ver `_index.md` "Fora de escopo do MVP"). Plano: um passo adicional
-   (fora do poll principal de mentions, pra não competir pelo mesmo
-   orçamento por invocação) busca `/data/mentions/fulltext` **só** para
-   mentions que atendam **todos** os critérios: (a) fonte não-redigida
-   pela Brandwatch (Facebook/Instagram/YouTube/TikTok/fóruns — não
-   X/Reddit/LinkedIn, ver `overview.md` "Validação de viabilidade"); (b) já
-   vinculada a uma Narrativa (`bw_category_id` resolvido ou casada via
-   `narrative_matched_mentions()`); (c) limitado a top-N (5–10) por
-   `engagement`/`reach_estimate` por Narrativa/dia — não todo o volume.
-   Baixo custo de chamadas (bounded por Narrativa×dia, não por mention
-   individual), mas ainda não implementado — ver `data-model.md` §3.
+   ✅ **Busca seletiva implementada (2026-07-13, sem migration — `full_text`
+   já existia como coluna)**: fase própria `full_text_enrichment`
+   (`runFullTextEnrichmentStep()`, entre `demographics` e `sov` em
+   `SYNC_STEPS`), fora do poll principal de mentions pra não competir pelo
+   mesmo orçamento por invocação. Critérios, todos aplicados via SQL sobre
+   `mentions` já sincronizadas localmente (nenhuma chamada nova só pra
+   decidir o que buscar): (a) fonte não-redigida (`content_source` fora de
+   `twitter`/`reddit`/`linkedin`/`news` — mesma lista de 4 fontes
+   restringidas por `data-restrictions-compliance.md`; `content_source`
+   ainda `null` — mentions de antes da migration `20260710010000` — é
+   tratado como elegível por padrão, não excluído preventivamente); (b) já
+   vinculada a uma Narrativa (`bw_category_id`, via `categoryTargets`); (c)
+   `full_text is null` ainda. `findPendingFullTextDay()` acha o dia mais
+   recente com pelo menos 1 mention pendente pra uma Narrativa; se achar,
+   `enrichFullTextForNarrativeDay()` seleciona as top-N (`FULL_TEXT_ENRICHMENT_TOP_N
+   = 8`) por `reach_estimate` **localmente** (não uma nova chamada agregada
+   — é só ordenar o que já foi sincronizado, não uma estatística sobre a
+   amostra) e busca `/data/mentions/fulltext?category=<id>&startDate=<dia
+   00h>&endDate=<dia+1>` (janela de 1 dia + filtro de Category, escopo
+   estreito o bastante pra não perder as mentions-alvo em uma única
+   página), casando `resourceId`→`fullText` do payload contra o conjunto-alvo
+   antes de atualizar. Throttle: no máximo 1 Narrativa×dia por invocação
+   (mesmo padrão "para no primeiro que precisar de trabalho" das demais
+   fases stale-gated) — bounded por Narrativa×dia, não por mention
+   individual, como planejado.
+   ⚠️ Nomes de campo não confirmados contra um payload real: `fullText`
+   (resposta de `/data/mentions/fulltext`) e os valores exatos de
+   `content_source` pra `reddit`/`linkedin` — inferidos da mesma convenção
+   já usada em `contentSource`/`pageType` noutros pontos deste arquivo.
+   Revisar contra logs `[bw-sync] enrichFullTextForNarrativeDay:*` reais
+   após o deploy. Ver `data-model.md` §3 pro racional completo.
    **Ampliação 2026-07-10** (pedido do usuário: garantir que tudo
    necessário pra visões estilo "Relatório de Insights" — mockup
    `mockup_governo_sp_narrativas.pdf` — já é capturado; nomes confirmados
@@ -653,17 +693,37 @@ própria `platform_by_narrative` (passo 6.3c abaixo) — ver `data-model.md`
    Brandwatch não expõe como agregado oficial (ver `data-model.md`,
    `narrative_metrics`). `data/topics` genuinamente não tem essa métrica;
    `bw_query_topics` fica só com o que o endpoint de fato devolve.
-   ⚠️ **Ampliação pendente de implementação (2026-07-11, revisão de
-   spec)**: o payload de `data/topics` já traz, por tópico, série diária
-   (`days`, confirmado: `[{date, volume}]`) e breakdown por canal
-   (`pageType`, confirmado: volume por `blog`/`facebook`/`forum`/`general`/
-   `image`/`instagram`/`news`/`review`/`twitter`/`video`) — nenhum dos dois
-   é capturado hoje (só o snapshot agregado). Mapear os dois campos
-   adicionais em `bw_query_topics.daily_series`/`page_type_breakdown`
-   (ver `data-model.md` §5) na mesma chamada já feita neste passo, sem
-   custo extra de rate limit — é o insumo que falta pra reconstruir picos
+   ✅ **Correção 2026-07-12 (auditoria pedida pelo usuário contra
+   `developers.brandwatch.com/docs/topics` vs. `/docs/data-topics`)**: uma
+   revisão de spec anterior (2026-07-11) tinha planejado mapear `days`/
+   `pageType` do payload de `data/topics` acima em
+   `bw_query_topics.daily_series`/`page_type_breakdown` — **esses dois
+   campos não existem na resposta de `data/topics`** (o endpoint "Topics
+   (New)" chamado acima). Eles pertencem a um endpoint genuinamente
+   diferente, `data/volume/topics/queries` ("Topics", legado — mesmo nome
+   de produto, payload diferente). Nunca chegou a ser implementado com o
+   mapeamento errado (achado antes de virar código), então não houve
+   corrupção de dado — só a spec estava certa sobre a existência dos
+   campos e errada sobre de onde vinham. Corrigido com uma chamada própria
+   (passo 6.4c abaixo).
+6.4c. ✅ **Topics legado** (implementado 2026-07-12, migration
+   `20260712040000`, `syncLegacyTopicsData()`): chamada complementar a
+   `data/volume/topics/queries?orderBy=burst` (mesmo par/`categoryTarget`
+   do passo 6.4, throttle de frescor compartilhado com `bw_query_topics`),
+   armazenada nas mesmas linhas com `topic_type = 'legacy_mixed'` (a
+   Brandwatch não deixa escolher `extract` nesse endpoint — devolve uma
+   mistura de tipos de tópico já rankeados por `burst`, por isso não reusa
+   os `topic_type` de `words`/`phrases`/etc. do endpoint novo). Mapeia
+   `days→daily_series` (série diária de volume, `[{date, volume}]`) e
+   `pageType→page_type_breakdown` (volume por canal:
+   `blog`/`facebook`/`forum`/`general`/`image`/`instagram`/`news`/
+   `review`/`twitter`/`video`) — o insumo que faltava pra reconstruir picos
    de volume por Narrativa (ex: "03/02 · Operação policial na Baixada
-   Santista" do mockup de referência) sem violar a premissa acima.
+   Santista" do mockup de referência) sem violar a premissa de nunca
+   calcular localmente sobre `mentions` (é dado agregado oficial do
+   próprio endpoint). `burst` é uma métrica de tendência própria desse
+   endpoint, em escala diferente de `trending` (do endpoint novo, passo
+   6.4) — nunca comparar os dois diretamente. Ver `data-model.md` §5.
 6.4b. ✅ **X (Twitter) Insights** (implementado 2026-07-11, priorizado
    depois de validar contra um export real de dashboard Brandwatch — "X
    Themes": Top Stories/Hashtags/Posters/Emojis, exatamente este shape de
