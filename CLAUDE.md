@@ -1237,6 +1237,25 @@ first, since every later piece (`sql-aggregation`, `service-layer-aggregation`,
   function serve both "whole Query" and "one Narrativa" scope depending on
   what's passed). All `security invoker` (default) + `stable`, never
   `security definer`, per the spec's explicit RLS rule.
+- **Production bug found and fixed the same day, via `supabase db push`
+  failing on deploy**: `x = any((select ids from cat_ids))` — the pattern
+  used everywhere `filter_category_ids()`'s result was applied — hit
+  `ERROR: operator does not exist: bigint = bigint[]` (SQLSTATE 42883) in
+  every function that used it (`get_sentiment_breakdown`,
+  `get_platform_breakdown`, all 3 grains of `get_volume_trend`,
+  `get_authors_ranking`, `get_term_signals`). Root cause: Postgres's parser
+  always treats `ANY (` immediately followed by a parenthesized `SELECT` as
+  the row-wise "`= ANY (subquery)`" form (comparing the left side against
+  each *row* the subquery returns), never as "`= ANY(array)`", even though
+  `cat_ids.ids` is genuinely array-typed — the CTE's single row of a single
+  `bigint[]` column got read as one row containing one `bigint[]` value to
+  compare via plain `=`, not unwrapped as an array. Fixed by adding
+  `cross join cat_ids` to each affected CTE's `FROM` and referencing
+  `cat_ids.ids` as a plain column (`= any(cat_ids.ids)`) instead of a
+  parenthesized scalar subquery — `cat_ids` is always exactly 1 row (the
+  helper function has no `FROM`), so the cross join never multiplies rows.
+  Lesson for any future SQL in this project: never write `= any((select ...))`
+  — always join the source into scope and reference a plain column/alias.
 - **`get_active_highlights` deliberately NOT implemented** — depends on
   `feed_events`, which doesn't exist until `event-radar` (Sprint 3, still
   `rascunho`) is built. Tracked as gap #8 in `_pending.md`. The service

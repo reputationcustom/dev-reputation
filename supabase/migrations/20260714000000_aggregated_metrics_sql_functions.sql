@@ -214,11 +214,12 @@ as $$
   scoped as (
     select d.*
     from bw_query_metrics_daily d
+    cross join cat_ids
     where d.query_id in (select org_query_ids(p_organization_id))
       and d.metric_date between p_period_start and p_period_end
       and (
-        ((select ids from cat_ids) is null and d.category_id is null)
-        or d.category_id = any((select ids from cat_ids))
+        (cat_ids.ids is null and d.category_id is null)
+        or d.category_id = any(cat_ids.ids)
       )
   ),
   totals as (
@@ -271,11 +272,12 @@ as $$
   scoped as (
     select d.*
     from bw_query_metrics_daily_by_platform d
+    cross join cat_ids
     where d.query_id in (select org_query_ids(p_organization_id))
       and d.metric_date between p_period_start and p_period_end
       and (
-        ((select ids from cat_ids) is null and d.category_id is null)
-        or d.category_id = any((select ids from cat_ids))
+        (cat_ids.ids is null and d.category_id is null)
+        or d.category_id = any(cat_ids.ids)
       )
   ),
   per_platform as (
@@ -406,36 +408,39 @@ as $$
     select metric_date as bucket_date, total_mentions, sentiment_positive, sentiment_neutral,
            sentiment_negative, net_sentiment
     from bw_query_metrics_daily
+    cross join cat_ids
     where (select g from grain) = 'day'
       and query_id in (select org_query_ids(p_organization_id))
       and metric_date between p_period_start and p_period_end
       and (
-        ((select ids from cat_ids) is null and category_id is null)
-        or category_id = any((select ids from cat_ids))
+        (cat_ids.ids is null and category_id is null)
+        or category_id = any(cat_ids.ids)
       )
   ),
   weekly as (
     select metric_week as bucket_date, total_mentions, sentiment_positive, sentiment_neutral,
            sentiment_negative, null::numeric as net_sentiment
     from bw_query_metrics_weekly
+    cross join cat_ids
     where (select g from grain) = 'week'
       and query_id in (select org_query_ids(p_organization_id))
       and metric_week between p_period_start and p_period_end
       and (
-        ((select ids from cat_ids) is null and category_id is null)
-        or category_id = any((select ids from cat_ids))
+        (cat_ids.ids is null and category_id is null)
+        or category_id = any(cat_ids.ids)
       )
   ),
   monthly as (
     select metric_month as bucket_date, total_mentions, sentiment_positive, sentiment_neutral,
            sentiment_negative, null::numeric as net_sentiment
     from bw_query_metrics_monthly
+    cross join cat_ids
     where (select g from grain) = 'month'
       and query_id in (select org_query_ids(p_organization_id))
       and metric_month between p_period_start and p_period_end
       and (
-        ((select ids from cat_ids) is null and category_id is null)
-        or category_id = any((select ids from cat_ids))
+        (cat_ids.ids is null and category_id is null)
+        or category_id = any(cat_ids.ids)
       )
   ),
   unioned as (
@@ -690,10 +695,11 @@ as $$
   filtered as (
     select sa.*
     from scoped_authors sa
+    cross join cat_ids
     where sa.query_id in (select org_query_ids(p_organization_id))
       and (
-        ((select ids from cat_ids) is null and sa.category_id is null)
-        or sa.category_id = any((select ids from cat_ids))
+        (cat_ids.ids is null and sa.category_id is null)
+        or sa.category_id = any(cat_ids.ids)
       )
   ),
   latest_week as (
@@ -829,10 +835,11 @@ as $$
   scoped_base as (
     select t.*
     from bw_query_topics t
+    cross join cat_ids
     where t.query_id in (select org_query_ids(p_organization_id))
       and (
-        ((select ids from cat_ids) is null and t.category_id is null)
-        or t.category_id = any((select ids from cat_ids))
+        (cat_ids.ids is null and t.category_id is null)
+        or t.category_id = any(cat_ids.ids)
       )
   ),
   latest as (
