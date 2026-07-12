@@ -2,11 +2,19 @@
 tipo: feature-spec
 módulo: foundation
 funcionalidade: sync-brandwatch
-status: pronto
-atualizado: 2026-07-11
+status: implementado
+atualizado: 2026-07-14
 ---
 
 # Sync Brandwatch
+
+> ✅ **Status corrigido 2026-07-14** (premissa do projeto, ver CLAUDE.md
+> "Close the loop"): `bw-sync` (`supabase/functions/bw-sync/index.ts`,
+> ~1950 linhas) em produção, agendada via `pg_cron` desde 2026-07-11 — ver
+> `CLAUDE.md`, "Brandwatch sync model", pro histórico completo de
+> implementação/bugs corrigidos (fases, rate limit, backfill, etc). Único
+> gap real restante é não-bloqueante: cache do token em Vault, ver
+> `_pending.md` "Gaps técnicos" #5.
 
 ## Objetivo
 

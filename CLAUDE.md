@@ -35,6 +35,47 @@ Eleitorais) plus the `aggregated-metrics` backend it depends on — see
 order. Sprints 3-4 (`event-radar`, `propagation-graph`, `decision-center`,
 `executive-reports`) are not started.
 
+### Close the loop: update docs at the end of every development session
+
+✅ **Project premise, added 2026-07-14** (explicit user instruction — this
+was previously done ad hoc, sometimes a session behind). A unit of work
+implementing a spec is **not done** until its documentation trail is
+closed, not just its code. Every session that implements, fixes, or
+resolves something must, before finishing:
+
+1. **Flip the finished spec's frontmatter `status:` to `implementado`**
+   (`.dev/specs/[module]/*.md` — `data-model.md`, feature specs). A spec
+   left at `pronto` after its code has shipped is stale documentation, and
+   the next session reading it will think the work is still pending.
+2. **Add an implementation note to the spec file itself** — a `✅
+   **Implementado (date)**: ...` blockquote near the top (see any file
+   under `.dev/specs/auth/` for the pattern), covering what was built,
+   any deliberate deviation from the original spec text, and any bug found
+   along the way. This is the spec's own record, independent of `CLAUDE.md`.
+3. **Update `CLAUDE.md`** with an implementation-notes entry for the
+   module/feature (dated, narrative style — see "Auth module (Sprint 2)"
+   or "Brandwatch sync model" below for the established pattern): what was
+   built, real bugs found and fixed (not just the happy path), deliberate
+   deviations from spec, and known gaps/follow-ups left for later. This is
+   the file every future session reads first — it must reflect current
+   reality, not the state as of whenever it was last touched.
+4. **Update `.dev/specs/_pending.md`**: move any resolved "Decisão de
+   produto pendente" out of the open table into a dated "✅ Resolvida"
+   note (keep the original `#`, don't renumber); remove any closed "Gap
+   técnico" row the same way. If new gaps or decisions surfaced during the
+   work, add them.
+5. **Update `.dev/specs/_architecture.md`**: flip the module's Mermaid
+   node color to green (`implementado`) once genuinely done, and update
+   its row in the "Módulos (resumo)" status table. If the module is only
+   partially done, keep it yellow/gray and say precisely what's missing
+   rather than flipping early.
+
+Do this even when the user didn't explicitly ask "update the docs" — it's
+a standing premise of the project, not a one-off request. If a session
+runs out of scope to finish all five, at minimum update `CLAUDE.md` (the
+highest-traffic file) and flag in the response which of the others still
+need a pass.
+
 ## Commands
 
 ```bash
@@ -1069,12 +1110,11 @@ backend-only) and the first Edge Functions besides `bw-sync`.
   re-implements this check — per `login.md`, "Proteção de rota". Uses the
   standard `@supabase/ssr` middleware pattern (mutable `response`
   re-created inside `cookies.setAll` so refreshed auth cookies propagate).
-- **⚠️ Known gap, not fixed here (out of this module's scope)**: the
-  post-login redirect target is `/overview`
-  (`intelligence-center/executive-overview.md`), which doesn't exist yet —
-  hitting it 404s until that page is built. Login itself still works
-  (session is created); only the redirect destination is a dead route for
-  now. `/admin/users` does exist and is reachable directly.
+- **✅ Resolved 2026-07-15**: the post-login redirect target `/overview`
+  (`intelligence-center/executive-overview.md`) now exists — was a known
+  gap noted here when `auth` shipped ahead of `intelligence-center`, no
+  longer applicable now that the 5 analytics pages are implemented (see
+  "edge-functions-per-page.md + the 5 intelligence-center pages" above).
 - **`/admin/users` gate is a second, independent check** — `is_admin` is
   read server-side in `app/admin/users/page.tsx` via a bare
   `select('is_admin')` (no explicit `.eq('id', ...)` — RLS's
@@ -1338,15 +1378,151 @@ first, since every later piece (`sql-aggregation`, `service-layer-aggregation`,
   `get-narrative-detail` Edge Function only needs to set `narrativeId` in
   the context; no per-block branching required.
 
+**`edge-functions-per-page.md` + the 5 `intelligence-center` pages
+implemented 2026-07-15** — first frontend code to actually render real
+Brandwatch data (Sprint 1/`foundation`'s payoff). High-level shape:
+
+- **6 Edge Functions** (`supabase/functions/get-page-{overview,narratives,
+  sentiment,platforms,themes}/index.ts` + `get-narrative-detail/index.ts`)
+  — each is `supabase/functions-shared-source/aggregated-metrics-service.ts`
+  copied verbatim plus a `Deno.serve` handler appended (Principle 5: no
+  cross-function imports even via a workspace package, see the package
+  note above). Handler does exactly what the spec's "Fluxo principal"
+  describes: reads the `Authorization` header, builds the Supabase client
+  with the **publishable key + forwarded JWT** (never the secret key —
+  the spec's explicit exception to Principle 5's usual pattern, so RLS
+  does the real org-isolation work), validates `organization_id`/`period`,
+  checks `organization_members` explicitly before calling the service
+  layer (401/400/403 per the spec's table), then calls
+  `assemblePageResponse(supabase, '<page>', context)`. **Not implemented
+  this round**: the 5-minute TTL page cache the spec also calls for — each
+  call recomputes live. Not a correctness gap (reads are already cheap,
+  official aggregates only), just an efficiency one — tracked as
+  `_pending.md` gap #21.
+- **`get-narrative-detail` has a bespoke addition beyond the shared
+  template**: `fetchNarrativeSummary()` — the detail page's header
+  (name/description/SOV/sentiment/momentum/velocity/risk badges) needs a
+  *single* Narrativa's data, but `narrative_detail` deliberately has no
+  `narratives` block in `PAGE_BLOCKS` (it's a list-shaped block, this page
+  wants one row). Resolved by attaching the extra to `ui_meta.narrative`
+  — exactly what `ui_meta` is for per the envelope spec ("dado que serve
+  só pra renderização"). This surfaced a **real bug in `get_narratives_table`**
+  fixed same day via migration `20260715000000`: the function accepted
+  `p_filters` in its signature but never read `filters.narratives` — every
+  other function in the module honors that filter via
+  `filter_category_ids()`, this one silently didn't. Fixed to respect it
+  (additive, `p_pauta_id`/no-filter behavior unchanged).
+- **`types/envelope.ts` doesn't exist for this UI layer**: the frontend
+  imports block/envelope types straight from `@reputation/shared-types`
+  (the workspace package from the earlier session) — `components/
+  intelligence-center/*`, `hooks/use-page-envelope.ts` etc. all `import
+  type { NarrativeRow, Breakdown, ... } from "@reputation/shared-types"`.
+- **`components/intelligence-center/`** — the shared UI layer reused
+  across all 5 pages, so no page reimplements table/badge/chart logic:
+  `header-context.tsx` (`IntelligenceCenterProvider` — organization list +
+  active org + period, the single source both `PageHeaderBar` and every
+  page's data fetch read from), `sidebar.tsx`, `page-header-bar.tsx`,
+  `score-badges.tsx` (Sentiment/Risk/Velocity/Momentum — reads the
+  `*_label` strings the backend already computed, only Momentum needed a
+  frontend band lookup since `sql-aggregation.md` never gave it a label
+  field like the other 3 — thresholds copied verbatim from
+  `executive-overview.md`/`_design-tokens.md`, not invented), `narratives-table.tsx`
+  (the reused 7-column table), `charts/breakdown-panel.tsx` (renders
+  `type: 'sentiment'` as proportional bars, `'platform'`/`'theme'` as a
+  score list — deliberately different visual per CLAUDE.md's earlier note
+  that `net_sentiment` must never look like the 3-way split),
+  `charts/trend-line-chart.tsx` (plain SVG polylines, no charting library
+  added — an unrequested new dependency isn't this session's call to
+  make), `authors-list.tsx`, `term-signals-list.tsx`,
+  `dissemination-graph.tsx` (list-based, not a force-directed layout — see
+  gap below), `insights-panel.tsx` (highlights/narrative_text — both
+  always empty today, `event-radar`/`ai-synthesis` don't exist yet, so
+  this renders an honest "not available yet" state rather than a bare
+  empty list), `widget-card.tsx` (the loading/error/empty wrapper every
+  widget uses).
+- **`hooks/use-page-envelope.ts`** — the one hook every page calls
+  (`usePageEnvelope('get-page-overview')`, `usePageEnvelope('get-narrative-detail',
+  { narrativeId })`, `usePageEnvelope('get-page-themes', { pautaId })`):
+  reads `organizationId`/`period` from `IntelligenceCenterProvider`,
+  calls `callFunction()`, 3-state (loading/error/loaded) per the
+  project-wide rule. `hooks/use-organizations.ts` is new too (parallel to
+  `use-user-profile.ts`) — organizations the user belongs to, for the
+  header's org selector.
+- **Shell/layout restructured mid-session** per a "Premissas de
+  shell/layout" addition to `intelligence-center/overview.md` (2026-07-15,
+  user-requested, landed in the specs while this session was already
+  building): menu always visible unless explicitly hidden (with an
+  obvious way back), responsive, menu/header/footer fixed across
+  navigation, one visual system. Led to two route-group layouts instead
+  of one: `app/(intelligence-center)/layout.tsx` (Sidebar + Provider +
+  footer + mobile top bar — wraps **everything** authenticated, not just
+  the 5 analytics pages) and a nested `app/(intelligence-center)/(analytics)/layout.tsx`
+  (just the "no organization yet" gate, scoped to the 5 pages that
+  actually need org/period context). `/admin/users` and `/perfil`
+  (previously siblings of `app/(intelligence-center)/`) were **moved**
+  into the outer group (`app/(intelligence-center)/admin/users/`,
+  `app/(intelligence-center)/perfil/`) so they get the same persistent
+  shell — URLs unchanged (route groups don't affect paths), verified via
+  `npm run build`'s route table. `Sidebar` gained a collapse toggle
+  (desktop: narrows to a `w-16` rail with a `»` reopen button; mobile:
+  becomes an overlay drawer behind a hamburger in a `lg:hidden` top bar)
+  — state lives in the layout itself, which the App Router never remounts
+  on navigation, so "persists between navigations" falls out for free
+  without localStorage/extra context. Exact responsive breakpoints aren't
+  confirmed against the original prototype (no layout breakpoints exist in
+  `_design-tokens.md`) — used Tailwind's standard `lg` cut, flagged as
+  `_pending.md` gap #15 rather than presented as validated.
+- **Every gap between what a page spec asks for and what
+  `sql-aggregation.md`'s 9 functions actually provide was left as an
+  honest `<EmptyState />` with an explanation, never quietly dropped or
+  faked with a mislabeled substitute** — full list in `_pending.md` gaps
+  #16–#20: `/narratives/[id]` opens as a full page, not the modal
+  `narratives-exploration.md` already decided on (intercepting routes
+  are real added complexity, deferred); Pautas' "narrativas dentro da
+  pauta" drill-down isn't wired to a click yet even though the backend
+  (`get_narratives_table`'s `p_pauta_id`) already supports it; 4 widgets on
+  `/platforms` and 2 on `/sentiment` have no backing SQL function
+  (per-platform volume-over-time, platform-specific dominant narratives,
+  per-platform propagation velocity, mention-level "destaque" cards,
+  per-Narrativa sentiment bars, "most influential mentions" list); detail
+  page's "Menções relevantes" and "Ações e decisões" stay empty (no
+  envelope block for a mentions list; `cases` has no migration yet, spec
+  explicitly allows this exact empty state).
+- **Verification**: `tsc --noEmit`, `eslint .`, and `npm run build` all
+  pass clean (route table confirms all 6 Edge Functions' pages and the
+  moved `/admin/users`/`/perfil` resolve at their original URLs). Also
+  smoke-tested via `npm run dev` + `curl`: `/` returns bare 200 (Hostinger
+  health check rule intact), every protected route 307s to
+  `/login?next=...` when unauthenticated, `/login` itself 200s — couldn't
+  verify the authenticated, data-loaded UI in an actual browser (no
+  browser automation available in this environment, no test credentials
+  supplied), so the widgets' real rendering against live Brandwatch data
+  is unverified beyond code review and the mocked-out state transitions.
+
 ## Directory structure
 
 ```
-app/                          Next.js App Router pages (auth: login,
-                               forgot-password, reset-password, admin/users)
+app/(intelligence-center)/    Every authenticated page (overview, narratives,
+                               sentiment, platforms, themes, admin/users, perfil)
+                               — shares one shell (Sidebar/header/footer), see
+                               layout.tsx; nested (analytics)/ route group adds
+                               the org-required gate for the 5 analytics pages only
+app/{login,forgot-password,reset-password}/   Public auth pages, outside the shell
+components/intelligence-center/   Shared UI for the 5 analytics pages (table,
+                               badges, charts, widget states) — see CLAUDE.md,
+                               "edge-functions-per-page.md + the 5
+                               intelligence-center pages"
+packages/shared-types/        @reputation/shared-types — npm workspace, the
+                               canonical envelope contract types for anything
+                               that can import a local package (Next.js/Node);
+                               Edge Functions can't (Principle 5), see below
 lib/supabase/{client,server}.ts   The only two files that import @supabase/ssr
 types/database.types.ts       Placeholder — regenerate once linked to a real project
 supabase/migrations/          One SQL file per logical schema change
 supabase/functions/<name>/    One self-sufficient Edge Function per directory
+supabase/functions-shared-source/   Canonical source Edge Functions copy from
+                               (never deployed itself — outside supabase/functions/
+                               and excluded from tsconfig.json on purpose)
 supabase/seed.sql             Intentionally empty — orgs/credentials are seeded manually
 .dev/specs/                   Spec-driven-dev source of truth (read before implementing)
 .claude/skills/               Project-specific skills (packaged as .skill zip files)

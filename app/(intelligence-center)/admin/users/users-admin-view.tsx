@@ -169,7 +169,7 @@ export function UsersAdminView() {
   }
 
   return (
-    <main className="min-h-screen bg-bg-page px-6 py-10">
+    <div className="px-6 py-10">
       <div className="mx-auto max-w-5xl">
         <div className="flex items-center justify-between">
           <div>
@@ -347,6 +347,6 @@ export function UsersAdminView() {
       )}
 
       {toast && <Toast type={toast.type} message={toast.message} />}
-    </main>
+    </div>
   );
 }

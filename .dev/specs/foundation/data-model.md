@@ -1,9 +1,16 @@
 ---
 tipo: data-model
 módulo: foundation
-status: pronto
-atualizado: 2026-07-11
+status: implementado
+atualizado: 2026-07-14
 ---
+
+> ✅ **Status corrigido 2026-07-14** (premissa do projeto, ver CLAUDE.md
+> "Close the loop"): schema em produção desde a migration
+> `20260707000000_foundation_schema.sql`, com dezenas de migrations
+> incrementais desde então (ver `CLAUDE.md`, "Brandwatch sync model") —
+> ficava marcado `pronto` por defasagem de tracking, não por estar
+> pendente.
 
 # Modelo de Dados — Foundation
 

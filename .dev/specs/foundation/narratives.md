@@ -2,11 +2,17 @@
 tipo: feature-spec
 módulo: foundation
 funcionalidade: narratives
-status: pronto
-atualizado: 2026-07-07
+status: implementado
+atualizado: 2026-07-14
 ---
 
 # Narratives
+
+> ✅ **Status corrigido 2026-07-14** (premissa do projeto, ver CLAUDE.md
+> "Close the loop"): `ensureNarrativesFromCategories()` em produção desde
+> 2026-07-10 (auto-seed de Category/Subcategory de topo), métricas via
+> `refresh_narrative_metrics()` agendada por `pg_cron` — ver `CLAUDE.md`,
+> "Brandwatch sync model", pro histórico completo.
 
 ## Objetivo
 

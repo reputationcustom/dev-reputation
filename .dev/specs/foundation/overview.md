@@ -1,11 +1,19 @@
 ---
 tipo: module-overview
 módulo: foundation
-status: pronto
-atualizado: 2026-07-06
+status: implementado
+atualizado: 2026-07-14
 ---
 
 # Módulo: Fundação (Sprint 1)
+
+> ✅ **Status corrigido 2026-07-14** (premissa do projeto: spec concluída
+> deve ficar `implementado`, ver CLAUDE.md "Close the loop"): este arquivo
+> ficava `pronto` mesmo com o módulo inteiro em produção desde
+> 2026-07-07/13 — defasagem de tracking, não do código. `sync-brandwatch`
+> está rodando via `pg_cron` (heartbeat 15min), `narratives` auto-semeadas
+> e com métricas agendadas — ver `CLAUDE.md`, "Brandwatch sync model", para
+> o histórico completo de implementação/bugs corrigidos.
 
 ## Objetivo
 

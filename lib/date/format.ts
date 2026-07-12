@@ -1,5 +1,5 @@
 import { formatInTimeZone, toZonedTime, fromZonedTime } from "date-fns-tz";
-import { differenceInCalendarDays, startOfMonth, endOfMonth, subMonths } from "date-fns";
+import { differenceInCalendarDays, startOfMonth, endOfMonth, subMonths, subDays } from "date-fns";
 
 // Fuso horário do usuário (CLAUDE.md, "Fuso horário do usuário"): datas são
 // sempre armazenadas em UTC (timestamptz) — a conversão pro fuso de exibição
@@ -52,5 +52,31 @@ export function getMonthRange(
   return {
     start: fromZonedTime(startOfMonth(targetMonth), timezone),
     end: fromZonedTime(endOfMonth(targetMonth), timezone),
+  };
+}
+
+/**
+ * Janela de N dias (inclusive, terminando "hoje" no fuso do usuário) como
+ * datas planas `yyyy-MM-dd` — o formato que os `period.start`/`period.end`
+ * do envelope (`aggregated-metrics/standard-json-envelope.md`) esperam
+ * (colunas `date` no Postgres, não `timestamptz`). Usado pelo seletor de
+ * período global (7/14/30 dias, `intelligence-center/executive-overview.md`,
+ * "Header") — "hoje" é sempre calculado no fuso do usuário, nunca no fuso
+ * do servidor, mesma disciplina de `getMonthRange`.
+ */
+export function getLastNDaysRange(
+  days: number,
+  timezone: string = DEFAULT_TIMEZONE,
+  reference: Date = new Date(),
+): { start: string; end: string } {
+  const zonedToday = toZonedTime(reference, timezone);
+  const zonedStart = subDays(zonedToday, days - 1);
+
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const toDateString = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+
+  return {
+    start: toDateString(zonedStart),
+    end: toDateString(zonedToday),
   };
 }

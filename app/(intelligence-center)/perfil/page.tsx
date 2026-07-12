@@ -50,7 +50,7 @@ export default function PerfilPage() {
   }
 
   return (
-    <main className="min-h-screen bg-bg-page px-6 py-10">
+    <div className="px-6 py-10">
       <div className="mx-auto max-w-lg">
         <h1 className="text-xl font-bold text-text-primary">Perfil</h1>
         <p className="mt-1 text-sm text-text-secondary">Preferências da sua conta.</p>
@@ -103,6 +103,6 @@ export default function PerfilPage() {
       </div>
 
       {toast && <Toast type={toast.type} message={toast.message} />}
-    </main>
+    </div>
   );
 }

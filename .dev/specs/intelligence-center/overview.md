@@ -2,7 +2,7 @@
 tipo: module-overview
 módulo: intelligence-center
 status: pronto
-atualizado: 2026-07-12
+atualizado: 2026-07-15
 ---
 
 # Módulo: Intelligence Center (Sprint 2)
@@ -63,6 +63,68 @@ detalhe técnico, transparente ao usuário (pedido explícito, ver
 mais de uma Query, os dados de todas são combinados automaticamente.
 Trocar organização reescopa os dados de **toda** a navegação, não só da
 página atual.
+
+## Premissas de shell/layout (2026-07-15)
+
+Regras adicionadas a pedido do usuário, para toda a implementação de
+frontend deste módulo (e qualquer módulo futuro que reutilize o mesmo
+shell — ex: `event-radar`/`decision-center` nas Sprints 3/4). Não são só
+sobre o Intelligence Center: cobrem a experiência de navegação da
+aplicação inteira pós-login, então também valem para páginas hoje fora
+deste módulo (`/admin/users`, `/perfil`) — ver gap ⚠️ abaixo.
+
+1. **Menu sempre visível, exceto se o usuário ocultá-lo explicitamente.**
+   O menu lateral (`Sidebar`) faz parte do shell padrão de toda página
+   autenticada — não é algo que cada página decide mostrar ou não. Se o
+   usuário oculta o menu, a UI precisa oferecer uma forma óbvia de
+   reabri-lo (ex: um rail/botão fixo no lugar onde o menu estava) — nunca
+   um estado sem saída que exija recarregar a página ou navegar para
+   fora. O estado (aberto/oculto) deve persistir entre navegações dentro
+   da sessão (ver item 3) — não voltar a "aberto" a cada troca de página.
+2. **Toda a solução é responsiva**, seguindo o comportamento do protótipo
+   "Comunicação Inteligente" (mesma fonte de `_design-tokens.md`) em
+   telas menores — não só as 5 páginas de `intelligence-center`, qualquer
+   tela nova do produto. ⚠️ **Breakpoints exatos não estão confirmados**:
+   o protótipo (`claude.ai/design`) não documenta valores de breakpoint
+   explícitos em nenhum artefato já trazido para os specs (`_design-tokens.md`
+   cobre cor/tipografia, não layout responsivo) — usar convenção padrão
+   Tailwind (`sm`/`md`/`lg`/`xl`) e validar contra o protótipo real
+   quando a implementação dessa página específica acontecer, em vez de
+   inventar um valor de breakpoint como se fosse confirmado.
+3. **Menu, header e footer são fixos — nunca recarregam ao navegar entre
+   páginas.** Já é o comportamento estrutural do App Router quando o
+   shell vive num `layout.tsx` de route group (só o `children` troca,
+   `Sidebar`/header não desmontam) — `app/(intelligence-center)/layout.tsx`
+   já segue esse padrão para as 5 páginas do módulo. Essa é a razão
+   técnica por trás da regra, não uma opção de implementação: qualquer
+   nova página autenticada deve entrar dentro do mesmo route group (ou
+   um irmão que reuse o mesmo shell), nunca montar um layout próprio que
+   remonte o menu a cada navegação.
+4. **Padrão visual único em toda a solução**, sempre a partir de
+   `_design-tokens.md` — nenhuma tela redefine cor/tipografia própria
+   (mesma regra que "Onde isso se aplica" de `_design-tokens.md` já
+   registra para Sprint 2, agora explícita como premissa de todo o
+   frontend, não só das 5 páginas já especificadas).
+5. **Toda decisão de navegação prioriza a melhor experiência para o
+   usuário** — ao especificar uma página nova ou um fluxo novo, a
+   navegação (onde um link leva, quantos cliques, o que fica visível sem
+   scroll) é parte do design da funcionalidade, não um detalhe deixado
+   para a implementação decidir livremente.
+
+⚠️ **Gap real na implementação atual, encontrado ao registrar esta
+premissa**: `app/(intelligence-center)/layout.tsx` já implementa os itens
+1 e 3 para as 5 páginas do módulo (`Sidebar` compartilhada, shell não
+remonta ao navegar) — mas `/admin/users` e `/perfil` (módulo `auth`) vivem
+fora desse route group (`app/admin/users/page.tsx`, `app/perfil/page.tsx`
+são irmãos de `app/(intelligence-center)/`, não filhos), então hoje **não
+têm** o menu lateral, apesar de `Sidebar` linkar para ambos
+(`components/intelligence-center/sidebar.tsx`, itens "Administração" e
+"Perfil"). Nem `Sidebar` nem o shell têm hoje: estado de
+ocultar/reabrir menu (item 1), footer (item 3, nenhum existe ainda), ou
+tratamento de breakpoint responsivo (item 2, `w-60` fixo, sem colapso em
+telas estreitas). Tratar como gap técnico a fechar antes deste módulo
+poder ser considerado `implementado` — não é uma decisão em aberto, é
+trabalho especificado aqui esperando implementação (ver `_pending.md`).
 
 ## Gaps de dados — resolvidos em 2026-07-12
 
