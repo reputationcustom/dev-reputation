@@ -41,7 +41,7 @@ export default function ThemesPage() {
           <NarrativesTable rows={envelope?.narratives ?? []} />
         </WidgetCard>
 
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
           <WidgetCard title="Autores e comunidades por pauta" status={status} onRetry={retry}>
             <AuthorsList authors={envelope?.authors ?? []} />
           </WidgetCard>

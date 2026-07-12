@@ -84,13 +84,18 @@ deste módulo (`/admin/users`, `/perfil`) — ver gap ⚠️ abaixo.
 2. **Toda a solução é responsiva**, seguindo o comportamento do protótipo
    "Comunicação Inteligente" (mesma fonte de `_design-tokens.md`) em
    telas menores — não só as 5 páginas de `intelligence-center`, qualquer
-   tela nova do produto. ⚠️ **Breakpoints exatos não estão confirmados**:
-   o protótipo (`claude.ai/design`) não documenta valores de breakpoint
-   explícitos em nenhum artefato já trazido para os specs (`_design-tokens.md`
-   cobre cor/tipografia, não layout responsivo) — usar convenção padrão
-   Tailwind (`sm`/`md`/`lg`/`xl`) e validar contra o protótipo real
-   quando a implementação dessa página específica acontecer, em vez de
-   inventar um valor de breakpoint como se fosse confirmado.
+   tela nova do produto. ✅ **Breakpoint confirmado (2026-07-12)**: o
+   protótipo real (`claude.ai/design`, arquivo `Comunicacao
+   Inteligente.dc.html`) foi importado via `DesignSync` e seu próprio
+   script confirma `window.innerWidth < 900` como o corte
+   sidebar↔rail↔drawer-mobile — não o `lg` (1024px) padrão Tailwind usado
+   até então. `tailwind.config.ts` ganhou `theme.extend.screens.shell =
+   '900px'` (estende a escala padrão, não substitui) e
+   `app/(intelligence-center)/layout.tsx` usa `shell:` no lugar de `lg:`
+   para essa troca específica. Ver CLAUDE.md, "Prototype-parity pass on
+   `intelligence-center`" para a lista completa de divergências
+   corrigidas na mesma sessão (rail colapsado, `PageHeaderBar` ausente em
+   `/narratives/[id]`, toggle "Filtros" ausente, grids sem passo `md:`).
 3. **Menu, header e footer são fixos — nunca recarregam ao navegar entre
    páginas.** Já é o comportamento estrutural do App Router quando o
    shell vive num `layout.tsx` de route group (só o `children` troca,

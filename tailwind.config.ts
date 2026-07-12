@@ -7,6 +7,12 @@ const config: Config = {
   ],
   theme: {
     extend: {
+      // Sidebar/mobile-topbar switch point — confirmed against the original
+      // claude.ai/design prototype (`window.innerWidth < 900`), see CLAUDE.md.
+      // Extends (doesn't replace) Tailwind's stock sm/md/lg/xl/2xl scale.
+      screens: {
+        shell: "900px",
+      },
       fontFamily: {
         sans: ["var(--font-manrope)", "system-ui", "sans-serif"],
       },

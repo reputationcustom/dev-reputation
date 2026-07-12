@@ -22,7 +22,7 @@ export default function OverviewPage() {
       <PageHeaderBar title="Visão Geral" subtitle="O que está acontecendo agora, de relance." />
 
       <div className="flex flex-col gap-6 p-8">
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5">
           {status === "loading" &&
             Array.from({ length: 5 }).map((_, index) => (
               <div key={index} className="h-24 animate-pulse rounded-xl bg-border-subtle-2" />
@@ -31,8 +31,8 @@ export default function OverviewPage() {
             envelope!.metrics.map((metric) => <MetricCard key={metric.key} metric={metric} />)}
         </div>
 
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-          <div className="lg:col-span-2">
+        <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
+          <div className="md:col-span-2 lg:col-span-2">
             <WidgetCard title="Volume e sentimento ao longo do tempo" status={status} onRetry={retry}>
               <TrendLineChart
                 trend={envelope?.trends[0]}

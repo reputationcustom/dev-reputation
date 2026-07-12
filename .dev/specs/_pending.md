@@ -91,7 +91,6 @@ na época. Itens #2/#3 resolvidos na mesma data (ver acima).
 | 9 | `aggregated-metrics` | Breakdown por região/localização (`breakdowns` tipo `'region'`, pedido em `narrative_detail`/`sentiment`) — `bw_query_demographics_daily` existe (`foundation/data-model.md`) mas nenhuma function SQL do tipo `get_region_breakdown` foi especificada em `sql-aggregation.md`. `fetchOneBreakdown('region', ...)` na service layer já loga e retorna `null` (não quebra o envelope), só falta a function+wiring quando alguém confirmar o desenho (que dimensão de localização — país/estado/cidade? — e qual métrica exibir) | [aggregated-metrics/sql-aggregation.md](aggregated-metrics/sql-aggregation.md) |
 | 10 | `aggregated-metrics` | Trend "volume por plataforma ao longo do tempo" (`platforms`) e "SOV por pauta ao longo do tempo" (`themes`) — `block-mapping-per-page.md` pede os dois, mas `sql-aggregation.md`'s `get_volume_trend` só cobre volume/sentimento geral, sem quebra por plataforma/pauta ao longo de uma série temporal (só como snapshot estático via `get_platform_breakdown`/`get_theme_breakdown`). `fetchTrends()` na service layer já loga e retorna `[]` pra essas 2 páginas em vez de inventar uma série | [aggregated-metrics/sql-aggregation.md](aggregated-metrics/sql-aggregation.md) |
 | 11 | `aggregated-metrics` | `authors[].risk_level` sempre `null` — diferente de `narratives` (que tem a fórmula completa "Scores de Narrativa"), nenhuma spec define como calcular risco por autor individual. `get_authors_ranking` retorna `null` de propósito até uma spec futura definir a fórmula | [aggregated-metrics/sql-aggregation.md](aggregated-metrics/sql-aggregation.md) |
-| 15 | `intelligence-center` | Breakpoints responsivos exatos não confirmados contra o protótipo real (`_design-tokens.md` não documenta layout) — a implementação de 2026-07-15 usa a convenção padrão Tailwind (`lg` como corte mobile/desktop) como aproximação razoável, não um valor validado | [intelligence-center/overview.md](intelligence-center/overview.md), "Premissas de shell/layout" |
 | 16 | `intelligence-center` | `/narratives/[id]` abre como página cheia, não como modal via intercepting route — `narratives-exploration.md` já tinha decidido por modal (2026-07-12, `(.)narratives/[id]`); não é uma decisão em aberto, é uma simplificação de implementação (2026-07-15) por causa do volume de trabalho da sessão. A rota funciona e navega corretamente, só não abre sobre a lista como a spec pede | [intelligence-center/narratives-exploration.md](intelligence-center/narratives-exploration.md), "Fluxo principal" item 5 |
 | 17 | `intelligence-center` | Pautas Eleitorais (`/themes`): drill-down "narrativas dentro da pauta" (clicar numa Pauta → só as Narrativas-filhas, via `get-page-themes` com `pauta_id`) não está interativo — o backend já suporta (`get_narratives_table`'s `p_pauta_id`), só falta a UI de seleção; a tabela hoje mostra Pautas e Narrativas-filhas juntas, sem distinguir (bloco `narratives` do envelope não expõe a hierarquia `bw_categories.parent_id`) | [intelligence-center/electoral-themes.md](intelligence-center/electoral-themes.md) |
 | 18 | `intelligence-center`/`platform-analysis` | 4 widgets de `/platforms` sem fonte de dado (nenhuma function SQL cobre): evolução do volume por plataforma ao longo do tempo, narrativas dominantes especificamente por plataforma, velocidade de propagação por plataforma (variação % entre períodos por `page_type`), conteúdos de destaque (cards de mentions individuais) — todos renderizados como `<EmptyState />` explicando o motivo, não omitidos silenciosamente | [intelligence-center/platform-analysis.md](platform-analysis.md) |
@@ -112,8 +111,36 @@ concluído, mesmo tipo de defasagem já corrigida antes para itens de
 navegar). Sidebar ganhou colapso/expansão («»/mobile drawer) persistente
 entre navegações (estado vive no layout, que não remonta — App Router).
 Footer mínimo adicionado. Restam itens #15 (breakpoint exato não
-confirmado) — ver linha acima; o resto do item #12 original (menu
-ocultável com forma óbvia de reabrir, shell fixo) está feito.
+confirmado, ver nota abaixo — resolvido) — o resto do item #12 original
+(menu ocultável com forma óbvia de reabrir, shell fixo) está feito.
+
+✅ **Item #15 resolvido (2026-07-12)**: o protótipo real
+(`claude.ai/design`, projeto "Protótipo frontend design", arquivo
+`Comunicacao Inteligente.dc.html`) foi importado via `DesignSync` e
+confere o breakpoint exato — `window.innerWidth < 900`, não o `lg`
+(1024px) padrão do Tailwind usado na implementação de 2026-07-15.
+Corrigido: `tailwind.config.ts` ganhou `theme.extend.screens.shell =
+'900px'` (estende, não substitui, a escala padrão `sm/md/lg/xl/2xl`) e
+`app/(intelligence-center)/layout.tsx` passou a usar `shell:`/`hidden
+shell:flex` no lugar de `lg:`/`hidden lg:flex` para a troca
+sidebar↔rail↔drawer-mobile. Mesma sessão também corrigiu 3 outras
+divergências reais achadas na comparação com o protótipo: (1) o rail
+colapsado do desktop mostrava a primeira letra do label de cada item
+(`label.charAt(0)`) em vez de um dot — `Sidebar` agora renderiza um dot
+de 8px com `title`/tooltip, igual ao protótipo; (2) a barra de
+organização/período/Filtros (`PageHeaderBar`) não aparecia em
+`/narratives/[id]`, único lugar sem ela — agora está presente como em
+todas as outras páginas do protótipo; (3) o botão "Filtros" com o painel
+de chips (Plataforma/Idioma/Região/Sentimento/Narrativa/Pauta/Tipo de
+autor/Alcance/Nível de risco) não existia — adicionado a
+`PageHeaderBar` como estado local, presentacional (sem `onClick` nos
+chips, igual ao próprio protótipo — não é filtragem real, o backend só
+resolve `filters.narratives` hoje). Também adicionado um passo `md:`
+(768px) em todo grid de conteúdo que pulava direto de `grid-cols-1` para
+`lg:grid-cols-2/3/4/5` nas 5 páginas de análise — no tablet (768–1023px)
+essas seções ficavam forçadas a uma coluna só / cards de KPI
+espremidos em 2 colunas, quando o protótipo (baseado em
+`flex:1 1 <basis>px` + `flex-wrap`) já reflui bem antes de 1024px.
 
 ## Referências
 

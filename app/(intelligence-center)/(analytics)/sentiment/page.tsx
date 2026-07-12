@@ -24,21 +24,21 @@ export default function SentimentPage() {
       <PageHeaderBar title="Análise de Sentimento" subtitle="Distribuição, evolução e drivers do sentimento." />
 
       <div className="flex flex-col gap-6 p-8">
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+        <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
           <WidgetCard title="Distribuição geral" status={status} onRetry={retry}>
             <BreakdownPanel
               breakdown={envelope?.breakdowns.find((b) => b.type === "sentiment")}
               emptyMessage="Nenhum dado de sentimento ainda."
             />
           </WidgetCard>
-          <div className="lg:col-span-2">
+          <div className="md:col-span-2 lg:col-span-2">
             <WidgetCard title="Evolução temporal do sentimento" status={status} onRetry={retry}>
               <TrendLineChart trend={envelope?.trends[0]} emptyMessage="Nenhum dado de evolução ainda." />
             </WidgetCard>
           </div>
         </div>
 
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
           <WidgetCard title="Sentimento por plataforma" status={status} onRetry={retry}>
             <BreakdownPanel
               breakdown={envelope?.breakdowns.find((b) => b.type === "platform")}

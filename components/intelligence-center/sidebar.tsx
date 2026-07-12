@@ -17,18 +17,34 @@ function NavLink({ href, label, collapsed, onNavigate }: { href: string; label: 
   const pathname = usePathname();
   const active = pathname === href || pathname.startsWith(`${href}/`);
 
+  // Collapsed (rail) mode: a single dot, not a truncated label — matches the
+  // prototype's rail (48px, `width:8px;height:8px;border-radius:50%` dots),
+  // avoids the earlier bug where a nav item collapsed to a single letter.
+  if (collapsed) {
+    return (
+      <Link
+        href={href}
+        onClick={onNavigate}
+        title={label}
+        aria-label={label}
+        className="flex items-center justify-center rounded-md py-2.5 transition-colors hover:bg-bg-sidebar-active"
+      >
+        <span className={`h-2 w-2 rounded-full ${active ? "bg-accent-blue" : "bg-text-sidebar-inactive"}`} />
+      </Link>
+    );
+  }
+
   return (
     <Link
       href={href}
       onClick={onNavigate}
-      title={collapsed ? label : undefined}
       className={`block truncate rounded-md px-3 py-2 text-sm font-medium transition-colors ${
         active
           ? "bg-bg-sidebar-active text-white"
           : "text-text-sidebar-inactive hover:bg-bg-sidebar-active hover:text-white"
       }`}
     >
-      {collapsed ? label.charAt(0) : label}
+      {label}
     </Link>
   );
 }

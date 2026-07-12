@@ -3,6 +3,7 @@
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { usePageEnvelope } from "@/hooks/use-page-envelope";
+import { PageHeaderBar } from "@/components/intelligence-center/page-header-bar";
 import { WidgetCard } from "@/components/intelligence-center/widget-card";
 import { BreakdownPanel } from "@/components/intelligence-center/charts/breakdown-panel";
 import { TrendLineChart } from "@/components/intelligence-center/charts/trend-line-chart";
@@ -49,19 +50,25 @@ export default function NarrativeDetailPage() {
 
   if (status === "loading") {
     return (
-      <div className="flex flex-1 items-center justify-center">
-        <Spinner className="h-6 w-6 text-accent-blue" />
-      </div>
+      <>
+        <PageHeaderBar title="Detalhe da Narrativa" />
+        <div className="flex flex-1 items-center justify-center">
+          <Spinner className="h-6 w-6 text-accent-blue" />
+        </div>
+      </>
     );
   }
 
   if (status === "error") {
     return (
-      <div className="flex flex-1 items-center justify-center px-4">
-        <div className="w-full max-w-md">
-          <ErrorMessage message="Não foi possível carregar esta Narrativa." onRetry={retry} />
+      <>
+        <PageHeaderBar title="Detalhe da Narrativa" />
+        <div className="flex flex-1 items-center justify-center px-4">
+          <div className="w-full max-w-md">
+            <ErrorMessage message="Não foi possível carregar esta Narrativa." onRetry={retry} />
+          </div>
         </div>
-      </div>
+      </>
     );
   }
 
@@ -69,14 +76,19 @@ export default function NarrativeDetailPage() {
 
   if (!summary) {
     return (
-      <div className="flex flex-1 items-center justify-center">
-        <EmptyState message="Narrativa não encontrada." />
-      </div>
+      <>
+        <PageHeaderBar title="Detalhe da Narrativa" />
+        <div className="flex flex-1 items-center justify-center">
+          <EmptyState message="Narrativa não encontrada." />
+        </div>
+      </>
     );
   }
 
   return (
-    <div className="flex flex-col gap-6 p-8">
+    <>
+      <PageHeaderBar title={summary.title} />
+      <div className="flex flex-col gap-6 p-8">
       <div>
         <Link href="/narratives" className="text-sm font-medium text-accent-blue hover:underline">
           ← Voltar para Narrativas
@@ -91,7 +103,7 @@ export default function NarrativeDetailPage() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
         <div className="rounded-xl border border-border-default bg-bg-card p-5">
           <p className="text-xs font-medium uppercase tracking-wide text-text-tertiary">Momentum (crescimento)</p>
           <div className="mt-2">
@@ -133,7 +145,7 @@ export default function NarrativeDetailPage() {
         />
       </WidgetCard>
 
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
         <WidgetCard title="Sentimento e plataforma" status={status} onRetry={retry}>
           <div className="flex flex-col gap-4">
             <BreakdownPanel
@@ -163,6 +175,7 @@ export default function NarrativeDetailPage() {
       <WidgetCard title="Ações e decisões" status={status} onRetry={retry}>
         <EmptyState message="Nenhuma ação registrada ainda." />
       </WidgetCard>
-    </div>
+      </div>
+    </>
   );
 }

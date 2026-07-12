@@ -21,12 +21,12 @@ export default function IntelligenceCenterLayout({ children }: { children: React
   return (
     <IntelligenceCenterProvider>
       <div className="flex min-h-screen bg-bg-page">
-        <div className="hidden lg:flex">
+        <div className="hidden shell:flex">
           <Sidebar collapsed={sidebarCollapsed} onToggleCollapse={() => setSidebarCollapsed((v) => !v)} />
         </div>
 
         {mobileMenuOpen && (
-          <div className="fixed inset-0 z-40 flex lg:hidden">
+          <div className="fixed inset-0 z-40 flex shell:hidden">
             <div className="absolute inset-0 bg-black/40" onClick={() => setMobileMenuOpen(false)} />
             <div className="relative z-10">
               <Sidebar collapsed={false} onToggleCollapse={() => setMobileMenuOpen(false)} onNavigate={() => setMobileMenuOpen(false)} />
@@ -35,16 +35,19 @@ export default function IntelligenceCenterLayout({ children }: { children: React
         )}
 
         <div className="flex min-w-0 flex-1 flex-col">
-          <div className="flex items-center justify-between border-b border-border-default bg-bg-card px-4 py-3 lg:hidden">
-            <span className="text-sm font-bold text-text-primary">Digital Intelligent Communication</span>
+          <div className="flex items-center gap-3 border-b border-border-default bg-bg-card px-4 py-3 shell:hidden">
             <button
               type="button"
               onClick={() => setMobileMenuOpen(true)}
               aria-label="Abrir menu"
-              className="rounded-md border border-border-default px-3 py-1.5 text-sm text-text-primary"
+              className="flex flex-shrink-0 flex-col justify-between gap-[3px] rounded-md p-2"
             >
-              Menu
+              <span className="block h-[2.5px] w-[22px] rounded-full bg-text-primary" />
+              <span className="block h-[2.5px] w-[22px] rounded-full bg-text-primary" />
+              <span className="block h-[2.5px] w-[22px] rounded-full bg-text-primary" />
             </button>
+            <div className="h-[26px] w-[26px] flex-shrink-0 rounded-[7px] rounded-bl-sm bg-accent-blue" />
+            <span className="text-sm font-bold text-text-primary">Digital Intelligent Communication</span>
           </div>
 
           <main className="flex min-w-0 flex-1 flex-col">{children}</main>

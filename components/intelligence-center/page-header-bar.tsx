@@ -9,6 +9,23 @@ import { PERIOD_MODE_OPTIONS, useIntelligenceCenterHeader } from "./header-conte
 // intelligence-center/executive-overview.md, "Header"). Especificado uma
 // única vez, reusado pelas 5 páginas via IntelligenceCenterProvider — sem
 // seletor de Query (pedido explícito do usuário, ver mesma spec).
+// Chips presentacionais, mesmo conjunto do protótipo original — sem
+// onClick de propósito: o protótipo em si não tem filtragem real nesses
+// chips, e o backend (sql-aggregation.md) só resolve `filters.narratives`
+// hoje. Reproduzir a afordância de navegação sem inventar filtragem que
+// não existe (Princípio 2 — sem lógica de negócio no frontend).
+const FILTRO_CHIPS = [
+  "Plataforma",
+  "Idioma",
+  "Região",
+  "Sentimento",
+  "Narrativa",
+  "Pauta",
+  "Tipo de autor",
+  "Alcance",
+  "Nível de risco",
+];
+
 export function PageHeaderBar({ title, subtitle }: { title: string; subtitle?: string }) {
   const {
     organizations,
@@ -21,6 +38,7 @@ export function PageHeaderBar({ title, subtitle }: { title: string; subtitle?: s
     customRange,
     setCustomRange,
   } = useIntelligenceCenterHeader();
+  const [filtrosOpen, setFiltrosOpen] = useState(false);
 
   return (
     <div className="flex flex-col gap-4 border-b border-border-default bg-bg-card px-8 py-5">
@@ -69,8 +87,32 @@ export function PageHeaderBar({ title, subtitle }: { title: string; subtitle?: s
           {periodMode === "custom" && (
             <CustomRangePicker range={customRange} onChange={setCustomRange} />
           )}
+
+          <button
+            type="button"
+            onClick={() => setFiltrosOpen((current) => !current)}
+            className="rounded-md border border-border-default px-3 py-2 text-sm font-semibold text-text-primary hover:bg-bg-page"
+          >
+            Filtros {filtrosOpen ? "▲" : "▼"}
+          </button>
         </div>
       </div>
+
+      {filtrosOpen && (
+        <div className="flex flex-col gap-2 rounded-md border border-border-default bg-bg-page p-4">
+          <p className="text-xs font-semibold text-text-secondary">FILTROS AVANÇADOS</p>
+          <div className="flex flex-wrap gap-2">
+            {FILTRO_CHIPS.map((label) => (
+              <span
+                key={label}
+                className="rounded-full bg-bg-card px-3 py-1.5 text-xs font-medium text-text-secondary"
+              >
+                {label}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

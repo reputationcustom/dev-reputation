@@ -1549,6 +1549,83 @@ also switched `.single()` → `.maybeSingle()` as defense-in-depth (avoids a
 raw 406 if this invariant is ever violated again; behavior for the caller
 is unchanged, `!data` already routed to the error state either way).
 
+### Prototype-parity pass on `intelligence-center` (2026-07-12)
+
+User request: review the 5 analytics screens against the original design
+prototype and fix navigability, responsiveness, and mis-sized elements.
+Until this session, the real prototype had never actually been consulted —
+the 2026-07-15 shell/layout work (see above) explicitly flagged its `lg:`
+(1024px) sidebar breakpoint as "not confirmed against the original
+prototype (no layout breakpoints exist in `_design-tokens.md`)",
+`_pending.md` gap #15. This session imported the prototype for real via the
+`DesignSync` MCP tool (`claude.ai/design` project "Protótipo frontend
+design", file `Comunicacao Inteligente.dc.html`, a `.dc.html`
+component-language mock with its own `data-dc-script` state logic — decoded
+in full, not guessed from a screenshot) and diffed it line-by-line against
+the current implementation. Found and fixed 6 real gaps, all
+presentation-layer only (no backend/envelope changes, Principle 2):
+
+- **Breakpoint confirmed at 900px, not 1024px.** The prototype's own script
+  switches sidebar↔rail↔mobile-drawer at `window.innerWidth < 900`.
+  `tailwind.config.ts` gained `theme.extend.screens.shell = '900px'`
+  (extends, doesn't replace, the standard `sm/md/lg/xl/2xl` scale — every
+  other breakpoint in the app is untouched); `app/(intelligence-center)/layout.tsx`
+  now uses `shell:`/`hidden shell:flex` instead of `lg:`/`hidden lg:flex`
+  for the sidebar/mobile-topbar switch. Resolves `_pending.md` gap #15.
+- **Collapsed sidebar was showing `label.charAt(0)`** (nav items became
+  single clickable letters — "V", "N", "S", "P" — a real sizing/UX defect,
+  not a rail). Prototype collapses to a slim 48px rail of colored dots with
+  tooltips. `components/intelligence-center/sidebar.tsx`'s `NavLink` now
+  renders a `h-2 w-2` dot + `title` tooltip when `collapsed`, same
+  click-to-navigate behavior.
+- **Mobile top bar** swapped its plain "Menu" text button for a 3-bar
+  hamburger icon + logo mark, matching the prototype's `showMobileTopbar`
+  markup — same `onClick`/`aria-label`, just recognizable iconography
+  instead of a text button.
+- **`/narratives/[id]` was the only page missing `PageHeaderBar`** (org
+  selector + period tabs + date range). In the prototype, that header row
+  sits above every page's content, `isDetailPage` included — a real
+  navigability regression, since a user had to leave the detail page to
+  change org/period. Added `<PageHeaderBar title={...} />` to all 4 states
+  of `narratives/[id]/page.tsx` (loading/error/not-found/loaded).
+- **"Filtros avançados" toggle was entirely absent.** The prototype has a
+  `Filtros ▾` button that expands a chip row (Plataforma/Idioma/Região/
+  Sentimento/Narrativa/Pauta/Tipo de autor/Alcance/Nível de risco). Added to
+  `PageHeaderBar` as local `useState` — **presentational only**, chips have
+  no `onClick`, exactly matching the prototype's own mock (confirmed from
+  its script: those chips were never wired to anything there either) — the
+  real backend (`sql-aggregation.md`) only resolves `filters.narratives`
+  today, so wiring real filtering would have meant inventing backend
+  behavior the spec doesn't define, not just copying the prototype.
+- **Tablet-width grids (768–1023px) collapsed to single/double column too
+  aggressively.** The prototype's cards use `flex:1 1 <basis>px` +
+  `flex-wrap`, which reflows to multiple columns well before 1024px.
+  Current grids jumped straight from `grid-cols-1` to `lg:grid-cols-2/3`
+  with no `md:` step, forcing the entire tablet range into single-column
+  stacking (`sentiment`/`platforms`/`themes` pages, the Overview
+  trend+breakdown row) or oversized 2-column KPI cards (Overview's 5-card
+  KPI row, narrative-detail's 4-card stat row). Added a `md:` step to every
+  such grid across `overview/page.tsx`, `narratives/[id]/page.tsx`,
+  `sentiment/page.tsx`, `platforms/page.tsx`, `themes/page.tsx`.
+
+**Not changed** — already matched the prototype: `NarrativesTable`'s
+`overflow-x-auto` + `min-w-[760px]` pattern, `TrendLineChart`'s `viewBox` +
+`w-full` proportional SVG scaling, `DonutChart`'s fixed 160×160 + `sm:flex-row`
+legend arrangement.
+
+**Verification gap, same limitation as 2026-07-15's note above**: `npm run
+build` passes clean (typecheck + lint + all 14 routes). No browser
+automation (`chromium-cli`, Playwright) is available in this environment,
+and this session had no Supabase test credentials, so the actual
+authenticated, data-loaded UI (where every one of these changes actually
+renders — sidebar, header, grids) could not be visually verified in a real
+browser. Confirmed via `curl` against `npm run dev` that public routes (`/`,
+`/login`) still 200, protected routes still 307-redirect to `/login`
+(Hostinger health-check rule intact), and no server-side runtime errors on
+any of the 6 changed routes. A follow-up session with either browser
+automation or test credentials should do a real visual pass before this is
+considered fully verified.
+
 ## Directory structure
 
 ```
