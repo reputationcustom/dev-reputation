@@ -1,0 +1,16 @@
+
+> reputation-os@0.1.0 dev
+> next dev
+
+   ▲ Next.js 15.5.20
+   - Local:        http://localhost:3000
+   - Network:      http://10.0.5.150:3000
+   - Environments: .env.local
+
+ ✓ Starting...
+ ✓ Ready in 1464ms
+ ○ Compiling /middleware ...
+ ✓ Compiled /middleware in 1979ms (169 modules)
+ ○ Compiling /login ...
+ ✓ Compiled /login in 8.8s (742 modules)
+ GET /login 200 in 9839ms

@@ -14,6 +14,21 @@ export function formatDate(date: Date | string, timezone: string = DEFAULT_TIMEZ
   return formatInTimeZone(date, timezone, "dd/MM/yyyy");
 }
 
+/**
+ * Reformata uma data "yyyy-MM-dd" pura (sem componente de hora — ex:
+ * `period.start`/`period.end` do envelope, uma coluna `date` do Postgres,
+ * não `timestamptz`) para `dd/MM/yyyy` via split de string, nunca via
+ * `new Date(...)`/fuso horário — não há hora/fuso a converter aqui, e
+ * tratar essa string como um instante (via `formatDate`) arriscaria um
+ * bug de off-by-one dependendo de como o parser ISO interpreta a
+ * ausência de 'Z' (mesma classe de bug que motivou toda a disciplina de
+ * fuso deste arquivo).
+ */
+export function formatDateOnly(isoDate: string): string {
+  const [year, month, day] = isoDate.split("-");
+  return `${day}/${month}/${year}`;
+}
+
 /** Datas com hora: dd/MM/yyyy HH:mm */
 export function formatDateTime(date: Date | string, timezone: string = DEFAULT_TIMEZONE): string {
   return formatInTimeZone(date, timezone, "dd/MM/yyyy HH:mm");

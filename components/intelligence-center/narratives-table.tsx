@@ -93,8 +93,9 @@ export function NarrativesTable({
               } ${selectedId === row.id ? "bg-accent-blue-bg" : ""}`}
             >
               <td className="px-4 py-3 font-medium text-text-primary">{row.title}</td>
+              {/* 0 tratado como "—", igual a null (overview.md, "Premissas de visualização de dados", regra 5) */}
               <td className="px-4 py-3 text-text-secondary">
-                {row.sov_pct === null ? "—" : `${row.sov_pct}%`}
+                {row.sov_pct === null || row.sov_pct === 0 ? "—" : `${row.sov_pct}%`}
               </td>
               <td className="px-4 py-3">
                 <VelocityIndicator score={row.velocity_score} label={row.velocity_label} />

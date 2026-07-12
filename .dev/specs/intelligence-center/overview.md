@@ -111,20 +111,76 @@ deste módulo (`/admin/users`, `/perfil`) — ver gap ⚠️ abaixo.
    scroll) é parte do design da funcionalidade, não um detalhe deixado
    para a implementação decidir livremente.
 
-⚠️ **Gap real na implementação atual, encontrado ao registrar esta
-premissa**: `app/(intelligence-center)/layout.tsx` já implementa os itens
-1 e 3 para as 5 páginas do módulo (`Sidebar` compartilhada, shell não
-remonta ao navegar) — mas `/admin/users` e `/perfil` (módulo `auth`) vivem
-fora desse route group (`app/admin/users/page.tsx`, `app/perfil/page.tsx`
-são irmãos de `app/(intelligence-center)/`, não filhos), então hoje **não
-têm** o menu lateral, apesar de `Sidebar` linkar para ambos
-(`components/intelligence-center/sidebar.tsx`, itens "Administração" e
-"Perfil"). Nem `Sidebar` nem o shell têm hoje: estado de
-ocultar/reabrir menu (item 1), footer (item 3, nenhum existe ainda), ou
-tratamento de breakpoint responsivo (item 2, `w-60` fixo, sem colapso em
-telas estreitas). Tratar como gap técnico a fechar antes deste módulo
-poder ser considerado `implementado` — não é uma decisão em aberto, é
-trabalho especificado aqui esperando implementação (ver `_pending.md`).
+✅ **Gap resolvido (2026-07-15)**, ver `_pending.md` item #12: `/admin/users`
+e `/perfil` (módulo `auth`) foram movidos para dentro do route group
+`(intelligence-center)` (`app/(intelligence-center)/admin/users/`,
+`app/(intelligence-center)/perfil/`) — agora compartilham o mesmo shell
+(itens 1 e 3), não só as 5 páginas de análise. `Sidebar` ganhou
+colapso/expansão (rail «»/»» ) com estado no `layout.tsx` (que não
+remonta entre navegações — App Router, item 1) + drawer mobile abaixo do
+breakpoint `lg` (item 2) + um footer mínimo (item 3). Único item ainda em
+aberto: breakpoint exato **não confirmado** contra o protótipo real —
+`lg` do Tailwind foi usado como aproximação razoável, não um valor
+validado (`_pending.md` item #15).
+
+## Premissas de visualização de dados (2026-07-15)
+
+Regras adicionadas a pedido do usuário, a partir de uma revisão do
+protótipo real — cobrem todo gráfico/tabela das 5 páginas deste módulo
+(`TrendLineChart`/`BreakdownPanel`/`NarrativesTable`/badges de score em
+`components/intelligence-center/`), não uma página específica.
+
+1. **Todo gráfico precisa de rótulos visíveis** (eixos, valores nos
+   pontos/segmentos, legendas) — nunca uma linha/barra sem indicação do
+   que ela representa ou de que ordem de grandeza tem. Hoje
+   `TrendLineChart` só mostra a data inicial/final abaixo do gráfico, sem
+   nenhuma marcação de eixo Y (escala do valor) nem marcação de data por
+   ponto — insuficiente para o usuário final entender o gráfico sem
+   passar o mouse.
+2. **Tooltip ao passar o mouse** sobre qualquer ponto/segmento de
+   gráfico — mostra o valor exato + rótulo (data, categoria) daquele
+   ponto especificamente. Nenhum gráfico tem isso hoje.
+3. **Página Visão Geral permanece como no protótipo**: organização
+   (seletor, se houver mais de uma), e os filtros rápidos de período
+   Diário/Semanal/Mensal/Personalizado (com intervalo customizado via 2
+   datas) — ver [executive-overview.md](executive-overview.md), "Header",
+   para o mapeamento exato de cada botão para `period.start`/`period.end`.
+   Layout dos widgets (cards → gráfico de evolução + sentimento geral →
+   Insights → tabela de Narrativas) mantido, sem reordenar.
+4. **Gráfico de linha com até 5 valores mostrando só percentual → gráfico
+   de rosca (donut)**. Regra aplicada onde já existe hoje: a distribuição
+   positivo/neutro/negativo (`breakdown.type === 'sentiment'`, sempre 3
+   valores, sempre percentual — `item.pct`) passa de barras horizontais
+   para um donut com rótulo+percentual por fatia + tooltip. **Não** se
+   aplica aos breakdowns de plataforma/pauta (`ScoreList`) — o valor ali é
+   `net_sentiment` (score -100..100, pode ser negativo), não um percentual
+   puro, então doughnut não representaria o dado corretamente (mesma
+   ressalva já registrada em `_design-tokens.md` sobre não confundir as
+   duas escalas). `TrendLineChart` continua line chart em todo lugar onde
+   já é usado hoje — nenhum dos usos atuais é uma série real de ≤5 pontos
+   percentuais estáticos, então não há caso de conversão ali além do já
+   listado.
+5. **Valores de tabela iguais a 0 não são mostrados** — tratados como o
+   mesmo estado vazio (`—`) já usado para `null`. Aplica-se a
+   `NarrativesTable` (`sov_pct`) e ao número secundário exibido dentro dos
+   badges de score (`SentimentBadge`/`RiskBadge`/`VelocityIndicator`/
+   `ScoreBar` — o rótulo colorido continua aparecendo mesmo com score 0,
+   só o número entre parênteses some). **Escopo deliberadamente restrito a
+   tabelas/badges de tabela** — não se aplica a cards de KPI (`MetricCard`,
+   os 4 cards do topo de `/narratives/[id]`) nem a listas de ranking
+   (`AuthorsList`/`TermSignalsList`), onde um valor 0 ainda é informação
+   relevante (ex: "0 menções nesta plataforma" é diferente de "sem dado
+   ainda") — só em tabela o zero repetido em várias linhas vira ruído
+   visual.
+
+⚠️ **Não há biblioteca de gráficos no projeto** (`recharts`/`chart.js`/
+`visx`/`d3`/etc.) — decisão deliberada já registrada em `CLAUDE.md`
+("intelligence-center... implementado 2026-07-15": *"gráfico de série
+temporal simples, SVG, sem dependência nova... não é uma decisão desta
+sessão"*). As melhorias acima (eixos, tooltip, donut) continuam
+implementadas em SVG bruto, sem adicionar dependência nova — se o volume
+de gráficos crescer bastante em sprints futuras, vale reabrir essa
+decisão com o usuário, mas não nesta rodada.
 
 ## Gaps de dados — resolvidos em 2026-07-12
 

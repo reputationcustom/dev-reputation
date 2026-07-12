@@ -9,7 +9,7 @@ const manrope = Manrope({
 });
 
 export const metadata: Metadata = {
-  title: "Digital Intelligent Communication",
+  title: "Comunicação Inteligente",
   description: "Plataforma de inteligência reputacional",
 };
 

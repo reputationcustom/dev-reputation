@@ -1,39 +1,32 @@
 import type { Breakdown } from "@reputation/shared-types";
 import { EmptyState } from "@/components/ui/empty-state";
+import { DonutChart } from "./donut-chart";
 
-const SENTIMENT_BAR_COLOR: Record<string, string> = {
-  positive: "bg-sentiment-positive",
-  neutral: "bg-sentiment-neutral",
-  negative: "bg-sentiment-negative",
+const SENTIMENT_COLOR_HEX: Record<string, string> = {
+  positive: "#1a9d5c",
+  neutral: "#8a8f98",
+  negative: "#e0483e",
 };
 
-const SENTIMENT_BAR_LABEL: Record<string, string> = {
+const SENTIMENT_LABEL: Record<string, string> = {
   positive: "Positivo",
   neutral: "Neutro",
   negative: "Negativo",
 };
 
-// Distribuição positivo/neutro/negativo (breakdown type='sentiment') — barras
-// horizontais proporcionais ao `pct` que o envelope já traz calculado.
-function SentimentBars({ breakdown }: { breakdown: Breakdown }) {
-  return (
-    <div className="flex flex-col gap-2">
-      {breakdown.items.map((item) => (
-        <div key={item.label} className="flex items-center gap-3">
-          <span className="w-16 flex-shrink-0 text-xs text-text-secondary">
-            {SENTIMENT_BAR_LABEL[item.label] ?? item.label}
-          </span>
-          <div className="h-2 flex-1 overflow-hidden rounded-full bg-border-subtle-2">
-            <div
-              className={`h-full ${SENTIMENT_BAR_COLOR[item.label] ?? "bg-text-tertiary"}`}
-              style={{ width: `${Math.max(0, Math.min(100, item.pct))}%` }}
-            />
-          </div>
-          <span className="w-12 flex-shrink-0 text-right text-xs text-text-secondary">{item.pct}%</span>
-        </div>
-      ))}
-    </div>
-  );
+// Distribuição positivo/neutro/negativo (breakdown type='sentiment') — até 5
+// valores, sempre percentual puro (`item.pct`), então vira um donut em vez
+// de barras (intelligence-center/overview.md, "Premissas de visualização de
+// dados", regra 4). Não se aplica a plataforma/pauta (ver ScoreList abaixo)
+// — lá o valor é net_sentiment (score, pode ser negativo), não percentual.
+function SentimentDonut({ breakdown }: { breakdown: Breakdown }) {
+  const items = breakdown.items.map((item) => ({
+    label: SENTIMENT_LABEL[item.label] ?? item.label,
+    value: item.value,
+    pct: item.pct,
+    color: SENTIMENT_COLOR_HEX[item.label] ?? "#9aa0ab",
+  }));
+  return <DonutChart items={items} />;
 }
 
 // Breakdowns de type='platform'/'theme' — o `value` aqui é net_sentiment
@@ -73,7 +66,7 @@ export function BreakdownPanel({ breakdown, emptyMessage }: { breakdown: Breakdo
   }
 
   if (breakdown.type === "sentiment") {
-    return <SentimentBars breakdown={breakdown} />;
+    return <SentimentDonut breakdown={breakdown} />;
   }
 
   return <ScoreList breakdown={breakdown} />;

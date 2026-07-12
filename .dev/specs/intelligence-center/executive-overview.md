@@ -3,7 +3,7 @@ tipo: feature-spec
 módulo: intelligence-center
 funcionalidade: executive-overview
 status: pronto
-atualizado: 2026-07-12
+atualizado: 2026-07-15
 ---
 
 # Executive Overview
@@ -118,7 +118,7 @@ Qualquer usuário autenticado, membro de ao menos uma organização (ver
 ## Interface (UI)
 
 - **Header**: nome da organização ativa (+ seletor, se aplicável), seletor
-  de período (7/14/30 dias). **Sem seletor de Query** — pedido explícito
+  de período. **Sem seletor de Query** — pedido explícito
   do usuário (2026-07-13): "o seletor de organização é independente de
   Query... as queries devem ser transparentes para o usuário final, ele
   só entende organização". ✅ Confirmado (2026-07-12): a organização
@@ -132,6 +132,27 @@ Qualquer usuário autenticado, membro de ao menos uma organização (ver
   seletores persistem entre `/overview` e as demais páginas de
   `intelligence-center` (ver [overview.md](overview.md)), especificado uma
   vez aqui, não redescrito por página.
+
+  ✅ **Seletor de período reformulado (2026-07-15, substitui "7/14/30
+  dias")** — pedido do usuário a partir do protótipo real (4 botões
+  "Diário/Semanal/Mensal/Personalizado" + um indicador de intervalo tipo
+  "06/05/2024 – 12/05/2024" quando "Personalizado" está ativo). Mapeamento
+  para `period.start`/`period.end` (que o envelope já aceita como
+  intervalo de datas arbitrário, `aggregated-metrics/sql-aggregation.md` —
+  nenhuma mudança de backend necessária):
+
+  | Botão | Intervalo | Observação |
+  |---|---|---|
+  | Diário | 1 dia (hoje, fuso do usuário) | ⚠️ **Suposição, não confirmada contra o protótipo real**: "hoje" corrido, não uma janela de 24h — mesma disciplina de fuso de `lib/date/format.ts`. Sem granularidade horária ainda (`bw_query_metrics_hourly` existe mas nenhuma function do envelope a usa, ver `_pending.md`) — o gráfico de evolução mostra 1 ponto só nesse modo até isso ser resolvido |
+  | Semanal | 7 dias corridos terminando hoje | Equivalente ao antigo botão "7 dias" |
+  | Mensal | 30 dias corridos terminando hoje | Equivalente ao antigo botão "30 dias"; o antigo "14 dias" foi **removido** — não existe no protótipo |
+  | Personalizado | `start`/`end` escolhidos pelo usuário via 2 campos de data | Sem limite mínimo/máximo de intervalo definido — ⚠️ revisitar se o backend precisar de um teto (ex: performance de `get_volume_trend` num intervalo de anos) |
+
+  Trocar de botão preset recalcula `start`/`end` automaticamente; abrir o
+  seletor "Personalizado" preenche os 2 campos com o intervalo atualmente
+  ativo (não começa vazio). `period.comparison` continua sempre
+  `"previous_period"` nos 4 modos — mesma duração, janela imediatamente
+  anterior — nenhuma mudança nessa regra.
 - **Cards de topo**: Total de menções, Sentimento geral (distribuição
   positivo/neutro/negativo compacta), Autores únicos, Alcance estimado,
   Engajamento total — todos de `bw_query_metrics_daily` (`category_id is

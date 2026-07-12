@@ -42,13 +42,18 @@ function momentumBand(score: number): { label: string; color: string } {
   return { label: "Explosivo", color: "bg-intensity-5" };
 }
 
+// Número secundário some quando o score arredonda pra 0 — mesmo tratamento
+// de `null` (overview.md, "Premissas de visualização de dados", regra 5).
+// O rótulo/cor continua aparecendo (é a informação principal do badge; 0 é
+// um valor real, só o número explícito é ruído numa tabela).
 export function SentimentBadge({ value, label }: { value: number | null; label: string | null }) {
   if (value === null || !label) return <span className="text-sm text-text-tertiary">—</span>;
   const meta = SENTIMENT_META[label] ?? SENTIMENT_META.neutral;
+  const rounded = Math.round(value);
   return (
     <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${meta.bg} ${meta.text}`}>
       {meta.label}
-      <span className="opacity-70">{Math.round(value)}</span>
+      {rounded !== 0 && <span className="opacity-70">{rounded}</span>}
     </span>
   );
 }
@@ -56,10 +61,11 @@ export function SentimentBadge({ value, label }: { value: number | null; label: 
 export function RiskBadge({ score, label }: { score: number | null; label: string | null }) {
   if (score === null || !label) return <span className="text-sm text-text-tertiary">—</span>;
   const meta = RISK_META[label] ?? RISK_META.low;
+  const rounded = Math.round(score);
   return (
     <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${meta.bg} ${meta.text}`}>
       {meta.label}
-      <span className="opacity-70">{Math.round(score)}</span>
+      {rounded !== 0 && <span className="opacity-70">{rounded}</span>}
     </span>
   );
 }
@@ -67,11 +73,12 @@ export function RiskBadge({ score, label }: { score: number | null; label: strin
 export function VelocityIndicator({ score, label }: { score: number | null; label: string | null }) {
   if (score === null || !label) return <span className="text-sm text-text-tertiary">—</span>;
   const meta = VELOCITY_META[label] ?? VELOCITY_META.stable;
+  const rounded = Math.round(score);
   return (
     <span className={`inline-flex items-center gap-1 text-sm font-medium ${meta.color}`}>
       <span aria-hidden>{meta.arrow}</span>
       {meta.label}
-      <span className="text-xs opacity-70">({Math.round(score)})</span>
+      {rounded !== 0 && <span className="text-xs opacity-70">({rounded})</span>}
     </span>
   );
 }
@@ -79,12 +86,13 @@ export function VelocityIndicator({ score, label }: { score: number | null; labe
 export function ScoreBar({ score }: { score: number | null }) {
   if (score === null) return <span className="text-sm text-text-tertiary">—</span>;
   const band = momentumBand(score);
+  const rounded = Math.round(score);
   return (
     <div className="flex items-center gap-2">
       <div className="h-1.5 w-20 overflow-hidden rounded-full bg-border-subtle-2">
         <div className={`h-full ${band.color}`} style={{ width: `${Math.max(0, Math.min(100, score))}%` }} />
       </div>
-      <span className="text-xs text-text-secondary">{Math.round(score)}</span>
+      {rounded !== 0 && <span className="text-xs text-text-secondary">{rounded}</span>}
     </div>
   );
 }

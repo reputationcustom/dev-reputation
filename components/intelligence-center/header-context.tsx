@@ -6,13 +6,34 @@ import { useOrganizations, type Organization } from "@/hooks/use-organizations";
 import { useUserProfile } from "@/hooks/use-user-profile";
 import { getLastNDaysRange } from "@/lib/date/format";
 
-export type PeriodDays = 7 | 14 | 30;
+// Diário/Semanal/Mensal/Personalizado — substitui o antigo seletor "7/14/30
+// dias" (intelligence-center/executive-overview.md, "Header", 2026-07-15,
+// a partir do protótipo real). Diário/Semanal/Mensal seguem sendo janelas
+// corridas terminando hoje (1/7/30 dias, fuso do usuário); Personalizado
+// usa um intervalo `start`/`end` escolhido nos 2 campos de data — o
+// envelope já aceita qualquer intervalo (`ctx.period.start`/`end` chegam
+// direto nas functions SQL via `p_period_start`/`p_period_end`, ver
+// `aggregated-metrics/sql-aggregation.md`), então isso é só um cálculo
+// novo no frontend, sem mudança de backend.
+export type PeriodMode = "daily" | "weekly" | "monthly" | "custom";
 
-export const PERIOD_OPTIONS: { days: PeriodDays; label: string }[] = [
-  { days: 7, label: "7 dias" },
-  { days: 14, label: "14 dias" },
-  { days: 30, label: "30 dias" },
+const PERIOD_MODE_DAYS: Record<"daily" | "weekly" | "monthly", number> = {
+  daily: 1,
+  weekly: 7,
+  monthly: 30,
+};
+
+export const PERIOD_MODE_OPTIONS: { mode: PeriodMode; label: string }[] = [
+  { mode: "daily", label: "Diário" },
+  { mode: "weekly", label: "Semanal" },
+  { mode: "monthly", label: "Mensal" },
+  { mode: "custom", label: "Personalizado" },
 ];
+
+export interface CustomRange {
+  start: string;
+  end: string;
+}
 
 interface HeaderContextValue {
   organizations: Organization[];
@@ -20,8 +41,10 @@ interface HeaderContextValue {
   retryOrganizations: () => void;
   organizationId: string | null;
   setOrganizationId: (id: string) => void;
-  periodDays: PeriodDays;
-  setPeriodDays: (days: PeriodDays) => void;
+  periodMode: PeriodMode;
+  setPeriodMode: (mode: PeriodMode) => void;
+  customRange: CustomRange;
+  setCustomRange: (range: CustomRange) => void;
   period: EnvelopePeriod;
 }
 
@@ -39,7 +62,11 @@ export function IntelligenceCenterProvider({ children }: { children: React.React
   const { status: organizationsStatus, organizations, retry: retryOrganizations } = useOrganizations();
   const { timezone } = useUserProfile();
   const [organizationId, setOrganizationId] = useState<string | null>(null);
-  const [periodDays, setPeriodDays] = useState<PeriodDays>(7);
+  const [periodMode, setPeriodModeState] = useState<PeriodMode>("weekly");
+  const [customRange, setCustomRange] = useState<CustomRange>(() => {
+    const range = getLastNDaysRange(PERIOD_MODE_DAYS.weekly);
+    return { start: range.start, end: range.end };
+  });
 
   useEffect(() => {
     if (organizationsStatus === "loaded" && organizations.length > 0 && !organizationId) {
@@ -47,10 +74,25 @@ export function IntelligenceCenterProvider({ children }: { children: React.React
     }
   }, [organizationsStatus, organizations, organizationId]);
 
+  // Abrir "Personalizado" pela primeira vez preenche os 2 campos com o
+  // intervalo do preset ativo até então, em vez de começar vazio
+  // (intelligence-center/executive-overview.md, "Header").
+  function setPeriodMode(mode: PeriodMode) {
+    if (mode === "custom" && periodMode !== "custom") {
+      const days = PERIOD_MODE_DAYS[periodMode];
+      const range = getLastNDaysRange(days, timezone);
+      setCustomRange({ start: range.start, end: range.end });
+    }
+    setPeriodModeState(mode);
+  }
+
   const period = useMemo<EnvelopePeriod>(() => {
-    const range = getLastNDaysRange(periodDays, timezone);
+    if (periodMode === "custom") {
+      return { start: customRange.start, end: customRange.end, granularity: "day", comparison: "previous_period" };
+    }
+    const range = getLastNDaysRange(PERIOD_MODE_DAYS[periodMode], timezone);
     return { start: range.start, end: range.end, granularity: "day", comparison: "previous_period" };
-  }, [periodDays, timezone]);
+  }, [periodMode, customRange, timezone]);
 
   const value: HeaderContextValue = {
     organizations,
@@ -58,8 +100,10 @@ export function IntelligenceCenterProvider({ children }: { children: React.React
     retryOrganizations,
     organizationId,
     setOrganizationId,
-    periodDays,
-    setPeriodDays,
+    periodMode,
+    setPeriodMode,
+    customRange,
+    setCustomRange,
     period,
   };
 
