@@ -1,0 +1,4 @@
+-- Seed de desenvolvimento local (supabase db reset). Vazio de propósito —
+-- organizations/organization_members/brandwatch_credentials são
+-- populados manualmente por organização (ver .dev/specs/foundation/overview.md
+-- e brandwatch-setup.md), não por dado fake versionado.
