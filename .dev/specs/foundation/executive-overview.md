@@ -3,7 +3,7 @@ tipo: feature-spec
 módulo: foundation
 funcionalidade: executive-overview
 status: pronto
-atualizado: 2026-07-07
+atualizado: 2026-07-12
 ---
 
 # Executive Overview
@@ -60,13 +60,43 @@ Qualquer usuário autenticado, membro de ao menos uma organização (ver
 | Falha ao carregar (erro de rede/Supabase) | `<ErrorMessage retry />` por widget — um widget falhar não derruba os outros (cada card busca seus dados independentemente) |
 | Narrativa sem linha em `narrative_metrics` para o dia selecionado, **ou** com `narrative_metrics.query_id` nulo (Category sem Query associada, ou associada a mais de uma — ver `data-model.md` "Camada de reporting", correção 2026-07-11) | Linha aparece na tabela com SOV/Tendência/Sentimento/Momentum vazios ("—"), não some da lista (Risco e Narrativa continuam vindo de `narratives`, que sempre existe) |
 
+> ✅ **Cards de topo revalidados contra o protótipo de frontend (2026-07-12,
+> "Comunicação Inteligente" — claude.ai/design)**: o protótipo desenha 5
+> cards (Total de menções, Sentimento geral, Autores únicos, Alcance
+> estimado, Engajamento total). Todos os 5 têm agora agregado oficial —
+> `total_mentions`, `sentiment_positive/neutral/negative`, `reach_estimate`,
+> `engagement_score`, **e `unique_authors`** (todos em
+> `bw_query_metrics_daily`, `category_id is null`). "Autores únicos" tinha
+> sido descartado nesta mesma revisão por não ter fonte oficial confirmada
+> (`unique_authors` já existiu em `narrative_metrics` e foi removido em
+> `20260711010000` por ser contagem local sobre `mentions` amostrada) — 
+> **corrigido em seguida no mesmo dia** (pedido do usuário: "Autores únicos
+> já existe na brandwatch, precisamos rever o que estamos capturando por
+> API"): o aggregate de chart `authors` ("distinct authors who posted",
+> confirmado em `chart-dimensions-and-aggregates`) é, sim, oficial e não
+> amostrado — mesma família que já sustenta `reachEstimate`/
+> `engagementScore`. Ver `foundation/data-model.md`, `unique_authors`, e
+> migration `20260712020000`. A mesma revisão também corrigiu um gap real
+> encontrado nesse processo: `reach_estimate`/`engagement_score` **nunca
+> tinham sido populados** para a linha `category_id is null` (a que estes
+> cards leem) — `syncCategoryDailyAggregate()` só cobre a dimensão
+> `categories`, que nunca inclui a Query inteira.
+
 ## Interface (UI)
 
 - **Header**: nome da organização ativa (+ seletor, se aplicável), seletor de
-  período (7/14/30 dias).
-- **Cards de topo**: contagem total de mentions do período; Share of Voice
-  (se Query Group configurado) — `<EmptyState />` textual se não houver
-  Query Group, não esconder o card.
+  período (7/14/30 dias). ✅ Confirmado (2026-07-12): a organização
+  selecionada **restringe o acesso aos dados** de toda a aplicação, não só
+  desta tela — já garantido pela RLS via `auth_organization_ids()`
+  (`organizations`/`organization_members`, ver `foundation/data-model.md`);
+  o seletor troca qual organização é "ativa" na sessão do frontend, a
+  aplicação de acesso em si já é backend (Princípio técnico 2).
+- **Cards de topo**: Total de menções, Sentimento geral (distribuição
+  positivo/neutro/negativo compacta), Autores únicos, Alcance estimado,
+  Engajamento total — todos de `bw_query_metrics_daily` (`category_id is
+  null`), cada um com variação vs. período anterior. Share of Voice (se
+  Query Group configurado) — `<EmptyState />` textual se não houver Query
+  Group, não esconder o card.
 - **Gráfico**: série temporal de volume por sentimento (linhas/área
   empilhada), timezone fixo `America/Sao_Paulo`.
 - **Tabela interativa de Narrativas** (ver imagem de referência do usuário):
@@ -74,11 +104,14 @@ Qualquer usuário autenticado, membro de ao menos uma organização (ver
   mapeamento exato de colunas → cálculo em `overview.md`
   ("Tabela interativa de Narrativas").
   - Sentimento e Risco renderizados como *dot* colorido (verde/amarelo/
-    vermelho) — mapeamento exato de cor fica para o skill `frontend-design`
-    quando a UI for implementada.
+    vermelho) — mapeamento exato de cor em
+    [_design-tokens.md](../_design-tokens.md) (✅ definido 2026-07-12 a
+    partir do protótipo de frontend, deixou de depender do skill
+    `frontend-design`).
   - Ordenação default: por `risk_level` desc, depois `total_mentions` desc
-    (⚠️ DECISÃO PENDENTE — confirmar com o usuário se é essa a prioridade
-    visual desejada).
+    — ✅ confirmado (2026-07-12): "esse é o padrão visual, podendo o
+    usuário ordenar por outras opções" (construtor de ordenação
+    personalizada já descrito em `overview.md`, "Ordenação personalizada").
 - **Estados**: `<Spinner />` (loading), `<ErrorMessage retry />` (erro),
   `<EmptyState />` (vazio) — por widget, conforme skill `web-app-structure`
   (`references/frontend.md`).
@@ -91,8 +124,16 @@ Qualquer usuário autenticado, membro de ao menos uma organização (ver
   `_index.md`: sem lógica de negócio no frontend).
 - Sentimento/Momentum da tabela de Narrativas usam os buckets definidos em
   `reporting.narratives_overview` (ver `data-model.md`) — thresholds exatos
-  (±20% de sentimento líquido, faixas de Momentum) são
-  ⚠️ DECISÃO PENDENTE, não hard-code silencioso no frontend.
+  (±20% de sentimento líquido, faixas de Momentum) hoje são placeholders no
+  SQL da view. ✅ Confirmado (2026-07-12): a lógica definitiva (fórmula de
+  Momentum, thresholds de sentimento) será desenvolvida no backend junto
+  com o restante do texto/geração automática ainda pendente (ver
+  `narratives-exploration.md`, "Resumo executivo") — o frontend deve **só
+  renderizar** o que a view/API devolver (bucket + cor), sem calcular ou
+  hard-codar o threshold no cliente (mantém Princípio técnico 2), e sem
+  bloquear nesta versão: usa os placeholders atuais até o backend definir a
+  versão final, sem mudança de contrato esperada na tela (mesmo shape de
+  campo, só o valor calculado muda).
 
 ## Dados envolvidos
 

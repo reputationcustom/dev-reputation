@@ -470,6 +470,8 @@ security` em ambas, **sem nenhuma policy** (deny-all para `anon`/
 | `sentiment_negative`     | `integer`     | sim | default `0` |
 | `reach_estimate`         | `bigint`     | não | agregado oficial, `data/reachEstimate/categories/days` — adicionado `20260710040000`; corrigido de `integer` pra `bigint` em `20260712000000` (bug de overflow) |
 | `engagement_score`       | `numeric`     | não | agregado oficial, `data/engagementScore/categories/days` — adicionado `20260710040000` |
+| `unique_authors`         | `integer`     | não | agregado oficial, `data/authors/categories/days` (por Narrativa) e `data/authors/days` (Query inteira) — adicionado `20260712020000`, ver nota abaixo |
+| `impressions`            | `bigint`      | não | agregado oficial, `data/impressions/categories/days` (por Narrativa) e `data/impressions/queries/days` (Query inteira) — adicionado `20260712030000`, ver nota abaixo |
 | `synced_at`              | `timestamptz` | sim | `now()` |
 
 **Índices**: unique `(project_id, query_id, category_id_key, metric_date)`.
@@ -488,6 +490,92 @@ security` em ambas, **sem nenhuma policy** (deny-all para `anon`/
 > payload — o upsert do Supabase só atualiza as colunas presentes no
 > conflito, nunca zera `total_mentions`/sentimento já sincronizados por
 > outra chamada pro mesmo `(project_id, query_id, category_id, metric_date)`).
+
+> ⚠️ **Bug encontrado 2026-07-12 (revisão de spec, ao planejar `unique_authors`
+> abaixo)**: `syncCategoryDailyAggregate()` (que popula `reach_estimate`/
+> `engagement_score`) só cobre a dimensão `categories` — que por natureza
+> **nunca inclui uma linha "Query inteira"** (`category_id is null`). Ou
+> seja, a linha de `category_id is null` de `bw_query_metrics_daily` (usada
+> pelos cards "Alcance estimado"/"Engajamento total" do Executive Overview
+> — ver `executive-overview.md`) **nunca teve `reach_estimate`/
+> `engagement_score` populados** desde que essas colunas existem —
+> `total_mentions`/sentimento funcionam para `category_id is null` porque
+> `syncSentimentMetrics()` já trata esse caso (omite o filtro `category`),
+> mas não havia função equivalente pros 2 agregados de chart. Corrigido
+> nesta revisão junto com a adição de `unique_authors` (migration
+> `20260712020000`) — nova função `syncQueryDailyAggregate()` em
+> `bw-sync/index.ts`, ver `sync-brandwatch.md`.
+
+> ✅ **`unique_authors` adicionado (2026-07-12, migration `20260712020000`)**:
+> pedido do usuário — "Autores únicos já existe na brandwatch, precisamos
+> rever o que estamos capturando por API". Confirmado direto contra
+> `developers.brandwatch.com/docs/chart-dimensions-and-aggregates`: `authors`
+> é um **aggregate** de chart válido (lista confirmada: `volume`, `authors`,
+> `domains`, `impressions`, `netSentiment`, `reachEstimate`,
+> `twitterFollowers`, `twitterLikeCount`, `engagementScore`), definido
+> textualmente como "aggregate by the authors of the mentions" / "distinct
+> authors who posted" — ou seja, uma contagem de autores distintos
+> **oficial e não amostrada**, na mesma família que já confirmou
+> `reachEstimate`/`engagementScore`. Isso **reverte, só para esta métrica**,
+> a conclusão anterior registrada em "Premissa fixada pelo usuário" abaixo
+> (que tratava `unique_authors`/`repost_count`/`comment_count` como um
+> bloco só, sem fonte oficial — `unique_authors` sozinho, isolado, tem sim
+> fonte oficial; `repost_count`/`comment_count` continuam sem). Populado
+> via `data/authors/categories/days` (por Narrativa, mesmo mecanismo de
+> `syncCategoryDailyAggregate()`, reusado passando `"authors"` como
+> aggregate) e via `data/authors/days` (Query inteira, nova função
+> `syncQueryDailyAggregate()` — ver bug acima). `integer`, mesmo tipo de
+> `total_mentions` (contagem, não métrica de audiência/alcance — não
+> sujeita à mesma classe de overflow de `reach_estimate`/`impressions`, ver
+> migration `20260712000000`). ⚠️ Mesmo nível de confirmação já aceito pra
+> `reachEstimate`/`engagementScore` neste projeto: a doc lista o aggregate
+> e sua definição textual, mas não mostra um payload de exemplo específico
+> — revisar contra logs reais após deploy.
+
+> ✅ **`impressions` no nível de Narrativa/Query inteira adicionado
+> (2026-07-12, migration `20260712030000`)** — auditoria pedida pelo
+> usuário: "verifique se todas as agregações da página
+> chart-dimensions-and-aggregates estão consideradas na integração".
+> `impressions` já era capturado por autor
+> (`bw_query_top_authors.impressions`, `data/impressions/queries/days?
+> queryId=X&author=Y`) e por mention individual (`mentions.impressions`, só
+> X), mas nunca agregado por Narrativa ou Query inteira — mesmo mecanismo
+> de `reach_estimate`/`engagement_score`/`unique_authors` acima, mesma
+> dimensão `categories` (por Narrativa, via `syncCategoryDailyAggregate()`)
+> e `queries` (Query inteira, via `syncQueryDailyAggregate()`, mesma
+> correção do gap de `category_id is null`). Também propagado pra
+> `narrative_metrics.impressions` (ver abaixo).
+>
+> **Auditoria completa contra `chart-dimensions-and-aggregates` (2026-07-12)**
+> — dos 9 aggregates não depreciados (`volume`, `authors`, `domains`,
+> `impressions`, `netSentiment`, `reachEstimate`, `twitterFollowers`,
+> `twitterLikeCount`, `engagementScore`; os outros 5 listados na doc —
+> `blogComments`/`forumPosts`/`forumViews`/`influence`/`outreach`/`reach`
+> — estão marcados **deprecated** pela própria Brandwatch, não
+> implementados por esse motivo, não por omissão):
+> - `volume`, `reachEstimate`, `engagementScore`, `authors`, `impressions`,
+>   `netSentiment` — ✅ cobertos (ver notas desta seção e de
+>   `bw_query_metrics_daily_by_platform`/`bw_query_demographics_daily`
+>   acima).
+> - `domains` **como aggregate** (contagem de domínios distintos, distinto
+>   da dimensão `domains` usada por `bw_query_top_sites`) — ⚠️ **não
+>   capturado**. Nenhuma spec/página pediu esse número até agora; não
+>   implementado sem um pedido concreto (mesmo critério já usado pra outros
+>   itens em "Fora de escopo do MVP", `_index.md`).
+> - `twitterFollowers`/`twitterLikeCount` **como aggregate de chart geral**
+>   (série temporal, ex: `data/twitterFollowers/categories/days`) — ⚠️
+>   **não capturados** nesse formato. Já existe cobertura equivalente por
+>   outra via: `bw_query_top_authors.followers`/`is_influential` (por
+>   autor, de Top Authors) e `mentions.engagement->>'twitterLikeCount'`
+>   (por mention, jsonb). Um agregado geral desses dois seria redundante
+>   com o que já existe e não foi pedido por nenhuma página — não
+>   implementado sem um caso de uso concreto que o distinga do que já
+>   existe.
+
+Nenhuma das 3 lacunas acima (`domains`/`twitterFollowers`/`twitterLikeCount`
+como aggregate de chart geral) bloqueia qualquer spec já escrita — ficam
+documentadas aqui como "disponível na Brandwatch, intencionalmente não
+capturado" para não precisar repetir esta auditoria no futuro.
 
 > ⚠️ **Correção (2026-07-07)**: a unique constraint original era
 > `(project_id, query_id, category_id, metric_date)` — mas `category_id` é
@@ -594,6 +682,9 @@ das menções · por plataforma" do mockup de referência).
 | `page_type` | `text` | sim | nome da plataforma/fonte retornado pela dimensão `pageTypes` |
 | `metric_date` | `date` | sim | |
 | `total_mentions` | `integer` | sim | default `0` |
+| `unique_authors` | `integer` | não | agregado oficial, `data/authors/pageTypes/days` — adicionado `20260712020000`, ver nota abaixo |
+| `engagement_score` | `numeric` | não | agregado oficial, `data/engagementScore/pageTypes/days` — mesmo agregado já usado em `bw_query_metrics_daily`, dimensão `pageTypes` em vez de `categories`. Adicionado `20260712020000` |
+| `net_sentiment` | `numeric` | não | agregado oficial, `data/netSentiment/pageTypes/days` — ver nota abaixo sobre a limitação (score único, não split positivo/neutro/negativo) |
 | `synced_at` | `timestamptz` | sim | |
 
 **Índices**: unique `(project_id, query_id, category_id_key, page_type, metric_date)`
@@ -622,6 +713,47 @@ de agregados oficiais.
 próximo) dá a participação de um autor no total — mera razão calculada na
 camada de consumo (view/frontend), não precisa de sync adicional.
 
+> ✅ **`unique_authors`/`engagement_score`/`net_sentiment` por plataforma
+> adicionados (2026-07-12, migration `20260712020000`)** — resolve os gaps
+> de "Autores únicos por plataforma" e "Engajamento médio por plataforma"
+> registrados em `intelligence-center/platform-analysis.md`, e parcialmente
+> "Sentimento por plataforma" em `intelligence-center/sentiment-analysis.md`.
+> Pedido do usuário: "já estamos trazendo da brandwatch, se não tiver,
+> reveja as especificações... vamos garantir que tenhamos essa informação
+> no supabase via api da brandwatch". Mesmo padrão de `total_mentions`
+> (`data/volume/pageTypes/days`) — troca só o aggregate, mesma dimensão
+> `pageTypes`:
+> - `unique_authors`: `data/authors/pageTypes/days` (aggregate `authors`,
+>   ver nota de `bw_query_metrics_daily.unique_authors` acima).
+> - `engagement_score`: `data/engagementScore/pageTypes/days` (mesmo
+>   aggregate já usado por `categories`).
+> - `net_sentiment`: `data/netSentiment/pageTypes/days` — **limitação
+>   aceita conscientemente**: `netSentiment` é um aggregate próprio
+>   (confirmado em `chart-dimensions-and-aggregates`), mas devolve um
+>   **score único** (não split `positive`/`neutral`/`negative` como
+>   `data/volume/sentiment/...`). Não existe uma combinação de 3 dimensões
+>   (`sentiment` + `pageTypes` + `days` simultâneos) documentada — a API só
+>   aceita 2 dimensões por chamada. "Sentimento por plataforma" na UI deve
+>   exibir isso como **um score líquido por plataforma/dia**, não como as 3
+>   barras positivo/neutro/negativo que o resto do produto usa — rotular
+>   claramente a diferença (mesmo cuidado já aplicado a `emotion`).
+>
+> Throttle: rodam na fase `daily_metrics` (não throttled — mesma fase que já
+> roda `syncPlatformMetrics` pro total_mentions), **não** numa fase
+> separada. Diferente do incidente de CPU corrigido em `20260711030000`
+> (que veio de milhares de linhas de `mentions`/`categories` numa só
+> serialização síncrona), a dimensão `pageTypes` tem cardinalidade pequena
+> (dezenas de plataformas, não milhares) — mesmo risco (e tamanho) já
+> aceito para as 2 chamadas de `categories` (reach/engagement) que também
+> rodam toda invocação. Rodam só para `category_id is null` (nível de Query
+> inteira) nesta primeira leva — quebra por Narrativa (`category_id`
+> preenchido) fica como ampliação futura, mesma ressalva já aplicada a
+> outras métricas "por Narrativa" deste projeto (aí sim entraria na fase
+> `platform_by_narrative`, throttled). ⚠️ Mesmo nível de confirmação já
+> aceito para `reachEstimate`/`engagementScore`/`authors` — aggregate/
+> dimensão válidos conforme a doc, sem payload de exemplo específico para
+> esta combinação; revisar contra logs reais.
+
 ### `bw_query_topics`
 
 Temas extraídos via `data/topics` (`extract=words,phrases,hashtags,
@@ -645,9 +777,10 @@ Adicionada em `20260710010000`.
 | `volume` | `integer` | sim | |
 | `percentage_volume` | `numeric` | não | |
 | `sentiment_positive`/`neutral`/`negative` | `integer` | sim | default `0` |
-| `trending` | `numeric` | não | |
-| `daily_series` | `jsonb` | não | array bruto do campo `days` do payload de `data/topics` para este tópico (confirmado em `developers.brandwatch.com/docs/topics`: `[{date, volume}, ...]` — sem sentimento por dia, só volume) — permite reconstruir picos de volume por Narrativa/tema (ex: "03/02 · Operação policial na Baixada Santista" do mockup de referência) sem violar a premissa de nunca somar `mentions` amostrada, já que vem do mesmo agregado oficial já buscado no passo 6.4. Adicionado 2026-07-11 (revisão de spec — payload do endpoint já trazia este dado, não capturado até então) |
-| `page_type_breakdown` | `jsonb` | não | objeto bruto do campo `pageType` do mesmo payload (confirmado: volume do tópico por canal — `blog`/`facebook`/`forum`/`general`/`image`/`instagram`/`news`/`review`/`twitter`/`video`) — mesma chamada do passo 6.4, sem custo extra de rate limit. Adicionado 2026-07-11 |
+| `trending` | `numeric` | não | só para `topic_type` de `extract=` (endpoint novo) |
+| `daily_series` | `jsonb` | não | array bruto do campo `days` — só para `topic_type = 'legacy_mixed'`, ver nota abaixo |
+| `page_type_breakdown` | `jsonb` | não | objeto bruto do campo `pageType` — só para `topic_type = 'legacy_mixed'`, ver nota abaixo |
+| `burst` | `numeric` | não | métrica de tendência própria do endpoint legado, escala diferente de `trending` — só para `topic_type = 'legacy_mixed'`. Adicionado `20260712040000` |
 | `metric_week` | `date` | sim | data do snapshot de sync (não um bucket semanal literal — `data/topics` é um agregado sobre a janela toda, não uma série por semana; usado só como marcador de frescor/throttle) |
 | `synced_at` | `timestamptz` | sim | |
 
@@ -657,14 +790,27 @@ Throttle semanal (mesmo padrão de `bw_query_metrics_weekly`,
 `isTopicsStale()` em `bw-sync/index.ts`), por `categoryTarget` (query
 inteira + cada Narrativa).
 
-> ⚠️ **Ampliação pendente de implementação (2026-07-11, revisão de spec)**:
-> `daily_series`/`page_type_breakdown` ainda não têm migration/código
-> correspondentes — mapeamento de campos adicional sobre a mesma chamada já
-> feita no passo 6.4 de `sync-brandwatch.md`, não um endpoint novo. Nomes de
-> campo (`days`, `pageType`) confirmados direto contra
-> `developers.brandwatch.com/docs/topics`, não inferidos — falta só
-> confirmar contra um payload real de produção (logs) antes de consumir
-> estes dois campos numa UI.
+> ✅ **Correção de atribuição + implementação (2026-07-12, migration
+> `20260712040000`, auditoria pedida pelo usuário contra
+> `developers.brandwatch.com/docs/topics` vs. `/docs/data-topics`)**: a
+> nota anterior (2026-07-11) tinha planejado `daily_series`/
+> `page_type_breakdown` como se viessem do **mesmo** payload que
+> `syncTopicsData()` já chama (`data/topics`, endpoint **novo**,
+> `extract=`/`metrics=`) — **errado**: `days`/`pageType` só existem na
+> resposta do endpoint **legado** (`data/volume/topics/queries`, doc
+> `topics`), confirmado via quote literal do payload de exemplo de cada
+> página. O endpoint novo devolve `sentimentScore`/`percentageVolume`/
+> `trending`/`timeSeries` (quando `metrics` pedir), **sem** `days` nem
+> `pageType` — os dois endpoints são fontes de dado genuinamente
+> diferentes, não duas docs do mesmo endpoint (mesmo padrão do achado
+> `topauthors`/`toptweeters` abaixo). Como o endpoint legado não aceita
+> `extract` (devolve uma mistura de tipos de tópico já rankeados por
+> `burst`), essas linhas usam `topic_type = 'legacy_mixed'` em vez de um
+> dos valores de `extract` — `nova função `syncLegacyTopicsData()`,
+> chamada logo após `syncTopicsData()` dentro da mesma fase `topics`
+> (mesmo throttle semanal, sem fase própria). `burst` é uma métrica de
+> tendência distinta de `trending` (algoritmo/escala diferentes) — nunca
+> comparar os dois valores diretamente.
 
 > ⚠️ **Revertido (2026-07-11, migration `20260711010000`)**:
 > `engagement_total`/`reach_estimated` chegaram a existir aqui
@@ -816,6 +962,44 @@ acelera consultas de "só os influentes".
 > "qualquer chamada de Mentions ou Data Retrieval (charts)". Revisar contra
 > logs reais.
 
+> ✅ **"Top Tweeters" implementado como tabela própria (2026-07-12,
+> migration `20260712040000`, pedido do usuário: "termine integração do
+> top-tweeters... considere esses dois endpoints como informações
+> distintas, porém igualmente importantes")**: confirmado via auditoria
+> direta contra `developers.brandwatch.com/docs/top-tweeters` (quote
+> literal do payload de exemplo) que "Top Tweeters"/"Top X (Twitter)
+> Authors" é um endpoint **próprio** (`data/volume/toptweeters/queries`),
+> **diferente** do "Top Authors" geral (`data/volume/topauthors/queries`,
+> acima) — não é o mesmo endpoint com dois nomes de doc, como uma leitura
+> anterior (de fora desta spec — resumo curado da skill `brandwatch-api`)
+> tinha assumido. `topauthors` rankeia por volume entre **todas** as
+> plataformas da Query; `toptweeters` rankeia especificamente autores de
+> X — o que mitiga, para X especificamente, a limitação já documentada
+> acima ("Top Authors é ordenado por volume/relevância, não por
+> seguidores... autor de altíssimo alcance com baixo volume pode ficar
+> fora mesmo no limite máximo"), já que um autor de alto alcance mas baixo
+> volume geral ainda pode rankear alto dentro do universo só-Twitter.
+> Tabela própria (`bw_query_top_tweeters`, ver `syncTopTweeters()`), não
+> uma coluna discriminadora dentro de `bw_query_top_authors` — o mesmo
+> autor pode aparecer nos dois rankings com métricas potencialmente
+> diferentes (universos de ranking diferentes), e a chave única de
+> `bw_query_top_authors` (`project_id, query_id, category_id_key, author,
+> metric_week`) colidiria se tentasse guardar as duas linhas juntas.
+
+### `bw_query_top_tweeters`
+
+Estrutura idêntica a `bw_query_top_authors` (mesmas colunas:
+`author`/`volume`/`reach_estimate`/`impact`/`followers`/`is_influential`/
+`tweets`/`retweets`/`account_type`/`country_code`/`country_name`/
+`sentiment_positive`/`neutral`/`negative`/`platform_stats`/`category_id`/
+`category_id_key`/`metric_week`/`synced_at`), populada por
+`data/volume/toptweeters/queries` em vez de `data/volume/topauthors/queries`
+— ver nota acima. Mesmo throttle semanal, mesma fase-irmã (`top_tweeters`,
+logo após `top_authors` em `SYNC_STEPS`). **Não** alimenta
+`author_enrichment` (impressões/temas por autor) nesta leva — esse
+enriquecimento continua restrito aos top 10 de `bw_query_top_authors`,
+ampliar para `bw_query_top_tweeters` fica como ampliação futura.
+
 > ✅ **Ampliação (2026-07-10, migration `20260710050000`)**: pedido do
 > usuário — "capturar todos os top autores que tiverem mais de 100000
 > seguidores e considerar que são os mais influentes". `limit` subiu pro
@@ -895,6 +1079,58 @@ domínio (nome/gênero/tipo de conta/interesses), não só do site em si.
 padrão de `bw_query_top_authors` (query inteira + cada Narrativa via
 `categoryTarget`, `category=<id>` como filtro).
 
+> ✅ **"Top Shared URLs" já coberto, sem gap (2026-07-12, auditoria pedida
+> pelo usuário)**: `developers.brandwatch.com/docs/top-shared-urls`
+> documenta o endpoint `data/urls` — **o mesmo path** já implementado como
+> `bw_query_x_insights` (`insight_type = 'url'`, doc "Stories" dentro de
+> "X (Twitter) Insights", ver acima). Não são dois endpoints diferentes com
+> o mesmo path por coincidência — é literalmente o mesmo endpoint,
+> documentado em duas páginas da doc da Brandwatch (uma vez dentro da
+> família "X Insights", outra como item avulso de "Data Retrieval"). Sem
+> gap, sem tabela nova. Única imprecisão a notar: o endpoint não é
+> restrito a X apesar de viver na página/família "X (Twitter) Insights" —
+> `bw-sync` hoje só chama os 4 endpoints de X Insights (incl. este) quando
+> a Query/Narrativa tem presença relevante em `page_type = 'twitter'`
+> (salvaguarda de orçamento, ver `bw_query_x_insights` acima) — isso
+> significa URLs compartilhadas em Queries **sem** presença em X não são
+> capturadas por este caminho. Não corrigido nesta leva (URL-sharing é
+> majoritariamente um padrão de comportamento de X na prática, mesmo o
+> endpoint não sendo tecnicamente restrito) — ampliação futura se o
+> produto precisar de URLs compartilhadas fora de X.
+
+### `bw_query_top_shared_sites`
+
+✅ **Implementado 2026-07-12** (migration `20260712040000`, achado de
+auditoria pedida pelo usuário contra
+`developers.brandwatch.com/docs/top-shared-sites`). **Distinto de "Top
+Sites" acima**: `data/sharedsites` mede domínios mais
+**compartilhados/linkados dentro do conteúdo** das mentions ("a breakdown
+of the top sites hosting the most link shares within your query topic"),
+não domínios de onde as mentions em si vêm (isso é "Top Sites"). Payload
+simples, sem o envelope `data`/`values` de Top Sites/Top Authors/Top
+Tweeters — mesma família rasa de `bw_query_x_insights`.
+
+| Campo | Tipo | Obrigatório | Descrição |
+|---|---|---|---|
+| `id` | `uuid` | sim | PK |
+| `project_id` | `bigint` | sim | FK → `bw_projects(id)` ON DELETE CASCADE |
+| `query_id` | `bigint` | sim | FK → `bw_queries(id)` ON DELETE CASCADE |
+| `category_id` | `bigint` | não | FK → `bw_categories(id)`; `null` = ranking da Query inteira, preenchido = por Narrativa |
+| `category_id_key` | `bigint` | sim | gerada, `coalesce(category_id, 0)` |
+| `domain` | `text` | sim | do campo `name` do payload |
+| `label` | `text` | não | presente no payload, `null` nos exemplos vistos |
+| `volume` | `integer` | sim | default `0` |
+| `tweets` | `integer` | não | |
+| `retweets` | `integer` | não | |
+| `impressions` | `bigint` | não | mesma classe de risco de overflow de outros campos de impressões/audiência (ver `20260712000000`) |
+| `metric_week` | `date` | sim | mesmo caráter de snapshot que `bw_query_top_sites.metric_week` |
+| `synced_at` | `timestamptz` | sim | |
+
+**Índices**: unique `(project_id, query_id, category_id_key, domain,
+metric_week)`. **Políticas RLS**: select-only via `project_id`. Throttle
+semanal, mesmo padrão de `bw_query_top_sites` (query inteira + cada
+Narrativa via `categoryTarget`).
+
 ### `bw_query_author_topics`
 
 ✅ **Implementado 2026-07-11** (mesma revisão que corrigiu a conclusão de
@@ -963,6 +1199,7 @@ renderizados sobre essas mesmas dimensões de chart; não há necessidade
 | `value` | `text` | sim | o bucket devolvido pela dimensão (ex: `"male"`, `"Brazil"`, `"São Paulo"`) |
 | `metric_date` | `date` | sim | |
 | `total_mentions` | `integer` | sim | default `0` |
+| `net_sentiment` | `numeric` | não | agregado oficial, `data/netSentiment/{dimensão}/days` (mesma dimensão de `dimension_type`) — só para os 4 `dimension_type` de localização (`country`/`continent`/`city`/`region`), ver nota abaixo. Adicionado `20260712020000` |
 | `synced_at` | `timestamptz` | sim | |
 
 **Índices**: unique `(project_id, query_id, dimension_type, value, metric_date)`.
@@ -1000,6 +1237,17 @@ value: contagem}`, mesmo shape de `data/volume/pageTypes/days`) — não
 confirmado com um payload de exemplo específico pra `gender`/`countries`
 etc. Mesma categoria de risco já aceita pra `syncPlatformMetrics`/
 `syncCategoryDailyAggregate`.
+
+> ✅ **`net_sentiment` por localização adicionado (2026-07-12, migration
+> `20260712020000`)** — resolve "Sentimento por localização"
+> (`intelligence-center/sentiment-analysis.md`), mesma resposta do usuário
+> que resolveu o gap de plataforma acima. Só para os 4 `dimension_type` de
+> localização (`country`/`continent`/`city`/`region`) — os 4 específicos de
+> X (`gender`/`account_type`/`interest`/`profession`) não foram pedidos
+> para sentimento e não ganham a coluna nesta leva (`net_sentiment` fica
+> `null` para essas linhas, sem custo de chamada extra). Mesma limitação de
+> "score único" já registrada para `bw_query_metrics_daily_by_platform.net_sentiment`
+> acima — não é split positivo/neutro/negativo.
 
 ---
 
@@ -1077,6 +1325,8 @@ narrative_id in (
 | `sentiment_positive`/`neutral`/`negative` | `integer` | sim | default `0`, idem |
 | `reach_estimated`      | `bigint`      | não | de `bw_query_metrics_daily.reach_estimate` — `null` até `bw-sync` sincronizar essa coluna pro dia em questão, **nunca** estimado localmente. Corrigido de `integer` pra `bigint` em `20260712000000` (mesmo risco de overflow da coluna de origem) |
 | `engagement_total`     | `numeric`     | não | de `bw_query_metrics_daily.engagement_score` — mesma regra |
+| `unique_authors`       | `integer`     | não | de `bw_query_metrics_daily.unique_authors` — mesma regra. ✅ Adicionado `20260712020000`, ver nota de `unique_authors` em `bw_query_metrics_daily` acima |
+| `impressions`          | `bigint`      | não | de `bw_query_metrics_daily.impressions` — mesma regra. ✅ Adicionado `20260712030000` |
 | `created_at`           | `timestamptz` | sim | `now()` |
 
 **Índices**: unique `(narrative_id, metric_date, period)`.
@@ -1108,9 +1358,17 @@ narrative_id in (
 > `bw_query_metrics_daily` (agregado oficial da Brandwatch). Narrativa sem
 > `bw_category_id` (só `narrative_signals`) **não recebe nenhuma linha** —
 > sem agregado oficial disponível, a tabela fica sem dado em vez de um
-> número que não reflete a realidade. `unique_authors`/`top_domain`/
-> `repost_count`/`comment_count` não existem mais como coluna — não há
-> equivalente oficial da Brandwatch pra eles quebrado por Category.
+> número que não reflete a realidade. `top_domain`/`repost_count`/
+> `comment_count` não existem mais como coluna — não há equivalente oficial
+> da Brandwatch pra eles quebrado por Category. **`unique_authors`
+> reintroduzido em 2026-07-12** (migration `20260712020000`) — na época
+> desta nota (2026-07-11) a conclusão era "sem alternativa oficial", mas
+> pesquisa mais a fundo encontrou o aggregate `authors` de chart
+> (`chart-dimensions-and-aggregates`), a mesma classe de agregado oficial
+> não amostrado que já sustenta `reach_estimated`/`engagement_total` — não
+> é uma reversão da premissa, é a mesma premissa aplicada com uma fonte que
+> não tinha sido encontrada ainda. Ver nota completa em
+> `bw_query_metrics_daily.unique_authors` acima.
 
 > ✅ **`refresh_narrative_metrics()` finalmente agendada (2026-07-10)**:
 > a função existe desde a migration inicial mas **nunca teve um

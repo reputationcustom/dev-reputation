@@ -54,28 +54,35 @@ computação síncrona, diferente de esperar rede).
 |---|---|
 | `metadata` | Passo 3 (bootstrap/refresh condicional) |
 | `mentions` | Passo 5 (polling paginado) |
-| `daily_metrics` | Passos 6, 6.3, 6.3b (sentimento diário + reach/engagement + plataforma — sempre rodam, não são "stale-gated") |
+| `daily_metrics` | Passos 6, 6.3, 6.3b (sentimento diário + reach/engagement/autores únicos/impressões + plataforma incl. autores/engajamento/sentimento líquido por plataforma — sempre rodam, não são "stale-gated") |
 | `weekly_monthly` | Passo 6.1 (semanal/mensal, throttle 7/30 dias) |
-| `topics` | Passo 6.4 (temas, throttle 7 dias) |
+| `topics` | Passo 6.4 (temas — endpoint novo `data/topics` + endpoint legado `data/volume/topics/queries`, throttle 7 dias) |
 | `platform_by_narrative` | Passo 6.3c (breakdown de plataforma por Narrativa, throttle 7 dias) |
 | `x_insights` | Passo 6.4b (hashtags/emojis/URLs/autores citados de X, throttle 7 dias) |
-| `top_authors` | Passo 6.5 (ranking de autores, throttle 7 dias) |
-| `author_enrichment` | Passo 6.7 (impressões + temas dos top 10 autores, throttle 7 dias) |
-| `top_sites` | Passo 6.8 (ranking de sites/domínios, throttle 7 dias) |
-| `demographics` | Passo 6.6 (demografia — gender/localização, throttle 7 dias) |
+| `top_authors` | Passo 6.5 (ranking geral de autores, throttle 7 dias) |
+| `top_tweeters` | ✅ Passo 6.5b — **novo** (2026-07-12): ranking específico de autores de X (`data/volume/toptweeters/queries`, `bw_query_top_tweeters`), distinto de `top_authors` — throttle 7 dias |
+| `author_enrichment` | Passo 6.7 (impressões + temas dos top 10 autores de `bw_query_top_authors`, throttle 7 dias) |
+| `top_sites` | Passo 6.8 (ranking de sites/domínios de onde as mentions vêm, throttle 7 dias) |
+| `top_shared_sites` | ✅ Passo 6.8b — **novo** (2026-07-12): ranking de domínios mais compartilhados/linkados dentro do conteúdo das mentions (`data/sharedsites`, `bw_query_top_shared_sites`), distinto de `top_sites` — throttle 7 dias |
+| `demographics` | Passo 6.6 (demografia — gender/localização + sentimento líquido por localização, throttle 7 dias) |
 | `sov` | Passo 6.2 (Share of Voice de Query Group + reach por candidato, throttle 7 dias) |
 
-Todas as fases acima estão ✅ **implementadas** (2026-07-11) —
-`x_insights`, `top_sites`, `demographics` (mais `reach_estimate` em `sov`)
-foram priorizadas depois de validar o modelo de dados contra um export
-real de dashboard Brandwatch (ver "Validação contra dashboard real" mais
-abaixo).
+Todas as fases acima estão ✅ **implementadas** — `x_insights`, `top_sites`,
+`demographics` (mais `reach_estimate` em `sov`) foram priorizadas depois de
+validar o modelo de dados contra um export real de dashboard Brandwatch
+(ver "Validação contra dashboard real" mais abaixo); `top_tweeters`/
+`top_shared_sites` foram adicionadas em 2026-07-12 (migration
+`20260712040000`) a partir de uma auditoria pedida pelo usuário contra a
+doc oficial da Brandwatch, que encontrou dois endpoints genuinamente
+distintos (não cobertos por engano como "a mesma coisa" que `top_authors`/
+`top_sites`) — ver `data-model.md` §5 pro racional completo de cada um.
 
 Cada invocação lê `next_step` do par escolhido, executa **só essa fase**, e
 avança o cursor pra próxima. Fases "stale-gated" (`weekly_monthly`,
-`topics`, `x_insights`, `top_authors`, `author_enrichment`, `top_sites`,
-`demographics`, `sov`) percorrem os `categoryTargets`/candidatos/dimensões
-e param no **primeiro** que precisar de trabalho real — os demais
+`topics`, `x_insights`, `top_authors`, `top_tweeters`, `author_enrichment`,
+`top_sites`, `top_shared_sites`, `demographics`, `sov`) percorrem os
+`categoryTargets`/candidatos/dimensões e param no **primeiro** que
+precisar de trabalho real — os demais
 continuam "stale" e são retomados numa invocação futura da mesma fase, não
 na mesma invocação (é isso que limita o pico de CPU; verificações de
 frescor que não acham nada pra fazer são baratas e não avançam por si só o
@@ -142,11 +149,16 @@ Brandwatch realmente entrega, painel a painel — resultado:
     `mentions` (amostrada), o que conflita com a premissa do projeto.
     Decisão de produto pendente (mesmo padrão da decisão já tomada pra
     `emotion` em `data-model.md` §3).
-  - **"Most Karma" (Reddit)** em Top Authors: não confirmado um campo de
-    karma no payload de `data/volume/topauthors/queries` que pesquisamos
-    — pode estar em `platform_stats` (guardamos o objeto bruto inteiro)
-    sem termos confirmado o nome exato do campo pra Reddit. Checar contra
-    payload real sincronizado antes de expor na UI.
+  - ✅ **"Most Karma" (Reddit) em Top Authors — confirmado (2026-07-12)**:
+    auditoria direta contra `developers.brandwatch.com/docs/top-authors`
+    confirma os campos `redditAwardeeKarma`/`redditAwarderKarma`/
+    `redditKarma` no payload de `data/volume/topauthors/queries`. Já
+    capturados sem código novo — vivem dentro de
+    `bw_query_top_authors.platform_stats` (objeto bruto inteiro, mesmo
+    raciocínio de `mentions.engagement`). Se a UI precisar exibir "karma"
+    como coluna própria (não só dentro do jsonb), é só uma extração de
+    campo já presente, sem chamada nova — mesmo padrão já usado pra
+    `tweets`/`retweets`/`account_type`/`country_code`/`country_name`.
   - **"Análise de Imagem"**: o único recurso parecido na API é "Objects &
     Logos" (`images/objects`/`images/logos`) — mas isso é um mecanismo de
     **lookup pra configurar filtro de Query** (achar IDs de logo/objeto

@@ -594,6 +594,81 @@ used to apply to `bw-sync`.)
   (`refresh_narrative_metrics()`, future `narrative_entities`, Intelligence
   Center drill-down) must reuse it rather than reimplementing the signal
   matching logic.
+- **Sprint 2 kickoff + full Brandwatch aggregate audit (2026-07-12)** —
+  user imported a frontend prototype ("Comunicação Inteligente",
+  claude.ai/design) via the `claude_design` MCP and asked for Sprint 2 to
+  be spec'd from it. This produced a new `intelligence-center` module
+  (4 specs: Narrativas exploration, Sentiment analysis, Platform analysis,
+  Electoral themes/"Pautas") plus a `_design-tokens.md` (colors/typography
+  from the prototype) and a `command-center/overview.md` stub — see
+  `.dev/specs/_index.md` for the full note. Mid-review, the user asked
+  for a rolling audit of every Brandwatch aggregate/endpoint actually
+  documented against `developers.brandwatch.com`, which found and fixed
+  several real gaps (not just spec omissions — some were silent data
+  bugs), all in migrations `20260712020000`–`20260712040000`:
+  - `bw_query_metrics_daily.reach_estimate`/`engagement_score` had
+    **never** been populated for `category_id is null` (the whole-query
+    row the Executive Overview KPI cards read) — `syncCategoryDailyAggregate()`
+    only covers the `categories` dimension, which structurally never
+    returns a whole-query total. Fixed with a new `syncQueryDailyAggregate()`
+    (dimension `queries`, single `queryId`).
+  - `unique_authors` (chart aggregate `authors`, "distinct authors who
+    posted") and `impressions` (at Narrativa/whole-query level, previously
+    only captured per-author/per-mention) were missing despite being
+    official, non-sampled Brandwatch aggregates — added to
+    `bw_query_metrics_daily`/`narrative_metrics` via the same
+    `categories`/`queries` dimension mechanism as reach/engagement.
+  - `bw_query_metrics_daily_by_platform` gained `unique_authors`/
+    `engagement_score`/`net_sentiment` (via `pageTypes` dimension);
+    `bw_query_demographics_daily` gained `net_sentiment` for the 4
+    location dimensions. `net_sentiment` is a single net score, not the
+    positive/neutral/negative split used elsewhere (no 3-dimension chart
+    call exists) — must render as visually distinct in any UI.
+  - **`data/volume/topauthors/queries` ("Top Authors") and
+    `data/volume/toptweeters/queries` ("Top Tweeters"/"Top X (Twitter)
+    Authors") are two distinct endpoints**, not the same endpoint under
+    two doc pages as a prior read (curated summary in the
+    `brandwatch-api` skill, not this file) had assumed — confirmed via
+    literal payload quotes from both doc pages. `topauthors` ranks by
+    volume across all platforms; `toptweeters` ranks specifically X
+    authors, which can surface high-follower/low-volume X accounts that
+    `topauthors` misses. Added `bw_query_top_tweeters` as its own table
+    (mirrors `bw_query_top_authors`'s shape exactly) rather than a column
+    on the existing table, since the same author can rank differently in
+    each universe.
+  - Same pattern found for **topics**: `data/topics` ("Topics (New)",
+    already implemented as `bw_query_topics`) and
+    `data/volume/topics/queries` ("Topics" legacy) are different
+    endpoints with different payload shapes — a 2026-07-11 spec revision
+    had planned `bw_query_topics.daily_series`/`page_type_breakdown`
+    (`days`/`pageType` fields) as if they came from the New endpoint's
+    response, but those fields only exist on the **legacy** endpoint's
+    payload. Never shipped in code, so no data corruption — caught before
+    it could ship. Fixed by adding a real call to the legacy endpoint
+    (`syncLegacyTopicsData()`, stored as `topic_type = 'legacy_mixed'`
+    rows in the same table) alongside the existing New-endpoint call.
+  - **`data/sharedsites` ("Top Shared Sites")** is a real, previously
+    uncaptured endpoint, distinct from `data/volume/topsites/queries`
+    ("Top Sites") — measures domains most linked/shared *within* mention
+    content, not domains mentions originate from. Added
+    `bw_query_top_shared_sites`.
+  - **"Top Shared URLs" is the exact same endpoint as X Insights'
+    "Stories"** (`data/urls`) — already correctly covered by
+    `bw_query_x_insights` (`insight_type = 'url'`), just documented under
+    two different doc pages by Brandwatch. No gap, no code change, just a
+    clarifying note (and the caveat that `bw-sync` only fetches it when
+    the Query/Narrativa has X volume, even though the endpoint itself
+    isn't X-exclusive).
+  - `SYNC_STEPS` gained two new phases (`top_tweeters` after
+    `top_authors`, `top_shared_sites` after `top_sites`); `sync_cursors_next_step_check`
+    widened accordingly (migration `20260712040000`).
+  - Bonus: confirmed the exact Reddit karma field names
+    (`redditAwardeeKarma`/`redditAwarderKarma`/`redditKarma`) on Top
+    Authors, resolving a prior "not confirmed" note in
+    `sync-brandwatch.md` — already flowing through `platform_stats` jsonb,
+    no code change needed.
+  - See `foundation/data-model.md` §5 for the full per-endpoint rationale
+    and confirmation evidence on every item above.
 
 ### Reporting/BI split
 

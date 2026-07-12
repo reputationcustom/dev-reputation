@@ -164,8 +164,8 @@ deve ser conferido contra esta lista antes de ser considerado pronto.
 | `foundation` (sync)     | Sync serial+rate-limited da Brandwatch → Supabase (`sync-brandwatch`, `narratives`) — **implementado**, ver `CLAUDE.md` | pronto | 1 | [foundation/overview.md](foundation/overview.md) |
 | `foundation` (UI)       | Executive Overview — primeira tela web (gráficos de volume/sentimento, Share of Voice, tabela de Narrativas) | rascunho — não iniciado | 2 | [foundation/executive-overview.md](foundation/executive-overview.md) |
 | `entities`              | Cadastro Nacional de Entidades (EAV via entity_tags) + enriquecimento de mentions | rascunho | 2      | — |
-| `command-center`        | CRUD de Casos (`cases`), checklist, comentários, arquivos, histórico de status | rascunho     | 2      | — |
-| `intelligence-center`   | Exploração de narrativas/mentions com filtros + enriquecimento de entidades  | rascunho     | 2      | — |
+| `command-center`        | CRUD de Casos (`cases`), checklist, comentários, arquivos, histórico de status | rascunho     | 2      | [command-center/overview.md](command-center/overview.md) |
+| `intelligence-center`   | Exploração de narrativas/mentions com filtros + enriquecimento de entidades  | rascunho     | 2      | [intelligence-center/overview.md](intelligence-center/overview.md) |
 | `threshold-engine`      | Motor de risco próprio (volume/percentual/sentimento negativo)               | rascunho     | 3      | — |
 | `intelligent-feed`      | Feed de eventos do sistema (`feed_events`: narrativas, thresholds, casos, sentimento) | rascunho | 3 | — |
 | `propagation-graph`     | Grafo de propagação de narrativas (arestas por mention + rollup materializado) | rascunho   | 3      | — |
@@ -223,6 +223,42 @@ deve ser conferido contra esta lista antes de ser considerado pronto.
 > tipada própria desde 2026-07-10, não só jsonb bruto) vão precisar ler.
 > Três tipos de dado da Brandwatch continuam **fora** do `foundation` por
 > decisão explícita, não por esquecimento — ver seção seguinte.
+
+> ✅ **`intelligence-center` ganha specs, todas `status: pronto`
+> (2026-07-12)**: a partir do protótipo de frontend "Comunicação
+> Inteligente" (claude.ai/design, importado via MCP) e do documento de
+> estrutura recomendada que o acompanha, foram escritas 4 specs de página
+> em [intelligence-center/overview.md](intelligence-center/overview.md)
+> (Exploração de Narrativas, Análise de Sentimento, Análise por Plataforma,
+> Pautas Eleitorais). Primeira leva de revisão encontrou várias métricas do
+> desenho sem agregado oficial aparente (Autores únicos, sentimento/
+> engajamento/autores por plataforma, sentimento por localização) — o
+> usuário pediu para **rever a captura antes de aceitar omitir** qualquer
+> uma; pesquisa mais a fundo contra `chart-dimensions-and-aggregates`
+> encontrou fonte oficial pra praticamente todas (aggregates `authors`/
+> `netSentiment`, antes não usados neste projeto — ver
+> `foundation/data-model.md` e migration `20260712020000`). Mesmo
+> levantamento encontrou e corrigiu um bug real: `reach_estimate`/
+> `engagement_score` nunca tinham sido populados pra `category_id is null`
+> (Query inteira) em `bw_query_metrics_daily` — os cards do Executive
+> Overview que leem essa linha estavam sempre vazios nesses 2 campos.
+> Achado relevante, sem relação com dado: **"Pautas Eleitorais" não é uma
+> entidade nova** — os exemplos do documento (Educação, Saúde,
+> Segurança...) são os mesmos nomes já usados como Narrativa de topo no
+> protótipo; "Pauta" = `narratives` ligada a uma `bw_categories` raiz, e a
+> "Narrativa dentro da pauta" do desenho = Subcategory — confirmado pelo
+> usuário (2026-07-12) que Subcategories devem virar `narratives`
+> automaticamente também, não só Categories de topo;
+> `ensureNarrativesFromCategories()` em `bw-sync/index.ts` foi alterada
+> nesse sentido. "Ações e decisões" do detalhe de Narrativa depende do
+> módulo `command-center`, que ganhou sua primeira spec
+> ([command-center/overview.md](command-center/overview.md)) detalhando o
+> que falta (schema de `cases`, vínculo com `narratives`, tabela de perfil
+> de usuário para `assignee_id`) — ainda `rascunho`, não bloqueia o resto
+> de `intelligence-center`. Do mesmo protótipo,
+> [foundation/executive-overview.md](foundation/executive-overview.md)
+> também foi revalidada (cards de topo, seletor de organização, rota de
+> detalhe de Narrativa via modal/intercepting route).
 
 ## Entidades principais
 
