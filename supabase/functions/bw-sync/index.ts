@@ -1233,8 +1233,8 @@ async function syncCategoryDailyAggregate(
   token: string,
   projectId: number,
   queryId: number,
-  aggregate: "reachEstimate" | "engagementScore" | "authors" | "impressions",
-  column: "reach_estimate" | "engagement_score" | "unique_authors" | "impressions",
+  aggregate: "reachEstimate" | "engagementScore" | "authors" | "impressions" | "netSentiment",
+  column: "reach_estimate" | "engagement_score" | "unique_authors" | "impressions" | "net_sentiment",
   startDate: Date,
   endDate: Date,
 ): Promise<void> {
@@ -1348,8 +1348,8 @@ async function syncQueryDailyAggregate(
   token: string,
   projectId: number,
   queryId: number,
-  aggregate: "reachEstimate" | "engagementScore" | "authors" | "impressions",
-  column: "reach_estimate" | "engagement_score" | "unique_authors" | "impressions",
+  aggregate: "reachEstimate" | "engagementScore" | "authors" | "impressions" | "netSentiment",
+  column: "reach_estimate" | "engagement_score" | "unique_authors" | "impressions" | "net_sentiment",
   startDate: Date,
   endDate: Date,
 ): Promise<void> {
@@ -1363,12 +1363,24 @@ async function syncQueryDailyAggregate(
   const json = await callBrandwatch(`/projects/${projectId}/data/${aggregate}/queries/days?${params.toString()}`, token);
   const results = (json.results ?? []) as { id: string | number; values?: { id: string; value: number }[] }[];
 
-  const byDate = new Map<string, number>();
+  // netSentiment é um score já normalizado (-100..100), não uma contagem —
+  // diferente de reach/engagement/authors/impressions, somar séries
+  // duplicadas do mesmo dia distorceria o valor. Na prática há no máximo 1
+  // série (um queryId só), mas usa média em vez de soma por segurança, sem
+  // mudar o comportamento das demais métricas (que continuam somando).
+  const isScoreAggregate = aggregate === "netSentiment";
+  const sums = new Map<string, number>();
+  const counts = new Map<string, number>();
   for (const series of results) {
     for (const point of series.values ?? []) {
       const date = toDateOnly(point.id);
-      byDate.set(date, (byDate.get(date) ?? 0) + point.value);
+      sums.set(date, (sums.get(date) ?? 0) + point.value);
+      counts.set(date, (counts.get(date) ?? 0) + 1);
     }
+  }
+  const byDate = new Map<string, number>();
+  for (const [date, sum] of sums.entries()) {
+    byDate.set(date, isScoreAggregate ? sum / (counts.get(date) ?? 1) : sum);
   }
 
   if (byDate.size === 0) {
@@ -2713,6 +2725,15 @@ async function runDailyMetricsStep(
   await syncCategoryDailyAggregate(
     supabase, token, projectId, queryId, "impressions", "impressions", metricsStartDate, now,
   );
+  // Gap de foundation #1 (2026-07-13): net_sentiment por Narrativa/Query
+  // inteira — já existia por plataforma (syncPlatformAggregate acima) e
+  // por localização (bw_query_demographics_daily), nunca aqui, que é o
+  // que a tabela interativa de Narrativas (indicador Sentimento, 7
+  // faixas) realmente lê. Mesmo aggregate/dimensão de reach/engagement/
+  // authors/impressions acima.
+  await syncCategoryDailyAggregate(
+    supabase, token, projectId, queryId, "netSentiment", "net_sentiment", metricsStartDate, now,
+  );
   // Corrige gap 2026-07-12: reach_estimate/engagement_score nunca tinham
   // sido populados para category_id is null (dimensão `categories` nunca
   // inclui a Query inteira) — mesma correção cobre a captura nova de
@@ -2728,6 +2749,9 @@ async function runDailyMetricsStep(
   );
   await syncQueryDailyAggregate(
     supabase, token, projectId, queryId, "impressions", "impressions", metricsStartDate, now,
+  );
+  await syncQueryDailyAggregate(
+    supabase, token, projectId, queryId, "netSentiment", "net_sentiment", metricsStartDate, now,
   );
   // Breakdown de plataforma — sempre roda, query inteira (sem quebra por
   // Narrativa).

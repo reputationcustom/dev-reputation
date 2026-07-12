@@ -1,6 +1,6 @@
 ---
 tipo: pending-tracker
-atualizado: 2026-07-13 (rev. 3)
+atualizado: 2026-07-13 (rev. 4)
 ---
 
 # Pendências — Digital Intelligent Communication
@@ -35,7 +35,9 @@ atualizado: 2026-07-13 (rev. 3)
 | 5 | `event-radar` | UI de aprovação (aceitar/rejeitar) de `cases` pendentes `high`/`critical` — ainda sem spec própria, bloqueia só esse passo específico de `schema-integration.md` | [event-radar/schema-integration.md](event-radar/schema-integration.md) |
 | 6 | `auth` | Reforçar (ou não) `admin-revoke-user-access` pra bloquear ban do admin principal no backend, não só ocultar o botão na UI | [auth/user-management.md](auth/user-management.md), "Regras de negócio" |
 
-✅ Resolvidas em 2026-07-13: extração de hashtag como campo estruturado (`mentions.insights_hashtag`
+✅ Resolvidas em 2026-07-13: `net_sentiment` oficial por Narrativa/Query
+(gap técnico #1 de foundation, migration `20260713030000` — ver
+[foundation/data-model.md](foundation/data-model.md)); extração de hashtag como campo estruturado (`mentions.insights_hashtag`
 — e um bug real de matching corrigido junto); seletor de organização/Query — **organização é a
 única unidade visível ao usuário**, Queries são sempre combinadas automaticamente e nunca
 expostas (revisado 2× nesta mesma data — a primeira versão desta resolução tinha introduzido um
@@ -56,11 +58,10 @@ igual ao protótipo (`open`/`waiting`→Pendente, `in_progress`→Em andamento,
 
 | # | O que falta | Spec | Observação |
 |---|---|---|---|
-| 1 | `bw_query_metrics_daily.net_sentiment`/`narrative_metrics.net_sentiment` — sentimento líquido oficial por Narrativa/Query | [foundation/data-model.md](foundation/data-model.md), passo 6.3d de [sync-brandwatch.md](foundation/sync-brandwatch.md) | Resolve o Sentimento (7 faixas) da tabela de Narrativas |
 | 2 | Tabela `bw_query_metrics_hourly` + fase `hourly_metrics` — grão horário | [foundation/data-model.md](foundation/data-model.md), passo 6.3e de [sync-brandwatch.md](foundation/sync-brandwatch.md) | Resolve a Velocidade (curto prazo) da tabela de Narrativas e a detecção intra-dia do `event-radar` |
 | 3 | Busca seletiva de `full_text` (top-N por Narrativa/dia, fontes não-redigidas) | [foundation/data-model.md](foundation/data-model.md) §3, passo 5 de [sync-brandwatch.md](foundation/sync-brandwatch.md) | Pré-requisito de síntese de Narrativa mais rica (Sprint 4) |
 | 4 | `bw_query_topics.daily_series`/`page_type_breakdown` (campos do endpoint legado de Topics) | [foundation/data-model.md](foundation/data-model.md) §5 | Sem consumidor definido ainda, não bloqueia nada hoje |
-| 5 | Cache do token Brandwatch no Vault (`brandwatch_credentials.access_token_secret_ref` write-back) | [foundation/brandwatch-setup.md](foundation/brandwatch-setup.md) | Gap conhecido de longa data, **não bloqueante** — `bw-sync` minta token novo a cada par "devido", já barato o bastante na cadência atual (`BW_SYNC_INTERVAL_HOURS`) |
+| 5 | Cache do token Brandwatch no Vault (`brandwatch_credentials.access_token_secret_ref` write-back) | [foundation/brandwatch-setup.md](foundation/brandwatch-setup.md) | Gap conhecido de longa data, **não bloqueante** — `bw-sync` minta token novo a cada par "devido", já barato o bastante na cadência atual (`BW_SYNC_INTERVAL_HOURS`). **Deferido a pedido do usuário (2026-07-13)**: fora do escopo desta rodada de implementação, evolução futura quando necessário |
 
 ### Outros módulos
 

@@ -54,7 +54,7 @@ computação síncrona, diferente de esperar rede).
 |---|---|
 | `metadata` | Passo 3 (bootstrap/refresh condicional) |
 | `mentions` | Passo 5 (polling paginado) |
-| `daily_metrics` | Passos 6, 6.3, 6.3b (sentimento diário + reach/engagement/autores únicos/impressões + plataforma incl. autores/engajamento/sentimento líquido por plataforma — sempre rodam, não são "stale-gated") + **net sentiment** ⚠️ especificado 2026-07-13, passo 6.3d, ainda sem migration |
+| `daily_metrics` | Passos 6, 6.3, 6.3b, 6.3d (sentimento diário + reach/engagement/autores únicos/impressões/**net sentiment** por Narrativa e Query inteira + plataforma incl. autores/engajamento/sentimento líquido por plataforma — sempre rodam, não são "stale-gated") |
 | `hourly_metrics` | ⚠️ Passo 6.3e — **especificado 2026-07-13, ainda sem migration**: volume/sentimento/net sentiment em grão horário (`bw_query_metrics_hourly`), janela móvel de 30 dias — sempre roda, não é "stale-gated" (é o oposto do throttle semanal: precisa estar sempre fresco pra detecção de curto prazo) |
 | `weekly_monthly` | Passo 6.1 (semanal/mensal, throttle 7/30 dias) |
 | `topics` | Passo 6.4 (temas — endpoint novo `data/topics` + endpoint legado `data/volume/topics/queries`, throttle 7 dias) |
@@ -68,11 +68,12 @@ computação síncrona, diferente de esperar rede).
 | `demographics` | Passo 6.6 (demografia — gender/localização + sentimento líquido por localização, throttle 7 dias) |
 | `sov` | Passo 6.2 (Share of Voice de Query Group + reach por candidato, throttle 7 dias) |
 
-Todas as fases acima estão ✅ **implementadas**, com duas exceções recentes
-ainda só especificadas (sem migration): `hourly_metrics` (fase nova) e a
-coluna `net_sentiment` dentro de `daily_metrics` (passo 6.3d) — ambas
-adicionadas à spec em 2026-07-13, ver notas nos passos 6.3d/6.3e acima e
-`data-model.md`, "Checklist antes de aplicar a migration". `x_insights`,
+Todas as fases acima estão ✅ **implementadas**, incluindo a coluna
+`net_sentiment` dentro de `daily_metrics` (passo 6.3d, migration
+`20260713030000`, 2026-07-13). Única exceção ainda só especificada (sem
+migration): `hourly_metrics` (fase nova, passo 6.3e) — ver nota no passo
+6.3e acima e `data-model.md`, "Checklist antes de aplicar a migration".
+`x_insights`,
 `top_sites`, `demographics` (mais `reach_estimate` em `sov`) foram
 priorizadas depois de validar o modelo de dados contra um export real de
 dashboard Brandwatch (ver "Validação contra dashboard real" mais abaixo);
@@ -596,8 +597,8 @@ própria `platform_by_narrative` (passo 6.3c abaixo) — ver `data-model.md`
    não faz parte do passo 6.3 (que roda toda invocação sem quebra por
    Narrativa) pra não reintroduzir o risco de CPU corrigido na "Execução em
    fases".
-6.3d. ⚠️ **Sentimento líquido (`netSentiment`) por Narrativa e por Query
-   inteira — especificado 2026-07-13, ainda sem migration** (revisão pedida pelo usuário: "verifique
+6.3d. ✅ **Sentimento líquido (`netSentiment`) por Narrativa e por Query
+   inteira — implementado 2026-07-13, migration `20260713030000`** (revisão pedida pelo usuário: "verifique
    se na foundation os dados de net sentiment estão vindo da brandwatch").
    Mesmo mecanismo do passo 6.3b: `data/netSentiment/categories/days`
    (todas as Narrativas numa chamada, via `syncCategoryDailyAggregate()`

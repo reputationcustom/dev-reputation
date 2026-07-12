@@ -474,7 +474,7 @@ security` em ambas, **sem nenhuma policy** (deny-all para `anon`/
 | `engagement_score`       | `numeric`     | não | agregado oficial, `data/engagementScore/categories/days` — adicionado `20260710040000` |
 | `unique_authors`         | `integer`     | não | agregado oficial, `data/authors/categories/days` (por Narrativa) e `data/authors/days` (Query inteira) — adicionado `20260712020000`, ver nota abaixo |
 | `impressions`            | `bigint`      | não | agregado oficial, `data/impressions/categories/days` (por Narrativa) e `data/impressions/queries/days` (Query inteira) — adicionado `20260712030000`, ver nota abaixo |
-| `net_sentiment`          | `numeric`     | não | agregado oficial, `data/netSentiment/categories/days` (por Narrativa) e `data/netSentiment/queries/days` (Query inteira) — ⚠️ especificado 2026-07-13, ainda sem migration (ver nota abaixo). Score único de -100 a 100 (mesmo campo já usado em `bw_query_metrics_daily_by_platform`/`bw_query_demographics_daily` desde `20260712020000` — agora também na dimensão `categories`/`queries`) |
+| `net_sentiment`          | `numeric`     | não | agregado oficial, `data/netSentiment/categories/days` (por Narrativa) e `data/netSentiment/queries/days` (Query inteira) — ✅ implementado 2026-07-13, migration `20260713030000`. Score único de -100 a 100 (mesmo campo já usado em `bw_query_metrics_daily_by_platform`/`bw_query_demographics_daily` desde `20260712020000` — agora também na dimensão `categories`/`queries`) |
 | `synced_at`              | `timestamptz` | sim | `now()` |
 
 **Índices**: unique `(project_id, query_id, category_id_key, metric_date)`.
@@ -558,19 +558,22 @@ security` em ambas, **sem nenhuma policy** (deny-all para `anon`/
 > implementados por esse motivo, não por omissão):
 > - `volume`, `reachEstimate`, `engagementScore`, `authors`, `impressions`
 >   — ✅ cobertos (ver notas desta seção).
->   `netSentiment` — ⚠️ **overclaim corrigido 2026-07-13**: esta linha
->   dizia "✅ coberto" citando só `bw_query_metrics_daily_by_platform`/
->   `bw_query_demographics_daily` — verdade pras dimensões `pageTypes`/
+>   `netSentiment` — ⚠️ **overclaim corrigido 2026-07-13, depois fechado no
+>   mesmo dia**: esta linha dizia "✅ coberto" citando só
+>   `bw_query_metrics_daily_by_platform`/`bw_query_demographics_daily` —
+>   verdade pras dimensões `pageTypes`/
 >   localização, **mas não** pra dimensão `categories`/`queries` (por
 >   Narrativa / Query inteira), que é exatamente o que a tabela interativa
 >   de Narrativas precisa pro indicador de Sentimento (ver
->   `../intelligence-center/executive-overview.md`) — até esta revisão,
+>   `../intelligence-center/executive-overview.md`) — antes desta revisão,
 >   `net_sentiment` não existia em `bw_query_metrics_daily`, então o
 >   Sentimento da tabela calculava um placeholder local
 >   (`(sentiment_positive - sentiment_negative) / total_mentions`) em vez
->   de ler o score oficial da Brandwatch. Corrigido nesta revisão — ver
->   `bw_query_metrics_daily.net_sentiment` acima e
->   `reporting.narratives_overview` abaixo.
+>   de ler o score oficial da Brandwatch. **Implementado, migration
+>   `20260713030000`** — ver `bw_query_metrics_daily.net_sentiment` acima e
+>   `reporting.narratives_overview` abaixo (o cálculo local vira só
+>   fallback, usado apenas em linhas onde `net_sentiment` ainda não
+>   sincronizou).
 > - `domains` **como aggregate** (contagem de domínios distintos, distinto
 >   da dimensão `domains` usada por `bw_query_top_sites`) — ⚠️ **não
 >   capturado**. Nenhuma spec/página pediu esse número até agora; não
@@ -1419,7 +1422,7 @@ narrative_id in (
 | `engagement_total`     | `numeric`     | não | de `bw_query_metrics_daily.engagement_score` — mesma regra |
 | `unique_authors`       | `integer`     | não | de `bw_query_metrics_daily.unique_authors` — mesma regra. ✅ Adicionado `20260712020000`, ver nota de `unique_authors` em `bw_query_metrics_daily` acima |
 | `impressions`          | `bigint`      | não | de `bw_query_metrics_daily.impressions` — mesma regra. ✅ Adicionado `20260712030000` |
-| `net_sentiment`        | `numeric`     | não | de `bw_query_metrics_daily.net_sentiment` — mesma regra. ⚠️ Especificado 2026-07-13, ainda sem migration |
+| `net_sentiment`        | `numeric`     | não | de `bw_query_metrics_daily.net_sentiment` — mesma regra. ✅ Adicionado `20260713030000` |
 | `created_at`           | `timestamptz` | sim | `now()` |
 
 **Índices**: unique `(narrative_id, metric_date, period)`.
@@ -1820,12 +1823,16 @@ revoke all on schema public from bi_reader;
       `narrative_metrics.reach_estimated` (migration `20260712000000`) —
       overflow real observado em `bw_query_x_insights.impressions` (valor
       ~3.96 bilhões, acima do teto de `integer`, ~2.1 bilhões)
-      → ⚠️ **ainda pendente de implementação** (spec escrita 2026-07-13,
-      sem migration ainda): `bw_query_metrics_daily.net_sentiment` + nova
-      tabela `bw_query_metrics_hourly` + nova fase `hourly_metrics` em
-      `SYNC_STEPS` (ver `sync-brandwatch.md` passos 6.3d/6.3e) — resolve os
-      gaps de Sentimento por Narrativa e de detecção intra-dia do
-      `event-radar`
+      → ✅ **`net_sentiment` implementado (2026-07-13, migration
+      `20260713030000`)**: `bw_query_metrics_daily.net_sentiment`/
+      `narrative_metrics.net_sentiment` (dimensões `categories`/`queries`,
+      `runDailyMetricsStep()` em `bw-sync/index.ts`), `refresh_narrative_metrics()`
+      e `reporting.narratives_overview` atualizados para ler o score oficial
+      — resolve o gap de Sentimento por Narrativa
+      → ⚠️ **ainda pendente de implementação**: nova tabela
+      `bw_query_metrics_hourly` + nova fase `hourly_metrics` em
+      `SYNC_STEPS` (ver `sync-brandwatch.md` passo 6.3e) — resolve a
+      detecção intra-dia do `event-radar`
 - [ ] Triggers `set_updated_at` em `organizations`, `brandwatch_credentials`, `narratives`
 - [ ] RLS habilitada em **todas** as tabelas deste módulo (inclusive
       `sync_cursors`/`sync_log`, deny-all)
