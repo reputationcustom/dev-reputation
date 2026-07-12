@@ -7,6 +7,16 @@ atualizado: 2026-07-13
 
 # Modelo de Dados — Autenticação e Administração de Usuários
 
+> ✅ **Implementado (2026-07-16)**: bug real corrigido — contas em
+> `auth.users` criadas fora do fluxo `admin-invite-user` (ex: direto pelo
+> Dashboard) ficavam sem linha em `user_profiles`, causando `406` ao abrir
+> `/perfil` (`.single()` sem resultado). Migration
+> `20260716000000_auto_create_user_profile.sql` adiciona um trigger
+> `handle_new_auth_user()` em `auth.users after insert` que garante a linha
+> para qualquer caminho de criação de conta, mais um backfill único para
+> contas já existentes. Ver `CLAUDE.md`, "`user_profiles` 406 on `/perfil`
+> — root cause and fix" para o detalhe completo.
+
 ## Entidades
 
 ### `user_profiles`

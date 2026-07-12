@@ -45,7 +45,7 @@ export function useUserProfile() {
       const { data, error } = await supabase
         .from("user_profiles")
         .select("full_name, is_admin, is_principal, timezone")
-        .single();
+        .maybeSingle();
 
       if (cancelled) return;
 

@@ -1519,9 +1519,35 @@ Brandwatch data (Sprint 1/`foundation`'s payoff). High-level shape:
   racing a not-fully-warm function right after deploy, not a code issue
   (`OPTIONS` is handled before any `Deno.env.get` call, so the missing
   secret above can't explain it). Separately observed in the same console
-  log, **not yet investigated**: `user_profiles` select returning `406`
-  (`useUserProfile()`, pre-dates this session) — consistent with that
-  session's user having no `user_profiles` row, but unconfirmed.
+  log at the time, **now confirmed and fixed (2026-07-16)**: see
+  "`user_profiles` 406 on `/perfil` — root cause and fix" below.
+
+### `user_profiles` 406 on `/perfil` — root cause and fix (2026-07-16)
+
+User report: opening `/perfil` failed with `user_profiles?select=full_name,
+is_admin,is_principal,timezone` returning `406`. Confirmed the suspicion
+noted above (2026-07-15, "unconfirmed"): `user_profiles` rows were **only**
+ever created by `admin-invite-user`'s manual `insert` — any `auth.users`
+account created through another path (Dashboard-created test account, or
+any future signup route) has no matching row. `hooks/use-user-profile.ts`
+does `.select(...).single()` with no explicit filter (relies on RLS's
+`user_profiles_select_own` to scope to the caller) — `.single()` sends
+`Accept: application/vnd.pgrst.object+json`, and PostgREST answers `406`
+rather than an empty result when that scoping yields zero rows. The
+existing 3-state hook logic (`error || !data` → error state) already
+degraded reasonably, but retrying could never succeed since the underlying
+row simply didn't exist — a data-integrity gap, not a transient failure.
+
+Fixed at the root, migration `20260716000000_auto_create_user_profile.sql`:
+a `handle_new_auth_user()` trigger (`security definer`, `set search_path =
+public`) on `auth.users after insert` now guarantees a `user_profiles` row
+for every account regardless of creation path (`on conflict (id) do
+nothing`, so it never fights with `admin-invite-user`'s own insert in the
+same transaction window); plus a one-time backfill `insert` for any
+`auth.users` row that already existed without one. `use-user-profile.ts`
+also switched `.single()` → `.maybeSingle()` as defense-in-depth (avoids a
+raw 406 if this invariant is ever violated again; behavior for the caller
+is unchanged, `!data` already routed to the error state either way).
 
 ## Directory structure
 
