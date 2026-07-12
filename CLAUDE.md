@@ -1141,6 +1141,184 @@ backend-only) and the first Edge Functions besides `bw-sync`.
   response, so the frontend never makes 3 separate calls per
   `user-management.md`.
 
+**Later additions to this module (2026-07-13, same day, after global rules
+were dictated post-implementation)** — each has its own full write-up in
+the dedicated section linked below; this is just the map from "auth module
+file" to "which rule drove the change":
+- `middleware.ts`/`app/page.tsx` — Hostinger `/` health-check restart-loop
+  fix, see "Deploy (Hostinger) — global rules" above.
+- `user_profiles.timezone`, `app/perfil/`, `hooks/use-user-profile.ts`,
+  `update-my-timezone` Edge Function — new self-service timezone feature,
+  see "User timezone — global rules" above (`auth/data-model.md` documents
+  the column/RLS impact).
+- `app/admin/users/*` skeleton loading, pagination, toast-on-toggle,
+  disable-during-inflight, inline modal field errors — see "Cross-cutting
+  UX rules" above.
+- `app/error.tsx`, `lib/errors.ts`, fixes to `app/admin/users/page.tsx` and
+  `app/reset-password/reset-password-form.tsx`'s `error`-field handling —
+  see "Backend communication failures" above.
+- `is_current_user_admin()`/`protect_principal_account()` gaining
+  `search_path`, `public.narratives_overview` gaining `security_invoker`
+  (not an auth-module table, but found during the same Security Advisor
+  pass) — see "Database security (Security Advisor)" above.
+- `console.error` logging in all 6 `admin-*` functions aligned to pass the
+  raw error object — see "Edge Function error handling" above.
+
+### aggregated-metrics module (Sprint 2)
+
+Implementation started 2026-07-12 from `.dev/specs/aggregated-metrics/`, in
+the order that module's `overview.md` prescribes — `standard-json-envelope.md`
+first, since every later piece (`sql-aggregation`, `service-layer-aggregation`,
+`edge-functions-per-page`, `ai-synthesis`) depends on this contract.
+
+- **`@reputation/shared-types` (`packages/shared-types/src/envelope.ts`)**
+  is the canonical TypeScript type for the page envelope (`PageEnvelope`) —
+  one interface/type per top-level block (`MetricCard`, `Breakdown`,
+  `Trend`, `NarrativeRow`, `AuthorRow`, `Highlight`, `TermSignal`,
+  `DisseminationGraph`), matching `standard-json-envelope.md` field-for-field,
+  plus `createEmptyEnvelope()` (every page returns all 8 top-level
+  array/object fields, even empty) and `toAiPayload()` (strips
+  `ui_meta`/`narrative_text` before the envelope goes to the AI synthesis
+  step, per that spec's "Regras de negócio"). `RiskLevel` reuses the same
+  `low|medium|high|critical` enum already established in `_index.md`'s
+  nomenclature table, shared by `narratives[].risk_label`,
+  `authors[].risk_level`, and `highlights[].severity` — one enum, three
+  field names.
+- **`_pending.md` decision #2 resolved 2026-07-14** (user: "em
+  aggregated-metrics utilizar Tipos TS do envelope: pacote compartilhado
+  para facilitar a organização e manutenção") — first implemented
+  2026-07-12 as a single `types/envelope.ts` file (no workspace existed
+  yet), then moved the same day the decision was made explicit. First npm
+  workspace in this repo: root `package.json` gained `"workspaces":
+  ["packages/*"]` and a `"@reputation/shared-types": "*"` dependency;
+  `packages/shared-types/package.json` points `main`/`types` straight at
+  `./src/index.ts` (no build step — it's consumed as raw TS); `next.config.ts`
+  gained `transpilePackages: ["@reputation/shared-types"]` so Next compiles
+  it like local app code instead of expecting pre-built `node_modules`.
+  `types/envelope.ts` no longer exists — `types/` is back to holding only
+  `database.types.ts` (a different concern: Supabase-CLI-generated, not
+  hand-maintained contract types). **This resolves the frontend side only.**
+  Edge Functions still can't import it in production — Principle 5 (no
+  bundle reaches code outside its own `supabase/functions/<name>/` folder)
+  applies to a local *unpublished* workspace package exactly as it did to a
+  single file; `npm:`/`deno.land/x`/`jsr` specifiers only resolve published
+  packages. So the Deno side (`supabase/functions-shared-source/
+  aggregated-metrics-service.ts`, see below) still carries its own inline
+  copy of these types, kept in sync by hand — "shared package" only ever
+  had one real audience (Next.js/Node code), and this now covers it.
+- `period.granularity`/`period.comparison` are typed as plain `string`, not
+  a literal union — no spec anywhere enumerates their valid values yet (only
+  the example values `"day"`/`"previous_period"` appear in
+  `standard-json-envelope.md`). Tighten once `sql-aggregation.md` or the
+  header/period-selector UI defines the real set.
+- `term_signals[].sentiment_associated` is similarly left as plain `string`
+  — the spec doesn't say whether it reuses the 7-value `SentimentLabel` or a
+  simpler 3-way split, and inventing one would violate this project's "don't
+  invent shape without a real source" rule (same caution the spec itself
+  applies to `graph` edge types).
+
+**`sql-aggregation.md` + `service-layer-aggregation.md` implemented
+2026-07-14** (migration `20260714000000_aggregated_metrics_sql_functions.sql`
++ `supabase/functions-shared-source/aggregated-metrics-service.ts`):
+
+- **9 of the 10 functions `sql-aggregation.md` calls for are implemented**:
+  `get_metrics_cards`, `get_sentiment_breakdown`, `get_platform_breakdown`,
+  `get_theme_breakdown`, `get_volume_trend`, `get_narratives_table` (full
+  Momentum/Velocity/Risk formulas from "Scores de Narrativa", copied
+  verbatim), `get_authors_ranking`, `get_dissemination_graph`,
+  `get_term_signals` — plus `norm_growth` (copied verbatim from the spec)
+  and two new internal helpers not in the spec text but implied by its
+  "Uma organização pode ter 1+ Queries" rule: `org_query_ids(organization_id)`
+  (resolves the org's Queries via `bw_queries → bw_projects`, reused by
+  every function that needs to sum across Queries) and
+  `filter_category_ids(organization_id, filters)` (resolves
+  `filters.narratives` — the only `EnvelopeFilters` dimension actually wired
+  up this round — to the matching `bw_category_id[]`, letting the same
+  function serve both "whole Query" and "one Narrativa" scope depending on
+  what's passed). All `security invoker` (default) + `stable`, never
+  `security definer`, per the spec's explicit RLS rule.
+- **`get_active_highlights` deliberately NOT implemented** — depends on
+  `feed_events`, which doesn't exist until `event-radar` (Sprint 3, still
+  `rascunho`) is built. Tracked as gap #8 in `_pending.md`. The service
+  layer's `fetchHighlights()` already exists and returns `[]` — swapping in
+  the real RPC call later is the only change needed once that table exists.
+- **Two real gaps found between `sql-aggregation.md` and
+  `block-mapping-per-page.md`**, not invented around: (1) breakdown type
+  `'region'` (`narrative_detail`/`sentiment` pages) has no backing function
+  — `bw_query_demographics_daily` exists but `sql-aggregation.md`'s function
+  table never lists a `get_region_breakdown`; (2) "volume por
+  plataforma"/"SOV por pauta" **over time** (trends block, `platforms`/
+  `themes` pages) — `get_volume_trend` only covers the whole-query/
+  whole-Narrativa series, not a per-platform or per-Pauta time series (only
+  a static snapshot exists via `get_platform_breakdown`/`get_theme_breakdown`).
+  Both are gaps #9/#10 in `_pending.md`. The service layer's
+  `fetchOneBreakdown('region', ...)`/`fetchTrends('platforms'|'themes', ...)`
+  log and return `null`/`[]` for exactly these cases rather than fabricating
+  data — same resilience pattern the spec already mandates for a failed RPC
+  call, just extended to "RPC doesn't exist yet."
+- **`get_volume_trend`'s granularity rule is an inference, flagged in the
+  migration's own comment**: `sql-aggregation.md` cites a rule from
+  `foundation/overview.md` ("≤7 dias por dia, >31 dias por semana") that a
+  full-repo grep couldn't locate as literal text anywhere — the product
+  header only ever offers 7/14/30-day periods (`executive-overview.md`), so
+  the >31-day branch is untested by any page today. Adopted ≤31d → daily,
+  32–186d → weekly, >186d → monthly; revisit if a future spec makes the
+  exact rule explicit (matters once `executive-reports`, Sprint 4, needs
+  longer ranges).
+- **`get_dissemination_graph` returns `jsonb`, not `setof`** — the only way
+  for one Postgres function to hand back both `nodes[]` and `edges[]` as a
+  single RPC result matching `DisseminationGraph` directly, no reshaping
+  needed on the TS side. `'mention'` edges come from `mentions.insights_mentioned`
+  (confirmed real field, author handles). `'reply'`/`'retweet'` edges are
+  best-effort only: `mentions.reply_to`/`retweet_of` store the **target
+  post's URL**, not its author (Brandwatch doesn't expose that resolution —
+  see `20260710050000_influencer_and_participation_tracking.sql`'s own
+  comment on this), so an edge is only produced when that URL also matches
+  another mention already in the same Narrativa's matched set, via
+  `mentions.raw ->> 'url'`. ⚠️ The `url` key inside `raw` is **not confirmed
+  against a real payload** in this implementation (same risk category as
+  other unconfirmed `raw` field names already flagged elsewhere in this
+  file) — if wrong, the function silently produces zero reply/retweet edges
+  (mention edges keep working), never errors.
+- **`authors[].risk_level` is always `null`** — confirmed as a real spec
+  gap, not an oversight: unlike `narratives` (full "Scores de Narrativa"
+  formula), no spec anywhere defines how an individual author's risk should
+  be computed. `@reputation/shared-types`'s `AuthorRow.risk_level` was
+  widened to `RiskLevel | null` to reflect this honestly. Tracked as gap
+  #11.
+- **`supabase/functions-shared-source/aggregated-metrics-service.ts`** is
+  the canonical/master copy of `service-layer-aggregation.md`'s TS layer
+  (`assemblePageResponse`, `PAGE_BLOCKS`, the 8 `fetchX` functions) — it is
+  **never deployed**: it lives outside `supabase/functions/` on purpose
+  (`supabase functions deploy` only scans that directory, and Deno code
+  there would fail the Next.js `tsc` pass otherwise — both `tsconfig.json`'s
+  `exclude` and the deploy tooling's scope stop at `supabase/functions/`).
+  When `edge-functions-per-page.md` is implemented, each `get-page-*`
+  function must **copy** this file's contents into its own directory, per
+  Principle 5 — never import it relatively, same as every other Edge
+  Function helper in this project. Confirms the note above: even after
+  `_pending.md` decision #2 landed in favor of a shared package, the
+  `packages/shared-types` workspace still can't be imported by a deployed
+  Edge Function (Principle 5 blocks that regardless of packaging), so
+  duplication was never really optional for the Deno side —
+  `@reputation/shared-types` (frontend) and this file's inlined type
+  copies (Deno) are the two canonical sources, kept in sync by hand.
+- **`PAGE_BLOCKS` mirrors `block-mapping-per-page.md` exactly** (verified
+  cell-by-cell against that table, including catching that `narrative_detail`
+  does **not** get a `highlights` block — easy to miscopy since `overview`/
+  `sentiment`/`themes` all do). `PAGE_BREAKDOWN_TYPES` is an addition beyond
+  what any spec enumerates explicitly — `block-mapping-per-page.md` names
+  breakdown *flavors* in prose ("sentimento/plataforma/localização da
+  narrativa") but never as a structured table, so this constant is this
+  session's best-faith transcription of that prose into code.
+- **`effectiveFilters(ctx)`**: when `PageContext.narrativeId` is set (only
+  meaningful for `narrative_detail`), every block's SQL call automatically
+  scopes to `filters.narratives = [narrativeId]` — reuses the exact
+  mechanism `sql-aggregation.md` already defines for `filters.narratives`
+  rather than special-casing "detail page" logic per block. The future
+  `get-narrative-detail` Edge Function only needs to set `narrativeId` in
+  the context; no per-block branching required.
+
 ## Directory structure
 
 ```

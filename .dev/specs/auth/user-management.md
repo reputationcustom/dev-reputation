@@ -20,6 +20,28 @@ atualizado: 2026-07-13
 > do arquivo da function. Ver `CLAUDE.md` "Módulo auth (Sprint 2)" para o
 > resto do detalhe de implementação (padrão de autenticação das Edge
 > Functions, toasts sem biblioteca externa, etc).
+>
+> ✅ **Retrofit 2026-07-13, mesma revisão, regras globais adicionadas depois
+> da implementação inicial desta tela** (ver CLAUDE.md, "Regras
+> transversais de UX" e "Falha de comunicação com o backend"):
+> - Loading da tabela trocado de spinner-only pra skeleton (linhas falsas
+>   no formato da tabela real, `components/ui/skeleton.tsx`).
+> - Paginação de 10 por página (`components/ui/pagination.tsx`,
+>   `DEFAULT_PAGE_SIZE`) — a tabela não tinha nenhuma paginação antes.
+> - Toggle "Admin" agora também dá toast de sucesso (não só erro/rollback,
+>   ver linha "Admin alternado" na tabela de notificações abaixo).
+> - Checkbox de admin e menu `⋮` de uma linha ficam desabilitados enquanto
+>   uma ação daquele usuário (toggle ou revogar/restaurar) está em voo —
+>   evita duplo-clique disparando a mesma ação duas vezes.
+> - Erros de validação dos modais "Convidar usuário"/"Editar organizações"
+>   (e-mail já cadastrado, nenhuma organização selecionada) passaram de
+>   banner genérico no topo do modal para inline, junto do campo relevante.
+> - `app/admin/users/page.tsx`: o `select('is_admin')` que faz o gate da
+>   rota ignorava o campo `error` do retorno do Supabase client — um erro
+>   transitório de rede/DB fazia um admin de verdade ser redirecionado
+>   silenciosamente pra `/overview`, como se não fosse admin. Corrigido pra
+>   propagar (`throw`) e deixar `app/error.tsx` (boundary raiz) tratar,
+>   nunca mais assumindo "não-admin" como default em caso de falha.
 
 ## Objetivo
 

@@ -51,6 +51,7 @@ cascade):
 create or replace function protect_principal_account()
 returns trigger
 language plpgsql
+set search_path = public
 as $$
 begin
   if TG_OP = 'DELETE' then
@@ -71,6 +72,13 @@ create trigger protect_principal_account_trigger
   before update or delete on user_profiles
   for each row execute function protect_principal_account();
 ```
+
+> ⚠️ **Achado do Security Advisor, corrigido 2026-07-13** (migration
+> `20260713070000`, ver CLAUDE.md "Database security (Security Advisor)"):
+> a versão original desta function (migration `20260713000000`) não tinha
+> `set search_path`, vulnerável a search-path hijacking — o bloco SQL acima
+> já reflete a versão corrigida (`alter function ... set search_path =
+> public`, aplicado sem recriar o corpo da function).
 
 **Índices**:
 - PK já cobre lookup por `id` (o caso mais comum: `id = auth.uid()`).

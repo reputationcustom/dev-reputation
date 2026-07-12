@@ -15,6 +15,16 @@ atualizado: 2026-07-13
 > para cumprir literalmente "não faz login automático" (a sessão de
 > recuperação usada por `updateUser` já deixa o usuário autenticado, então
 > sem esse `signOut()` explícito ele continuaria logado).
+>
+> ✅ **Ajustado 2026-07-13** (regra global "Falha de comunicação com o
+> backend" em CLAUDE.md): a checagem de sessão de `/reset-password` no
+> mount (`supabase.auth.getSession()`) ignorava o campo `error` do retorno
+> e tratava qualquer ausência de sessão — inclusive uma falha de
+> rede/backend genuína — como "link expirado ou inválido". Corrigido com um
+> 4º estado (`SessionState`: `checking`/`valid`/`invalid`/`error`) distinto
+> do estado "link inválido" original do spec — `error` mostra
+> `BACKEND_ERROR_MESSAGE` + "Tentar novamente" (re-executa a checagem),
+> nunca a mensagem de link expirado quando o problema foi de conectividade.
 
 ## Objetivo
 

@@ -56,7 +56,7 @@ graph TD
     AGGMETRICS --> REPORTS
 
     style FOUNDATION fill:#c3e6cb,stroke:#2e7d32
-    style AUTH fill:#fff3cd,stroke:#8a6d00
+    style AUTH fill:#c3e6cb,stroke:#2e7d32
     style AGGMETRICS fill:#fff3cd,stroke:#8a6d00
     style INTEL fill:#fff3cd,stroke:#8a6d00
     style ENTITIES fill:#e2e3e5,stroke:#6c757d
@@ -85,18 +85,19 @@ de `intelligence-center`, ver `_index.md`, "Módulo `command-center` removido".
 | ⬜ Cinza | `rascunho` — spec ainda em elaboração ou nem começada, não implementar |
 | Seta pontilhada | Dependência fraca/opcional (fallback existe sem o módulo de origem) |
 
-> Nota de granularidade: `auth` está marcado amarelo (não implementado) no diagrama porque a
-> maior parte do módulo (login, recuperação de senha, administração de usuários) ainda não tem
-> UI/Edge Function — mas `auth/data-model.md` **já está implementado** (migration
-> `20260713000000_user_profiles_and_principal_admin.sql`, admin principal já cadastrado). Ver a
-> tabela da seção 3 para o status por funcionalidade, não só por módulo.
+> ✅ **`auth` passou a verde em 2026-07-13**: as 4 specs do módulo
+> (`data-model.md`, `login.md`, `password-recovery.md`, `user-management.md`)
+> estão todas `implementado` — `middleware.ts` + `/login` + `/forgot-password`
+> + `/reset-password` + `/admin/users` + `/perfil` (fuso horário do usuário)
+> + as 6 Edge Functions `admin-*` + `update-my-timezone`. Ver `CLAUDE.md`,
+> "Módulo auth (Sprint 2)", pro detalhe completo de implementação.
 
 ## 3. Módulos (resumo)
 
 | Módulo | O que é | Status | Spec |
 |---|---|---|---|
 | `foundation` | Sync Brandwatch → Supabase + Narrativas como entidade viva | implementado | [foundation/overview.md](foundation/overview.md) |
-| `auth` | Login/recuperação de senha (Supabase Auth) + administração de usuários (admin-only) | `data-model.md` implementado, resto pronto | [auth/overview.md](auth/overview.md) |
+| `auth` | Login/recuperação de senha (Supabase Auth) + administração de usuários (admin-only) + `/perfil` (fuso horário) | implementado | [auth/overview.md](auth/overview.md) |
 | `entities` | Cadastro Nacional de Entidades (partido/espectro/cargo) + enriquecimento de mentions | rascunho | — |
 | `intelligence-center` | As 5 páginas do frontend (Executive Overview, Narrativas, Sentimento, Plataformas, Pautas Eleitorais) + `cases` (ações/decisões, ex-`command-center`) | pronto — não implementado | [intelligence-center/overview.md](intelligence-center/overview.md) |
 | `aggregated-metrics` | Envelope JSON único + SQL de agregação + Edge Functions por página, consumido pelo frontend e pela IA | pronto — não implementado | [aggregated-metrics/overview.md](aggregated-metrics/overview.md) |
