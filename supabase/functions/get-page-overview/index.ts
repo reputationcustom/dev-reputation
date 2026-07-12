@@ -629,7 +629,12 @@ Deno.serve(async (req) => {
 
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL')!,
-      Deno.env.get('SUPABASE_PUBLISHABLE_KEY')!,
+      // SUPABASE_PUBLISHABLE_KEY só existe se alguém provisionou explicitamente
+      // (Princípio técnico 3) — SUPABASE_ANON_KEY é o auto-injetado pela
+      // plataforma Supabase em toda Edge Function, sem setup manual, mesmo
+      // valor. Mesmo padrão de fallback já usado por admin-*/update-my-timezone
+      // pro par SUPABASE_SECRET_KEY/SUPABASE_SERVICE_ROLE_KEY.
+      Deno.env.get('SUPABASE_PUBLISHABLE_KEY') ?? Deno.env.get('SUPABASE_ANON_KEY')!,
       { global: { headers: { Authorization: authHeader } } },
     )
 

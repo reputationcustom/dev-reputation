@@ -1498,6 +1498,30 @@ Brandwatch data (Sprint 1/`foundation`'s payoff). High-level shape:
   browser automation available in this environment, no test credentials
   supplied), so the widgets' real rendering against live Brandwatch data
   is unverified beyond code review and the mocked-out state transitions.
+  **This local blind spot produced a real production bug, found the same
+  day via the user's browser console on `dev.comunicacaointeligente.digital`**:
+  all 6 `get-page-*`/`get-narrative-detail` functions returned `503` on
+  every call. Root cause: `Deno.env.get('SUPABASE_PUBLISHABLE_KEY')!` with
+  no fallback — that env var only exists if someone runs `supabase secrets
+  set SUPABASE_PUBLISHABLE_KEY=...` explicitly (Principle 3's naming), and
+  nobody had, since no Edge Function needed it before this batch (`admin-*`/
+  `bw-sync`/`update-my-timezone` all use the secret key, not the publishable
+  one). `createClient(url, undefined, ...)` throws, caught by the handler's
+  `try/catch`, surfaced as 503 — exactly the symptom. Fixed by adding the
+  same fallback pattern every other function in this project already uses
+  for its own key pair (`SUPABASE_SECRET_KEY ?? SUPABASE_SERVICE_ROLE_KEY`):
+  `Deno.env.get('SUPABASE_PUBLISHABLE_KEY') ?? Deno.env.get('SUPABASE_ANON_KEY')`
+  — `SUPABASE_ANON_KEY` is the same key value under Supabase's legacy name,
+  auto-injected into every Edge Function by the platform with zero manual
+  setup, so this fix needs no secret provisioning to take effect. A
+  transient CORS-preflight failure logged once before the 503s started
+  didn't recur on later requests — most likely the very first request
+  racing a not-fully-warm function right after deploy, not a code issue
+  (`OPTIONS` is handled before any `Deno.env.get` call, so the missing
+  secret above can't explain it). Separately observed in the same console
+  log, **not yet investigated**: `user_profiles` select returning `406`
+  (`useUserProfile()`, pre-dates this session) — consistent with that
+  session's user having no `user_profiles` row, but unconfirmed.
 
 ## Directory structure
 
