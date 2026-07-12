@@ -1,4 +1,4 @@
----
+﻿---
 tipo: glossary
 atualizado: 2026-07-06
 ---
@@ -26,8 +26,24 @@ exatos em variáveis, componentes, tabelas e comentários.
   `app_metadata.organization_id` do JWT.
 - **Tabela no banco**: `organization_members`
 - **Spec de dados**: [foundation/data-model.md](foundation/data-model.md)
-- **Nota de escopo**: no MVP só a estrutura existe — sem tela/fluxo de convite
-  ou gestão de organizações.
+- **Nota de escopo**: ✅ **atualizada 2026-07-13** — convite de usuário e
+  associação a organizações passam a ter tela própria (admin-only), ver
+  [auth/user-management.md](auth/user-management.md). Ainda **não** existe
+  criação de organização nem troca de organização ativa pela UI — isso
+  continua fora do MVP.
+
+### User Profile
+- **Definição**: Perfil de aplicação 1:1 com `auth.users` (Supabase Auth) —
+  nome de exibição e o flag `is_admin` (administrador da plataforma,
+  **global**, não por organização). Um dos perfis é `is_principal = true`
+  (o admin fundador, `lidiane.carvalho@gmail.com`) — nunca pode ser
+  excluído nem perder `is_admin`.
+- **Sinônimos a evitar**: não confundir com `Entity` (pessoa/veículo/
+  partido monitorado no debate público) — `User Profile` é sempre um
+  usuário **do produto** (equipe da Lidi/cliente), nunca alguém sendo
+  monitorado.
+- **Tabela no banco**: `user_profiles`
+- **Spec de dados**: [auth/data-model.md](auth/data-model.md)
 
 ### Project
 - **Definição**: Silo da Brandwatch que contém Queries, Tags e Categories.
@@ -41,6 +57,20 @@ exatos em variáveis, componentes, tabelas e comentários.
 - **Definição**: Busca booleana da Brandwatch (`type: monitor`) ou Channel
   (`twitter`/`publicfacebook`/`instagram`) dentro de um Project.
 - **Sinônimos a evitar**: "busca", "monitor" (usar "Query" mesmo em português).
+- ✅ **Uma Organization está vinculada a 1 ou mais Queries** (confirmado
+  2026-07-13), mas **Query é um detalhe técnico, nunca exposto ao usuário
+  final** — pedido explícito: "o seletor de organização é independente de
+  Query... as Queries devem ser transparentes para o usuário final, ele só
+  entende organização". Vínculo organização↔Queries é resolvido no
+  cadastro/configuração da organização (não pelo usuário em tempo de uso —
+  ver `foundation/overview.md`). Quando uma organização tem mais de uma
+  Query, a aplicação **combina os dados de todas automaticamente**: soma
+  para métricas agregadas, união para listas (ex: tabela de Narrativas) —
+  ver [aggregated-metrics/sql-aggregation.md](aggregated-metrics/sql-aggregation.md).
+  Internamente, todo dado por Narrativa (`narrative_metrics.query_id`,
+  `sov_percent` etc.) continua calculado relativo à **sua própria** Query,
+  nunca ao total combinado da organização — só não é algo que o usuário
+  escolhe ou percebe.
 - **Tabela no banco**: `bw_queries`
 - **Spec de dados**: [foundation/data-model.md](foundation/data-model.md)
 
@@ -113,41 +143,57 @@ exatos em variáveis, componentes, tabelas e comentários.
 - **Spec de dados**: [entities/data-model.md](entities/data-model.md)
 
 ### Caso (Case)
-- **Definição**: Unidade operacional do Command Center — uma narrativa (ou
-  situação) que virou operação de resposta, com responsável, prazo, checklist,
-  comentários e nível de risco. Pode estar vinculado a 0 ou 1 Category/Narrativa
-  Brandwatch.
+- **Definição**: Ação/decisão de resposta vinculada a uma Narrativa — o que o
+  time de comunicação está fazendo a respeito. ✅ **Simplificado 2026-07-13**:
+  não é mais um "Command Center" (módulo removido, nunca teve spec própria
+  além disso) — `cases` é dado próprio de `intelligence-center`, schema
+  mínimo, somente leitura (ver "Ações e decisões" do detalhe de Narrativa).
+  Checklist/comentários/arquivos/histórico de status/prioridade/nível de
+  risco próprio **não existem ainda** — ficam para quando forem pedidos,
+  não são schema atual.
 - **Sinônimos a evitar**: termo de produto em português ("Caso"), mas tabela e
   colunas em inglês (`cases`, não `casos`) — mesma convenção aplicada a
   Narrativa/`narratives`.
-- **Tabela no banco**: `cases` (`title`, `status`, `priority`, `risk_level`,
-  `assignee_id`, `due_date`, `summary`, `next_action`; satélites:
-  `case_checklist_items` [`description`, `completed`, `position`],
-  `case_comments` [`author_id`, `content`], `case_files` [`file_name`,
-  `storage_path`], `case_status_history` [`previous_status`, `new_status`,
-  `changed_by`, `changed_at`])
-- **Spec de dados**: [command-center/data-model.md](command-center/data-model.md)
+- **Tabela no banco**: `cases` (schema mínimo atual: `title`, `status`,
+  `narrative_id`, `assignee_id` — `references user_profiles(id)`, ver
+  [auth/data-model.md](auth/data-model.md) —, `due_date`). Colunas
+  `priority`/`risk_level`/`summary`/`next_action` e satélites
+  (`case_checklist_items`, `case_comments`, `case_files`,
+  `case_status_history`) são visão futura, não implementadas — ver tabela
+  de renomeação do schema anexo em `_index.md` pra quando forem.
+- **Spec de dados**: [intelligence-center/data-model.md](intelligence-center/data-model.md)
 
 ### Feed Inteligente (Intelligent Feed)
 - **Definição**: Stream de eventos do sistema — narrativa detectada, threshold
   disparado, caso criado/alterado, nota publicada, sentimento mudou, entidade
   nova detectada. **Não é** um feed de mentions brutas da Brandwatch.
+  **Populado pelo módulo `event-radar`** (2026-07-12, ver `_index.md`
+  "Fusão de módulos") — o motor de detecção/dedup/severidade/IA por evento
+  que substitui o que `intelligent-feed` previa como módulo próprio.
 - **Tabela no banco**: `feed_events` (`title`, `description`; enum
   `feed_event_type`: `narrative_detected`, `threshold_triggered`,
   `case_created`, `case_status_changed`, `note_published`,
   `sentiment_changed`, `new_entity_detected` — este último corrige uma
   violação da regra "nunca ator" que existia no schema anexo como
   `ator_novo_detectado`)
-- **Spec de dados**: [intelligent-feed/data-model.md](intelligent-feed/data-model.md)
+- **Spec de dados**: [event-radar/schema-integration.md](event-radar/schema-integration.md)
 
 ### Threshold
 - **Definição**: Motor de risco próprio do produto (volume, percentual de
   aumento, ou % de sentimento negativo, numa janela de minutos), **independente**
-  dos Custom Alerts nativos da Brandwatch.
-- **Tabela no banco**: `threshold_configs` (config: `type`, `value`,
-  `window_minutes`, `active`) / `threshold_events` (disparos:
-  `observed_value`, `triggered_at`, `resolved`)
-- **Spec de dados**: [threshold-engine/data-model.md](threshold-engine/data-model.md)
+  dos Custom Alerts nativos da Brandwatch. **Realizado pelo módulo
+  `event-radar`** (2026-07-12, ver `_index.md` "Fusão de módulos") — motor
+  de detecção por janelas de comparação + z-score, mais rigoroso que a
+  configuração `threshold_configs`/`threshold_events` originalmente
+  prevista; essas duas tabelas nunca chegaram a ser migradas e não fazem
+  mais parte do plano — `event-radar` usa `radar_staging_events`
+  (staging interno) e `feed_events` (saída pública) no lugar delas.
+- **Tabela no banco**: `radar_staging_events` (staging, nunca lido pelo
+  frontend — colunas `scope_type`/`scope_id`/`severity_score`/`severity`,
+  ver [event-radar/detection-engine.md](event-radar/detection-engine.md) e
+  [event-radar/severity.md](event-radar/severity.md)) → publica em
+  `feed_events` (ver "Feed Inteligente" acima)
+- **Spec de dados**: [event-radar/overview.md](event-radar/overview.md)
 
 ### Generated Report
 - **Definição**: Relatório executivo gerado periodicamente (diário, semanal,
@@ -182,8 +228,10 @@ exatos em variáveis, componentes, tabelas e comentários.
 
 | Termo                | Definição                                                                 |
 |-----------------------|----------------------------------------------------------------------------|
-| Sentiment             | Classificação `positive`/`negative`/`neutral` de uma Mention (Brandwatch). |
-| Risco (`risk_level`) | Nível categórico simples do Caso/Narrativa: `low`/`medium`/`high`/`critical`. **Não** confundir com um "Reputation Score" composto — isso está fora do escopo do MVP. |
+| Sentiment             | Classificação `positive`/`negative`/`neutral` de uma Mention (Brandwatch). Distinto de `net_sentiment` (score -100 a 100 da Narrativa/Query, ver abaixo). |
+| Net Sentiment (`net_sentiment`) | Score de sentimento líquido -100 a 100, agregado oficial da Brandwatch (`data/netSentiment/...`) — não é um cálculo local. 7 faixas (muito positivo → muito negativo), ver `aggregated-metrics/sql-aggregation.md` "Scores de Narrativa" e `_design-tokens.md`. |
+| Momentum / Velocidade (`momentum_score`/`velocity_score`) | Scores 0-100 calculados por `get_narratives_table()` (`aggregated-metrics/sql-aggregation.md`) — Momentum = força/relevância atual (volume+engajamento+autores+alcance, período selecionado); Velocidade = taxa de crescimento recente (curto prazo, independente do período selecionado). Indicadores distintos por pedido explícito do usuário (2026-07-13) — não confundir um pelo outro. |
+| Risco por Narrativa (`risk_score`) | Score 0-100 de prioridade operacional (`get_narratives_table()`), combina Sentimento/Momentum/Velocidade/alcance/influência de autores/impacto — ver `aggregated-metrics/sql-aggregation.md`. **Não** é o "Reputation Score composto" descartado em `_index.md` ("Fora de escopo do MVP") — aquele era um score de reputação agregado por candidato/Entity ao longo de todas as Narrativas, ainda fora de escopo; `risk_score` é por Narrativa individual, para triagem operacional (ordenar a tabela por prioridade), escopo bem mais restrito. `narratives.risk_level` (enum `low`/`medium`/`high`/`critical`) continua no schema como override manual opcional, não é mais o que a UI mostra por padrão. |
 | Share of Voice (Query Group) | Comparação de volume entre Queries de um Query Group (ex: candidato vs. concorrentes) — vem direto da Brandwatch (`data/volume/queries/weeks?queryGroupId=...`), incl. `reach_estimate` desde 2026-07-11. |
 | Share of Voice (Narrativa) | Menções da Narrativa ÷ total de menções de **todas as Narrativas da mesma Query** (candidato/monitoramento) no mesmo período — ex: 200 mil menções totais, Saúde 40%/Educação 22%/Segurança 18%/Economia 12%/Mobilidade 8%. ⚠️ **Corrigido 2026-07-11** (bug real: agrupava por `organization_id` inteira, misturando Narrativas de candidatos/Queries diferentes quando o Project tem mais de uma Query) — agora agrupado por `query_id` via `narrative_metrics.query_id`. **Não** é a mesma coisa que o Share of Voice de Query Group acima; ver [foundation/data-model.md](foundation/data-model.md) "Camada de reporting". |
 | Share of Voice (plataforma) | Participação de uma Narrativa dentro de uma plataforma específica, ou mix de plataformas dentro de uma Narrativa — via `bw_query_metrics_daily_by_platform.category_id` (adicionado 2026-07-11). |

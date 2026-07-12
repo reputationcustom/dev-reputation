@@ -10,23 +10,30 @@ atualizado: 2026-07-12
 > Origem: protótipo de frontend "Comunicação Inteligente" (claude.ai/design,
 > projeto `9a62a59b-c1f7-48b5-a05b-5d72e6f0db9a`) + documento de estrutura
 > recomendada (`scratch/document.txt` do mesmo projeto). O protótipo
-> interativo em si só implementa duas telas de verdade (Visão Geral —
-> já coberta por `foundation/executive-overview.md` — e Narrativas
-> list+detail); as demais páginas do documento de estrutura (Sentimento,
-> Plataformas, Pautas Eleitorais) existem só como itens de menu
-> desabilitados no protótipo (`navStatic`), sem tela construída. Este
+> interativo em si só implementa duas telas de verdade (Visão Geral e
+> Narrativas list+detail); as demais páginas do documento de estrutura
+> (Sentimento, Plataformas, Pautas Eleitorais) existem só como itens de
+> menu desabilitados no protótipo (`navStatic`), sem tela construída. Este
 > módulo nasce como a especificação escrita dessas páginas, seguindo o
 > processo de spec-driven development do projeto — pedido explícito do
 > usuário em 2026-07-12: "prosseguir com a especificação de todas as
 > páginas do ponto de vista de frontend e também de captura dos dados na
 > base integrada da brandwatch que já desenvolvemos no supabase".
+>
+> ✅ **Executive Overview movida para este módulo (2026-07-12)** — vivia em
+> `foundation/executive-overview.md` apesar de `foundation` ser só backend
+> (Sprint 1, sem UI própria por definição), o que conflitava com
+> `aggregated-metrics/overview.md` (já listava `/overview` como página de
+> `intelligence-center`, igual às demais). `intelligence-center` passa a
+> ser dono de **todas** as páginas do frontend do produto (Sprint 2), não
+> só as quatro de exploração — ver tabela abaixo.
 
 ## Objetivo
 
-Dar à equipe de comunicação um espaço de exploração livre (com filtros) sobre
-as Narrativas e mentions já sincronizadas — complementar ao Executive
-Overview, que é a visão executiva "de relance". Aqui o usuário aprofunda:
-qual narrativa investigar, por que o sentimento mudou, onde (plataforma) a
+Dar à equipe de comunicação a visão executiva "de relance" (Executive
+Overview) e um espaço de exploração livre (com filtros) sobre as
+Narrativas e mentions já sincronizadas. Aqui o usuário aprofunda: qual
+narrativa investigar, por que o sentimento mudou, onde (plataforma) a
 conversa está acontecendo, e qual pauta política está ganhando ou perdendo
 espaço.
 
@@ -34,15 +41,28 @@ espaço.
 
 | Feature | Spec | Status | Depende de |
 |---|---|---|---|
-| Exploração de Narrativas (lista + detalhe) | [narratives-exploration.md](narratives-exploration.md) | pronto | `foundation` (narratives, narrative_metrics, bw_query_top_authors); "Ações e decisões" depende de `command-center` (ainda rascunho, ver seu `overview.md`) |
+| Executive Overview | [executive-overview.md](executive-overview.md) | pronto | `foundation` (bw_query_metrics_daily, narratives, narrative_metrics, reporting.narratives_overview) |
+| Exploração de Narrativas (lista + detalhe) | [narratives-exploration.md](narratives-exploration.md) | pronto | `foundation` (narratives, narrative_metrics, bw_query_top_authors); "Ações e decisões" lê `cases`, dado próprio deste módulo (ver [data-model.md](data-model.md)) |
 | Análise de Sentimento | [sentiment-analysis.md](sentiment-analysis.md) | pronto | `foundation` (bw_query_metrics_daily, bw_query_topics, bw_query_demographics_daily) |
 | Análise por Plataforma | [platform-analysis.md](platform-analysis.md) | pronto | `foundation` (bw_query_metrics_daily_by_platform) |
 | Pautas Eleitorais | [electoral-themes.md](electoral-themes.md) | pronto | `foundation` (bw_categories hierarquia, narratives) |
 
-Todas as quatro são **só leitura** — nenhuma escreve dado novo, todas
+Todas as cinco são **só leitura** — nenhuma escreve dado novo, todas
 consomem exclusivamente o que `bw-sync`/`refresh_narrative_metrics()` já
-sincronizam (ver `foundation/data-model.md`). Nenhuma tem lógica de negócio
-no frontend (Princípio técnico 2).
+sincronizam (ver `foundation/data-model.md`), servido através do envelope
+único de `aggregated-metrics` (ver
+[../aggregated-metrics/overview.md](../aggregated-metrics/overview.md)).
+Nenhuma tem lógica de negócio no frontend (Princípio técnico 2).
+
+✅ **Header global (2026-07-13, corrigido)**: as cinco páginas compartilham
+os mesmos 2 seletores — organização ativa e período — especificados uma
+única vez em [executive-overview.md](executive-overview.md), "Header",
+não redescritos em cada página. **Sem seletor de Query** — Queries são
+detalhe técnico, transparente ao usuário (pedido explícito, ver
+"Fluxo principal" de `executive-overview.md`); quando uma organização tem
+mais de uma Query, os dados de todas são combinados automaticamente.
+Trocar organização reescopa os dados de **toda** a navegação, não só da
+página atual.
 
 ## Gaps de dados — resolvidos em 2026-07-12
 
@@ -76,10 +96,12 @@ fonte oficial para praticamente todas (migration `20260712020000`,
   os campos de relacionamento já capturados por mention (`reply_to`/
   `retweet_of`/`insights_mentioned`), rotulada como amostra das mentions já
   sincronizadas — ver `narratives-exploration.md`.
-- **"Ações e decisões"** (detalhe de Narrativa) — depende do módulo
-  `command-center`, que ainda não tem schema (`cases`) implementado. Ver
-  [command-center/overview.md](../command-center/overview.md) para o
-  detalhamento do que falta.
+- **"Ações e decisões"** (detalhe de Narrativa) — ✅ **simplificado
+  (2026-07-13)**: `cases` passa a ser dado próprio deste módulo (não mais
+  um módulo `command-center` separado, que nunca chegou a ganhar spec além
+  desse mesmo requisito — ver [data-model.md](data-model.md)). Ver
+  [narratives-exploration.md](narratives-exploration.md), seção "Ações e
+  decisões", para as 2 pendências restantes.
 - **Autores únicos** e **Sentimento** (2 métricas acima) mudam de "sem
   fonte oficial" para "capturado, com uma limitação documentada" ou
   "resolvido sem ressalva" — nenhuma aproximação amostrada foi aceita em
@@ -91,6 +113,7 @@ fonte oficial para praticamente todas (migration `20260712020000`,
 
 | Rota | Página |
 |---|---|
+| `/overview` | Executive Overview |
 | `/narratives` | Exploração de Narrativas (lista) |
 | `/narratives/[id]` | Detalhe de Narrativa |
 | `/sentiment` | Análise de Sentimento |
@@ -98,13 +121,14 @@ fonte oficial para praticamente todas (migration `20260712020000`,
 | `/themes` | Pautas Eleitorais |
 
 ⚠️ DECISÃO PENDENTE: mesma ressalva já registrada em
-`foundation/executive-overview.md` para `/narratives/[id]` — rota exata
-(página própria vs. modal) fica para quando o roteamento geral do app for
-fechado.
+`executive-overview.md` para `/narratives/[id]` — rota exata (página
+própria vs. modal) fica para quando o roteamento geral do app for fechado.
 
 ## Referências relacionadas
 
-- [foundation/executive-overview.md](../foundation/executive-overview.md)
+- [executive-overview.md](executive-overview.md)
+- [data-model.md](data-model.md) — `cases` (ex-`command-center`)
 - [foundation/data-model.md](../foundation/data-model.md)
 - [foundation/narratives.md](../foundation/narratives.md)
+- [../aggregated-metrics/overview.md](../aggregated-metrics/overview.md)
 - [_index.md](../_index.md) — módulos `intelligence-center`/`propagation-graph`

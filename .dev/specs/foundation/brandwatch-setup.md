@@ -124,8 +124,8 @@ Groups e credenciais.
 
 - **1 Project por organização** — mapeamento 1:1 com `organizations`
   (`bw_projects.organization_id`).
-- Nome: `Campanha Ricardo Alencar 2026 — Reputation OS`
-  (padrão: `[nome do cliente/campanha] — Reputation OS`).
+- Nome: `Campanha Ricardo Alencar 2026 — Digital Intelligent Communication`
+  (padrão: `[nome do cliente/campanha] — Digital Intelligent Communication`).
 - Timezone do Project: `America/Sao_Paulo`.
 
 ## 3. Queries (a base de tudo)
@@ -330,9 +330,10 @@ crie a Category correspondente e promova a narrativa para `bw_aggregate`.
 ## 6. Tags — não fazem parte do Sprint 1
 
 - Tags (`ruletags`) são triagem operacional rápida — diferente de
-  Category/Narrativa. Exemplo de uso futuro (Command Center, Sprint 2):
-  Tag `"Precisa resposta"` aplicada manualmente a mentions críticas dentro
-  de um Caso. Não crie Tags agora sem essa necessidade concreta.
+  Category/Narrativa. Exemplo de uso futuro (CRUD completo de `cases`,
+  `intelligence-center`): Tag `"Precisa resposta"` aplicada manualmente a
+  mentions críticas dentro de um Caso. Não crie Tags agora sem essa
+  necessidade concreta.
 
 ## 7. Custom Alerts — fora do Sprint 1, nota de compatibilidade
 

@@ -1,18 +1,32 @@
----
+﻿---
 tipo: index
-projeto: Reputation OS
-atualizado: 2026-07-11
+projeto: Digital Intelligent Communication
+atualizado: 2026-07-13
 ---
 
-# Reputation OS — Índice de Especificações
+# Digital Intelligent Communication — Índice de Especificações
+
+> 🗺️ Ver [_architecture.md](_architecture.md) para o mapa visual (diagrama Mermaid) de todos os
+> módulos e suas dependências — atualizado junto com este arquivo sempre que um módulo muda.
+> ✅ Ver [_pending.md](_pending.md) para a lista agregada de decisões de produto pendentes e
+> gaps técnicos (spec pronta, sem código) de todos os módulos, num lugar só.
+
+> ✅ **Nome do produto atualizado (2026-07-12)**: "Reputation OS" →
+> "Digital Intelligent Communication", pedido do usuário. Aplicado em
+> `_index.md`, `CLAUDE.md` e nos exemplos de nomenclatura em
+> `foundation/brandwatch-setup.md`. Não é uma mudança de schema/slug — os
+> nomes técnicos do projeto (`organizations`, módulos em `.dev/specs/`,
+> etc.) não referenciavam "Reputation OS" em nenhum identificador, só em
+> texto descritivo.
 
 ## Sobre o projeto
 
 Plataforma de inteligência reputacional construída sobre a Brandwatch, para
 campanhas políticas e reputation management no Brasil. Sincroniza dados da
 Brandwatch (mentions, queries, narrativas) para um cadastro próprio de
-Entidades, opera um Command Center de Casos, um motor de risco/threshold
-próprio e um Feed Inteligente de eventos — tudo com a classificação de
+Entidades, rastreia ações/decisões por Narrativa (`cases`, ver
+`intelligence-center`), tem um motor de risco/threshold próprio (`event-radar`)
+e um Feed Inteligente de eventos (`feed_events`) — tudo com a classificação de
 entidades (partido, espectro, cargo, estado) mantida como fonte da verdade no
 Supabase, não na Brandwatch.
 
@@ -138,13 +152,16 @@ deve ser conferido contra esta lista antes de ser considerado pronto.
      direta — **não** usar o Transaction pooler (porta 6543): várias
      ferramentas de BI dependem de recursos de sessão (prepared statements,
      `SET search_path`) incompatíveis com pooling em modo transaction.
-   - ⚠️ DECISÃO PENDENTE: se o acesso de BI for por cliente final (cada
-     organização com seu próprio Power BI/Qlik vendo só os dados dela), cada
-     organização precisa de um role/credential próprio com a view já filtrada
-     por `organization_id` — isso não está implementado no MVP. Por ora, a
-     camada de reporting é de uso interno da Lidi (um único `bi_reader`
-     vendo todas as organizações), documentado explicitamente para não ser
-     confundido com acesso multi-tenant seguro.
+   - ✅ **Resolvido (2026-07-13)**: acesso de BI é **só uso interno da
+     Lidi**, por enquanto — um único `bi_reader` vendo todas as
+     organizações, sem credential por cliente final. Acesso de BI
+     multi-tenant (cada organização com seu próprio Power BI/Qlik, view já
+     filtrada por `organization_id`) fica descartado por ora — se algum
+     cliente precisar disso no futuro, é uma extensão aditiva (novo role +
+     view filtrada), não uma mudança no que já existe. Não confundir esse
+     uso interno com acesso multi-tenant seguro — `bi_reader` continua
+     `bypassrls` por design (Princípio técnico 6 acima), então nunca deve
+     ser exposto a um cliente final sem essa extensão ser feita primeiro.
 
 ## Módulos
 
@@ -161,16 +178,170 @@ deve ser conferido contra esta lista antes de ser considerado pronto.
 
 | Módulo                 | Descrição curta                                                              | Status geral | Sprint | Specs |
 |-------------------------|-------------------------------------------------------------------------------|--------------|--------|-------|
-| `foundation` (sync)     | Sync serial+rate-limited da Brandwatch → Supabase (`sync-brandwatch`, `narratives`) — **implementado**, ver `CLAUDE.md` | pronto | 1 | [foundation/overview.md](foundation/overview.md) |
-| `foundation` (UI)       | Executive Overview — primeira tela web (gráficos de volume/sentimento, Share of Voice, tabela de Narrativas) | rascunho — não iniciado | 2 | [foundation/executive-overview.md](foundation/executive-overview.md) |
+| `foundation`            | Sync serial+rate-limited da Brandwatch → Supabase (`sync-brandwatch`, `narratives`) — **implementado**, ver `CLAUDE.md`. Só backend, nenhuma rota própria (ver "Executive Overview movida" em `foundation/overview.md`) | pronto | 1 | [foundation/overview.md](foundation/overview.md) |
+| `auth`                  | Login/recuperação de senha via Supabase Auth + administração de usuários restrita a admins (`user_profiles`) — **pré-requisito de todo o resto**, nenhuma página é acessível sem sessão | `data-model.md` implementado, restante pronto — não implementado | 2 | [auth/overview.md](auth/overview.md) |
 | `entities`              | Cadastro Nacional de Entidades (EAV via entity_tags) + enriquecimento de mentions | rascunho | 2      | — |
-| `command-center`        | CRUD de Casos (`cases`), checklist, comentários, arquivos, histórico de status | rascunho     | 2      | [command-center/overview.md](command-center/overview.md) |
-| `intelligence-center`   | Exploração de narrativas/mentions com filtros + enriquecimento de entidades  | rascunho     | 2      | [intelligence-center/overview.md](intelligence-center/overview.md) |
-| `threshold-engine`      | Motor de risco próprio (volume/percentual/sentimento negativo)               | rascunho     | 3      | — |
-| `intelligent-feed`      | Feed de eventos do sistema (`feed_events`: narrativas, thresholds, casos, sentimento) | rascunho | 3 | — |
-| `propagation-graph`     | Grafo de propagação de narrativas (arestas por mention + rollup materializado) | rascunho   | 3      | — |
-| `decision-center`       | AI Advisors sobre mentions/narrativas, respeitando data-restrictions          | rascunho     | 3      | — |
-| `executive-reports`     | Geração de relatórios periódicos (`reports_generated`: diário/semanal/mensal/executivo/crise) | rascunho | 4 | — |
+| `intelligence-center`   | Todas as páginas do frontend (Sprint 2): Executive Overview (entrada pós-login) + Exploração de Narrativas + Sentimento + Plataformas + Pautas Eleitorais — inclui `cases` (ações/decisões por Narrativa, ex-`command-center`, ver "Módulo `command-center` removido" abaixo) | pronto — não implementado | 2 | [intelligence-center/overview.md](intelligence-center/overview.md) |
+| `aggregated-metrics`    | Camada de agregação/envelope JSON único, reaproveitada por todas as páginas do frontend (Sprints 2-4) e pela síntese de IA — ver "Fusão de módulos" abaixo | pronto — não implementado | 2-4 | [aggregated-metrics/overview.md](aggregated-metrics/overview.md) |
+| `event-radar`         | Detecção estatística (SQL) de picos/quedas/mudanças de sentimento + 1 card de IA por evento, publicado em `feed_events` — **substitui/absorve** `threshold-engine` e `intelligent-feed` abaixo, ver "Fusão de módulos" | rascunho     | 3      | [event-radar/overview.md](event-radar/overview.md) |
+| ~~`threshold-engine`~~  | Motor de risco próprio (volume/percentual/sentimento negativo) — **absorvido por `event-radar`** (motor de detecção + severidade fazem o mesmo papel, com mais rigor estatístico) | absorvido    | 3      | — |
+| ~~`intelligent-feed`~~  | Feed de eventos do sistema — **absorvido por `event-radar`** (grava em `feed_events`, mesma tabela já reservada em `_glossary.md`) | absorvido    | 3      | — |
+| `propagation-graph`     | Grafo de propagação de narrativas com rollup materializado (histórico completo) — versão simplificada já cobrida via `mentions.reply_to`/`retweet_of`/`insights_mentioned` em `intelligence-center/narratives-exploration.md` e reaproveitada por `aggregated-metrics` (`get_dissemination_graph`); este módulo é só o rollup materializado completo, não um novo cálculo | rascunho   | 3      | — |
+| `decision-center`       | AI Advisors — perguntas livres/interativas sobre mentions/narrativas, respeitando data-restrictions. **Não** se sobrepõe a `event-radar`: aquele gera cards automáticos por evento detectado (push), este responde perguntas ad-hoc do analista (pull) | rascunho     | 3      | — |
+| `executive-reports`     | Geração de relatórios periódicos (`reports_generated`: diário/semanal/mensal/executivo/crise) — reaproveita o envelope de `aggregated-metrics` (página "Relatórios") em vez de agregação própria | rascunho | 4 | — |
+
+> ✅ **Módulo `command-center` removido (2026-07-13)**, a pedido do
+> usuário: nunca chegou a ganhar spec própria além de um único requisito
+> pequeno — mostrar ações/responsável/prazo por Narrativa na seção "Ações
+> e decisões" do detalhe ([intelligence-center/narratives-exploration.md](intelligence-center/narratives-exploration.md)).
+> Manter um módulo (e uma linha nesta tabela, e um nó em `_architecture.md`)
+> só por causa disso violava a própria regra deste projeto de arquitetura
+> simples/sem duplicidade. A tabela `cases` (schema mínimo, somente
+> leitura) passa a ser dado próprio de `intelligence-center` — ver
+> [intelligence-center/data-model.md](intelligence-center/data-model.md).
+> Se checklist/comentários/arquivos/histórico de status completos forem
+> pedidos no futuro (o "Command Center" original, mais amplo), viram
+> satélites dessa mesma tabela quando o pedido existir — não uma
+> especulação antecipada.
+
+> ✅ **`aggregated-metrics` e `event-radar` adicionados (2026-07-12)**,
+> **fusão de módulos aplicada na mesma revisão**: as duas specs novas foram
+> escritas a partir de um índice próprio (`_index_agente_inteligente.md`,
+> desde então removido — conteúdo mesclado aqui) com um schema genérico
+> (`mentions`/`entities`/`grafo_arestas`/`intelligent_feed`) que não
+> correspondia ao schema real já implementado neste projeto
+> (`bw_query_metrics_daily`/`weekly`/`monthly`,
+> `bw_query_metrics_daily_by_platform`, `narrative_metrics`,
+> `bw_query_top_authors`, `bw_query_topics` etc. — ver
+> `foundation/data-model.md`) nem aos módulos/rotas já planejados
+> (`threshold-engine`, `intelligent-feed`, `intelligence-center` já
+> `pronto` com rotas em inglês). Correções aplicadas em toda a árvore de
+> `aggregated-metrics/*.md` e `event-radar/*.md`:
+> - Toda agregação (`metrics`, `breakdowns`, `trends`, `narratives`,
+>   `authors`, `term_signals`, motor de detecção do radar) passa a ler dos
+>   agregados oficiais da Brandwatch já sincronizados por `foundation`,
+>   nunca de `mentions` cru — mesma premissa já fixada em
+>   `foundation/overview.md` ("nunca calcular localmente sobre mentions
+>   amostrada"), que essas specs novas violavam por terem sido escritas sem
+>   ler o schema real primeiro.
+> - `intelligent_feed` (tabela inventada pelas specs novas) →
+>   `feed_events`, nome já reservado para esse exato conceito em
+>   `_glossary.md` desde antes dessas specs existirem.
+> - `grafo_arestas` (tabela nova, nunca planejada) → reaproveita a mesma
+>   abordagem já decidida em `narratives-exploration.md` (grafo simplificado
+>   sobre `mentions.reply_to`/`retweet_of`/`insights_mentioned`, via
+>   `narrative_matched_mentions()`) — `propagation-graph` (Sprint 3) continua
+>   como o rollup materializado completo, não duplicado aqui.
+> - Rotas/nomes de Edge Function em português (`/visao-geral`,
+>   `/narrativas`, `/pautas-eleitorais`...) → alinhadas às rotas em inglês
+>   já `pronto` em `intelligence-center/executive-overview.md`/`intelligence-center/overview.md`
+>   (`/overview`, `/narratives`, `/sentiment`, `/platforms`, `/themes`).
+> - Nome de produto "Loxias" (resíduo de outro projeto/template) → Reputation OS
+>   (por sua vez renomeado para Digital Intelligent Communication em
+>   2026-07-12, ver nota no topo deste arquivo).
+> - `threshold-engine`/`intelligent-feed` (Sprint 3, sem spec própria desde
+>   sempre) marcados como absorvidos por `event-radar`, que é uma
+>   especificação mais detalhada e concreta exatamente da mesma ideia (motor
+>   de risco + feed de eventos) — evita manter duas specs concorrentes para
+>   o mesmo conceito. `decision-center` continua distinto (Q&A interativo,
+>   não geração automática de card).
+> - Colisão de nomenclatura em `radar_staging_events`: as colunas
+>   `entity_type`/`entity_id` do rascunho original colidiam com o termo de
+>   domínio reservado "Entity" (`_glossary.md` — pessoa/veículo/partido/
+>   instituição). Renomeadas para `scope_type`/`scope_id` (o que mudou:
+>   narrativa, plataforma, Query — nunca uma Entity de fato) em
+>   `event-radar/detection-engine.md` e `deduplication-grouping.md`.
+> - Ver [_fluxo-event-radar-aggregated-metrics.md](_fluxo-event-radar-aggregated-metrics.md) para o
+>   diagrama de dependência/sincronismo entre os dois módulos — continua
+>   válido, só os nomes de tabela citados nele foram corrigidos junto.
+>
+> **Ordem de implementação recomendada** (de `_index_agente_inteligente.md`,
+> preservada): 1) `aggregated-metrics` Fase A — envelope, SQL base, Edge
+> Functions das páginas, exceto `highlights`/`narrative_text`/`momentum_score`
+> real (fallback estatístico); 2) `event-radar` completo, na ordem interna
+> já descrita em `event-radar/overview.md`; 3) `aggregated-metrics` Fase B
+> — liga `get_active_highlights`, `momentum_score` real e `ai-synthesis`.
+> Ver detalhamento completo passo a passo na seção "Sequência de implantação
+> — Sprint 2" logo abaixo.
+
+## Sequência de implantação — Sprint 2
+
+> ✅ Proposta 2026-07-12, a pedido do usuário ("Sprint 1... já estão OK.
+> Podemos passar para Sprint 2 que será o frontend e o backend para
+> suportar o frontend. Qual a sequência de implantação correta?").
+> Sprint 1 (`foundation`) está `pronto`/implementado — todo o dado que
+> Sprint 2 precisa já está sincronizado. Sprint 2 tem três frentes que
+> **rodam em sequência, não em paralelo**: `auth` primeiro (nenhuma página
+> pode ir ao ar sem login — pedido explícito do usuário em 2026-07-13,
+> "Todas as funcionalidades só poderão ser utilizadas por usuários
+> logados"), depois o backend de dados, porque o frontend não tem lógica
+> de negócio própria (Princípio técnico 2) e não tem o que renderizar sem
+> o envelope que o backend expõe. Dentro de cada frente, a granularidade
+> de execução continua sendo **uma spec por sessão** (ver skill
+> `spec-driven-dev`), não o pacote inteiro de uma vez — a ordem abaixo é a
+> ordem entre sessões, não uma autorização para implementar tudo junto.
+
+### Pacote Auth — `auth` (implementar primeiro de todos)
+
+Pré-requisito de publicação de qualquer página — ordem interna (ver
+`auth/overview.md`, "Ordem de implementação"):
+
+1. [auth/data-model.md](auth/data-model.md) — ✅ **já implementado**
+   (migration `20260713000000_user_profiles_and_principal_admin.sql`):
+   `user_profiles` + trigger de proteção do admin principal + admin
+   principal cadastrado (`lidiane.carvalho@gmail.com`).
+2. [auth/login.md](auth/login.md) — login + `middleware.ts` de proteção de
+   rota. **É o que efetivamente bloqueia acesso não-autenticado** — deve
+   existir antes de qualquer página de `intelligence-center` ir ao ar,
+   mesmo que só como middleware "esqueleto" enquanto as demais páginas
+   ainda não existem.
+3. [auth/password-recovery.md](auth/password-recovery.md) — não bloqueia
+   mais nada, mas é rápido de fazer logo em seguida (reusa o layout do
+   login) e destrava trocar a senha fraca do admin principal.
+4. [auth/user-management.md](auth/user-management.md) — não bloqueia as 5
+   páginas de `intelligence-center` (o admin principal já existe via
+   seed), mas é necessário antes de qualquer usuário real além dele
+   precisar de acesso.
+
+Pode rodar **em paralelo** com o Pacote Backend abaixo (não há dependência
+entre os dois — `auth` não usa o envelope de `aggregated-metrics`, e
+`aggregated-metrics` só depende de sessão existir, não de como ela foi
+criada).
+
+### Pacote Backend — `aggregated-metrics` (em paralelo com `auth`)
+
+Único módulo backend que bloqueia o frontend do Sprint 2. Ordem interna (a
+própria spec já recomenda isso em "Notas para implementação" —
+`aggregated-metrics/overview.md`):
+
+1. [aggregated-metrics/standard-json-envelope.md](aggregated-metrics/standard-json-envelope.md) — o contrato; todo o resto depende dele.
+2. [aggregated-metrics/sql-aggregation.md](aggregated-metrics/sql-aggregation.md) — functions Postgres. 100% SQL determinístico (sem IA) — cadeia forte o bastante para ir numa sessão só, um commit por function (exceção controlada de granularidade da skill), lendo sempre dos agregados oficiais de `foundation` (nunca `mentions` cru).
+3. [aggregated-metrics/service-layer-aggregation.md](aggregated-metrics/service-layer-aggregation.md) — camada TS que monta o envelope a partir das functions acima.
+4. [aggregated-metrics/edge-functions-per-page.md](aggregated-metrics/edge-functions-per-page.md) — só as **6 Edge Functions** que as 5 páginas do Sprint 2 precisam (`get-page-overview`, `get-page-narratives`, `get-narrative-detail`, `get-page-sentiment`, `get-page-platforms`, `get-page-themes`). `get-page-authors`/`get-page-alerts`/`get-page-reports` esperam `entities`/`event-radar`/`executive-reports` (Sprint 3-4) — não implementar antes das páginas que os consomem existirem.
+5. [aggregated-metrics/ai-synthesis.md](aggregated-metrics/ai-synthesis.md) — só a **Camada 0** (template determinístico, sem IA) é possível agora, já que `event-radar` (fonte dos `highlights`) ainda não existe. Camadas 1/2 ficam para depois de `event-radar` (Sprint 3, ver "Fusão de módulos" acima).
+
+`cases` (schema mínimo, ver
+[intelligence-center/data-model.md](intelligence-center/data-model.md) —
+dado próprio de `intelligence-center`, não mais um módulo `command-center`
+separado) pode ser feito **em paralelo**, em qualquer ponto — não bloqueia
+nem é bloqueado pelo pacote acima. Sem ele, a seção "Ações e decisões" só
+mostra `<EmptyState />`; com ele, passa a mostrar dado real, sem mudar
+contrato do envelope.
+
+### Pacote Frontend — `intelligence-center` (depois do backend acima)
+
+Consome o envelope pronto, sem lógica de negócio própria. Ordem recomendada:
+
+1. [intelligence-center/executive-overview.md](intelligence-center/executive-overview.md) — página de entrada, a mais simples das 5 (sem grafo, sem disseminadores) — valida o contrato do envelope ponta a ponta (Edge Function → hook → componente) antes de replicar o padrão nas outras quatro.
+2. [intelligence-center/narratives-exploration.md](intelligence-center/narratives-exploration.md) — a mais complexa (lista + detalhe + grafo de disseminação simplificado + disseminadores + menções relevantes) — construir logo em seguida, com o padrão do Overview ainda fresco.
+3. [intelligence-center/sentiment-analysis.md](intelligence-center/sentiment-analysis.md), [platform-analysis.md](intelligence-center/platform-analysis.md), [electoral-themes.md](intelligence-center/electoral-themes.md) — sem dependência forte entre si (todas reaproveitam os mesmos componentes de tabela/cards/states já validados nos passos 1-2) — podem ser feitas em qualquer ordem ou por sessões diferentes a partir daqui.
+
+### O que fica fora do Sprint 2 (não bloqueia as 5 páginas acima)
+
+- `entities` — ranking de autores já funciona sem ela (`bw_query_top_authors`/`bw_query_top_tweeters`, nativos da Brandwatch desde Sprint 1); só falta classificação partido/espectro (`entity_tags`) e a página dedicada `/authors`.
+- CRUD completo de `cases` pela UI (criar/editar, checklist/comentários/arquivos/histórico) — só o schema mínimo somente-leitura é útil agora, ver acima; sem spec própria ainda, sem módulo dedicado (ver "Módulo `command-center` removido" mais abaixo).
+- `event-radar` (Sprint 3) — sem ele, `highlights`/`narrative_text` real/`momentum_score` real ficam em fallback (não vazio: Camada 0 de `ai-synthesis` e o cálculo estatístico de `momentum_score` já cobrem isso) — nenhuma página quebra ou fica bloqueada por causa disso.
+- Páginas `/authors`, `/alerts`, `/reports` — dependem de `entities`/`event-radar`/`executive-reports` (Sprint 3-4) respectivamente; não fazem parte do pacote frontend do Sprint 2.
 
 > **Escopo de dados do `foundation` (sync), confirmado e ampliado em
 > 2026-07-10**: cobre **todo** o dado de leitura (pull) da Brandwatch que
@@ -217,8 +388,9 @@ deve ser conferido contra esta lista antes de ser considerado pronto.
 >   público**, é recurso só do dashboard BWX, não replicável via API).
 >
 > Isso já cobre o que `entities` (via `mentions.author`),
-> `threshold-engine`/`intelligent-feed` (via `mentions`/`bw_categories`/
-> métricas) e `propagation-graph` (via `mentions.raw` — os campos de
+> `event-radar` (via os agregados oficiais listados acima — nunca via
+> soma local sobre `mentions`, ver "Fusão de módulos") e `propagation-graph`
+> (via `mentions.raw` — os campos de
 > relacionamento `insightsMentioned`/`replyTo`/`retweetOf` já têm coluna
 > tipada própria desde 2026-07-10, não só jsonb bruto) vão precisar ler.
 > Três tipos de dado da Brandwatch continuam **fora** do `foundation` por
@@ -250,15 +422,17 @@ deve ser conferido contra esta lista antes de ser considerado pronto.
 > usuário (2026-07-12) que Subcategories devem virar `narratives`
 > automaticamente também, não só Categories de topo;
 > `ensureNarrativesFromCategories()` em `bw-sync/index.ts` foi alterada
-> nesse sentido. "Ações e decisões" do detalhe de Narrativa depende do
-> módulo `command-center`, que ganhou sua primeira spec
-> ([command-center/overview.md](command-center/overview.md)) detalhando o
-> que falta (schema de `cases`, vínculo com `narratives`, tabela de perfil
-> de usuário para `assignee_id`) — ainda `rascunho`, não bloqueia o resto
-> de `intelligence-center`. Do mesmo protótipo,
-> [foundation/executive-overview.md](foundation/executive-overview.md)
+> nesse sentido. "Ações e decisões" do detalhe de Narrativa lê `cases`
+> (schema de `cases`, vínculo com `narratives`, `assignee_id` →
+> `user_profiles`) — dado próprio de `intelligence-center` desde
+> 2026-07-13 (ver [intelligence-center/data-model.md](intelligence-center/data-model.md)
+> e "Módulo `command-center` removido" abaixo), não mais um módulo à
+> parte. Do mesmo protótipo,
+> [intelligence-center/executive-overview.md](intelligence-center/executive-overview.md)
 > também foi revalidada (cards de topo, seletor de organização, rota de
-> detalhe de Narrativa via modal/intercepting route).
+> detalhe de Narrativa via modal/intercepting route) — spec movida para
+> `intelligence-center` em 2026-07-12, ver nota "Executive Overview movida"
+> em `foundation/overview.md`.
 
 ## Entidades principais
 
@@ -266,12 +440,18 @@ deve ser conferido contra esta lista antes de ser considerado pronto.
   usuário↔organização, N:N — um usuário pode pertencer a 1 ou mais
   organizações; ver [foundation/overview.md](foundation/overview.md)) → todos
   os módulos.
+- `User Profile` (`user_profiles`, perfil 1:1 com `auth.users` — nome de
+  exibição, `is_admin`, `is_principal`) → `auth`. Todo módulo que precise
+  referenciar "o usuário logado" além de `auth.uid()` (ex: `assignee_id`
+  de `cases`) referencia esta tabela, não `auth.users` direto — ver
+  [auth/data-model.md](auth/data-model.md).
 - `Mention`, `Query`, `Query Group`, `Category` (cache Brandwatch: `bw_projects`, `bw_queries`, `bw_query_groups`, `bw_categories`, `mentions`) → `foundation`.
 - `Narrativa` (entidade viva própria do produto: `narratives`, `narrative_signals`, `narrative_tags`, `narrative_metrics`; opcionalmente ligada a uma `Category` via `bw_category_id`) → `foundation`. Satélites `narrative_entities` (Sprint 2, depende de `Entity`) e `narrative_relationships` (Sprint 3, grafo) ficam para depois.
 - `Entity` / `entity_tags` (Cadastro Nacional de Entidades) → `entities`.
-- `Caso` (`cases`) e satélites (`case_checklist_items`, `case_comments`, `case_files`, `case_status_history`) → `command-center`.
-- `ThresholdConfig` / `ThresholdEvent` → `threshold-engine`.
-- `FeedEvent` (`feed_events`) → `intelligent-feed`.
+- `Caso` (`cases`, schema mínimo — título/status/`assignee_id`/`due_date`) → `intelligence-center` (ver [intelligence-center/data-model.md](intelligence-center/data-model.md)). Satélites (`case_checklist_items`, `case_comments`, `case_files`, `case_status_history`) ficam para quando forem pedidos, não fazem parte do schema mínimo atual — ver "Módulo `command-center` removido" acima.
+- `FeedEvent` (`feed_events`) → produzido por `event-radar` (absorve o papel antes reservado a `threshold-engine`/`intelligent-feed`, ver tabela de módulos acima).
+- `radar_staging_events` (staging interno, pré-publicação — nunca lido pelo frontend) → `event-radar`.
+- Envelope de página (contrato de resposta, não é tabela) → `aggregated-metrics`.
 - `GeneratedReport` (`reports_generated`) → `executive-reports`.
 
 ## Fora de escopo do MVP (não implementar sem pedido explícito)
@@ -283,11 +463,18 @@ deve ser conferido contra esta lista antes de ser considerado pronto.
   `entities`/`entity_tags` (Sprint 2) como fonte — não há o que sincronizar
   ainda. Revisitar quando `entities` existir.
 - Tags (`ruletags`) da Brandwatch — sem necessidade concreta antes do
-  Command Center (Sprint 2, triagem de Casos); `brandwatch-setup.md` §6.
-- Custom Alerts da Brandwatch — `threshold-engine` (Sprint 3) é o motor de
-  risco próprio do produto, não depende de Custom Alerts nativos;
-  `brandwatch-setup.md` §7.
-- Reputation Score composto — usar apenas `risk_level` (low/medium/high/critical).
+  CRUD completo de `cases` (triagem de Casos, `intelligence-center`);
+  `brandwatch-setup.md` §6.
+- Custom Alerts da Brandwatch — `event-radar` (Sprint 3, ex-`threshold-engine`)
+  é o motor de risco próprio do produto, não depende de Custom Alerts
+  nativos; `brandwatch-setup.md` §7.
+- Reputation Score composto **por candidato/Entity** (uma nota única de reputação
+  agregando todas as Narrativas de uma pessoa/campanha) — continua fora de
+  escopo. ⚠️ **Não confundir** com `risk_score` (2026-07-13, ver
+  `aggregated-metrics/sql-aggregation.md`), que é um score 0-100 **por
+  Narrativa individual** (prioridade operacional de triagem), pedido
+  explícito do usuário — escopo bem mais restrito que um "Reputation
+  Score" de candidato, que continua não implementado.
 - **Clusterização semântica por IA e classificação de papel do autor**
   (Institucional/Imprensa/Apoiador/Crítico/Amplificador) — pedido em
   2026-07-10 a partir de um mockup de "Relatório de Insights"
@@ -344,14 +531,22 @@ deve ser conferido contra esta lista antes de ser considerado pronto.
   pra isso — é a mesma camada de IA Iris já investigada (ver item acima),
   só que rodando dentro do produto BWX/dashboard, não exposta via Consumer
   Research API. Esse card específico não é replicável por `bw-sync`.
-- **"Post Type" agregado por candidato (retweet/reply/original)** —
-  identificado na mesma validação. Não existe dimensão de chart oficial
-  equivalente (só `mentions.mention_role`, por mention individual).
-  Replicar um painel comparando candidatos por tipo de post exigiria somar
-  `mention_role` localmente sobre `mentions` (amostrada), o que conflita
-  com a premissa do projeto. Fica como ⚠️ DECISÃO PENDENTE (mesmo padrão
-  já usado pra `emotion` em `data-model.md` §3) — não implementar sem
-  decisão explícita do usuário sobre aceitar essa aproximação amostrada.
+- ✅ **"Post Type" (retweet/reply/original) — pendência retirada 2026-07-13**:
+  a informação já é buscada — `mentions.mention_role`, derivado dos campos
+  nativos `replyTo`/`retweetOf` que a Brandwatch retorna em cada mention
+  (fato sobre a mention, já capturado por `bw-sync`, não algo inventado
+  localmente). O uso real pedido pelo usuário é o **grafo de disseminação**
+  (quem postou, quem compartilhou, quem comentou — ver
+  `intelligence-center/narratives-exploration.md`, "grafo de disseminação
+  simplificado", e `get_dissemination_graph` em
+  `aggregated-metrics/sql-aggregation.md`), que já consome `mention_role`/
+  `reply_to`/`retweet_of`/`insights_mentioned` por mention individual —
+  **sem violar a premissa de sampling**, porque cada nó/aresta do grafo é
+  um fato sobre uma mention já sincronizada, não uma soma/contagem
+  apresentada como total. Um painel separado comparando candidatos por %
+  agregado de retweet/reply/original (diferente do grafo) continuaria sem
+  fonte oficial se algum dia for pedido, mas deixa de ser uma pendência
+  registrada aqui por não ser um caso de uso real do produto hoje.
 - **"Análise de Imagem"** — o único recurso da API parecido é "Objects &
   Logos" (`images/objects`/`images/logos`), mas é um mecanismo de lookup
   pra **configurar filtro de Query** (achar IDs de logo/objeto pra usar
@@ -361,18 +556,53 @@ deve ser conferido contra esta lista antes de ser considerado pronto.
 
 ## Decisões pendentes globais
 
-> ⚠️ DECISÃO PENDENTE: aplicar na migration inicial os ajustes de RLS e
-> performance identificados na revisão do schema anexo (`20260706_reputation_os_schema.sql`) —
-> ver notas em [foundation/overview.md](foundation/overview.md) e, quando
-> gerado, `foundation/data-model.md`. Resumo: nova tabela `organization_members`
-> (usuário↔organização, N:N) + função `auth_organization_ids()` substituem o
-> padrão de claim único `auth.jwt() -> app_metadata.organization_id` em
-> **todas** as policies `org_isolation_*` do schema anexo (decisão já fechada,
-> ver `foundation/overview.md`); faltam `ENABLE ROW LEVEL SECURITY` + policy de
-> isolamento em `organizations`, `bw_projects`, `bw_queries`, `bw_query_groups`,
-> `bw_categories`; faltam RLS deny-all em `sync_cursors`/`sync_log`; falta a
-> trigger `set_updated_at` referenciada nas tabelas que já têm coluna
-> `updated_at`; e a renomeação completa para inglês listada na nota de
-> nomenclatura acima (aplicar em cada módulo conforme seu `data-model.md` for
-> gerado — `command-center`, `threshold-engine`, `intelligent-feed`,
-> `executive-reports`).
+> ✅ **RLS multi-tenant confirmada como já aplicada (2026-07-13)** —
+> revisão pedida pelo usuário ("O RLS do Supabase obrigatoriamente precisa
+> respeitar user_id e organization_id no acesso aos dados... Reveja se a
+> foundation também está atendendo a esse requisito"). Esta nota ficava
+> como ⚠️ DECISÃO PENDENTE desde a spec original (pedindo pra "aplicar na
+> migration inicial os ajustes de RLS") — **a spec nunca foi atualizada
+> depois que o trabalho foi feito**. Conferido linha a linha contra
+> `supabase/migrations/20260707000000_foundation_schema.sql` e todas as
+> migrations que criaram tabela nova depois dela: **todas** as 26 tabelas
+> de `foundation` têm `ENABLE ROW LEVEL SECURITY`, e todas as org-scoped
+> usam o padrão `organization_id in (select auth_organization_ids())`
+> (direto) ou, pra satélites sem `organization_id` própria (`bw_queries`,
+> `bw_query_groups`, `bw_categories`, `bw_query_top_authors` etc.), o
+> mesmo padrão via subquery no FK pai (`project_id in (select id from
+> bw_projects where organization_id in (select auth_organization_ids()))`).
+> `auth_organization_ids()` já resolve por `user_id = auth.uid()` — ou
+> seja, toda policy já é `user_id` **e** `organization_id`, não uma coisa
+> ou outra. `sync_cursors`/`sync_log`/`bw_sync_lock` são deny-all (RLS
+> ativa, zero policy — só `SUPABASE_SECRET_KEY` acessa). Nada pendente
+> aqui — ver `foundation/overview.md`, "Multi-tenancy: usuário ↔
+> organização", que também foi atualizado pra remover a marcação de
+> pendente. ⚠️ **Gap real encontrado na mesma revisão, esse sim pendente
+> de correção** (não de spec, de comportamento): os Edge Functions de
+> `aggregated-metrics` (`get-page-*`) **bypassam RLS** se implementados
+> com `SUPABASE_SECRET_KEY` como todo o resto do Princípio técnico 5 —
+> corrigido na spec, ver
+> [aggregated-metrics/edge-functions-per-page.md](aggregated-metrics/edge-functions-per-page.md),
+> "Autenticação do client Supabase (exceção ao padrão)".
+>
+> A renomeação completa para inglês (nota de nomenclatura acima) segue
+> valendo como lembrete de aplicar em cada módulo conforme seu
+> `data-model.md` for gerado — `event-radar`, `executive-reports`
+> (`command-center` removido do projeto, ver nota acima).
+
+> ⚠️ DECISÃO PENDENTE (`aggregated-metrics`): tipos TS do envelope em
+> pacote compartilhado (`packages/shared-types`) vs. duplicados entre
+> frontend e Edge Functions — recomendação registrada é pacote
+> compartilhado, para não haver drift entre o tipo usado no client e no
+> server. Ver [aggregated-metrics/service-layer-aggregation.md](aggregated-metrics/service-layer-aggregation.md).
+
+> ✅ **Resolvido (2026-07-13)**: síntese de página (`narrative_text`) é **assíncrona** (carrega
+> com fallback determinístico, atualiza quando a composição terminar) **e armazenada em banco
+> por período** (`page_narrative_synthesis`, período fechado = permanente, nunca regenerado) —
+> pedido explícito do usuário: "para que não haja necessidade de pesquisar novamente utilizando
+> a IA". Ver [aggregated-metrics/ai-synthesis.md](aggregated-metrics/ai-synthesis.md).
+
+> ⚠️ DECISÃO PENDENTE (`event-radar`): intervalo exato do `pg_cron` do
+> motor de detecção (15min vs. 30min) — depende do volume real de mentions
+> por organização, a definir em teste de carga. Ver
+> [event-radar/detection-engine.md](event-radar/detection-engine.md).

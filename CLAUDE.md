@@ -4,9 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-Reputation OS — a reputational-intelligence platform built on top of Brandwatch
-(Consumer Research API), for Brazilian political campaigns / reputation
-management.
+Digital Intelligent Communication (renamed from "Reputation OS" 2026-07-12) —
+a reputational-intelligence platform built on top of Brandwatch (Consumer
+Research API), for Brazilian political campaigns / reputation management.
 
 ## Spec-driven development is mandatory
 

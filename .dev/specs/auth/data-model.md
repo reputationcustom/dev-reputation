@@ -1,0 +1,159 @@
+---
+tipo: data-model
+módulo: auth
+status: implementado
+atualizado: 2026-07-13
+---
+
+# Modelo de Dados — Autenticação e Administração de Usuários
+
+## Entidades
+
+### `user_profiles`
+
+**Descrição**: Perfil de aplicação 1:1 com `auth.users` (gerenciado pelo
+Supabase Auth). Existe para guardar dados que o produto precisa e o
+Supabase Auth não modela como coluna própria consultável via RLS: nome de
+exibição e o flag de administrador da plataforma. Resolve também a
+⚠️ DECISÃO PENDENTE deixada em aberto por
+`intelligence-center` (`cases`, ver `intelligence-center/data-model.md` e
+`intelligence-center/narratives-exploration.md`, "Ações e decisões") sobre
+o que `cases.assignee_id` deveria referenciar — a resposta passa a ser
+esta tabela, não `auth.users` direto.
+
+| Campo         | Tipo           | Obrigatório | Descrição                                                        |
+|---------------|----------------|-------------|--------------------------------------------------------------------|
+| `id`          | `uuid`         | sim         | PK — **igual** a `auth.users.id` (não `gen_random_uuid()`), FK `references auth.users(id) on delete cascade` |
+| `full_name`   | `text`         | não         | Nome de exibição; `null` até o usuário (ou o admin, ao convidar) preencher |
+| `is_admin`    | `boolean`      | sim         | Default `false`. Concede acesso a `/admin/users` e às Edge Functions administrativas |
+| `is_principal`| `boolean`      | sim         | Default `false`. No máximo um punhado de linhas terá `true` (MVP: exatamente uma, ver seed abaixo) — marca a conta que **nunca** pode ser excluída nem perder `is_admin`, ver trigger abaixo |
+| `created_at`  | `timestamptz`  | sim         | `now()`                                                            |
+| `updated_at`  | `timestamptz`  | sim         | Atualizado via trigger `set_updated_at` (já definida em `foundation`) |
+
+**Constraint**:
+```sql
+alter table user_profiles
+  add constraint user_profiles_principal_implies_admin
+  check (not is_principal or is_admin);
+```
+Uma conta `is_principal = true` sempre tem `is_admin = true` — não existe
+"principal não-admin".
+
+**Trigger `protect_principal_account`** (impede excluir ou rebaixar o
+admin principal — inclusive por chamada direta à Admin API, não só pela UI
+deste módulo, já que `auth.admin.deleteUser()` no GoTrue dispara
+`DELETE ... CASCADE` em `auth.users`, que por sua vez dispara `DELETE` em
+`user_profiles`, e triggers `BEFORE DELETE` disparam mesmo em deleções por
+cascade):
+
+```sql
+create or replace function protect_principal_account()
+returns trigger
+language plpgsql
+as $$
+begin
+  if TG_OP = 'DELETE' then
+    if OLD.is_principal then
+      raise exception 'não é permitido excluir a conta admin principal (%).', OLD.id;
+    end if;
+    return OLD;
+  end if;
+  -- UPDATE: bloqueia rebaixar is_admin ou desmarcar is_principal na conta principal
+  if OLD.is_principal and (NEW.is_admin = false or NEW.is_principal = false) then
+    raise exception 'não é permitido remover admin/is_principal da conta principal (%).', OLD.id;
+  end if;
+  return NEW;
+end;
+$$;
+
+create trigger protect_principal_account_trigger
+  before update or delete on user_profiles
+  for each row execute function protect_principal_account();
+```
+
+**Índices**:
+- PK já cobre lookup por `id` (o caso mais comum: `id = auth.uid()`).
+- `user_profiles_is_admin_idx` em `(is_admin)` where `is_admin = true` —
+  suporta a listagem de admins na tela de administração sem scan completo.
+
+**Função auxiliar `is_current_user_admin()`** (mesmo padrão de
+`auth_organization_ids()` em `foundation/data-model.md` — `security
+definer`/`stable`, evita recursão de RLS ao ler a própria tabela com RLS
+ativa):
+
+```sql
+create or replace function is_current_user_admin()
+returns boolean
+language sql
+security definer
+stable
+set search_path = public
+as $$
+  select coalesce(
+    (select is_admin from user_profiles where id = auth.uid()),
+    false
+  )
+$$;
+```
+
+**Políticas RLS**:
+
+| Operação  | Quem pode                          | Condição                                              |
+|-----------|--------------------------------------|--------------------------------------------------------|
+| SELECT    | o próprio usuário                    | `id = auth.uid()`                                       |
+| SELECT    | qualquer admin                       | `is_current_user_admin()` — necessário pra popular a tabela de `/admin/users` |
+| INSERT    | ninguém via client                   | sem policy — só a Edge Function `admin-invite-user` (via `SUPABASE_SECRET_KEY`, bypassa RLS) cria linhas |
+| UPDATE    | ninguém via client                   | sem policy — só as Edge Functions administrativas (`admin-set-user-role`) escrevem, sempre passando pelo trigger `protect_principal_account_trigger` |
+| DELETE    | ninguém via client                   | sem policy — exclusão de usuário é uma operação de Admin API (`auth.admin.deleteUser`), nunca um `DELETE` direto na tabela |
+
+> Nenhuma policy de INSERT/UPDATE/DELETE para o client é proposital, não
+> esquecimento — toda escrita em `user_profiles` é decisão administrativa
+> (Princípio técnico 2: sem lógica de negócio no frontend). Um usuário
+> comum só lê a própria linha (ex: pra saber seu `full_name`/`is_admin` e
+> decidir se mostra o item de menu "Administração").
+
+## Relacionamentos
+
+```
+auth.users (Supabase Auth) ──1:1── user_profiles
+auth.users                 ──< organization_members  (já existente, foundation)
+user_profiles              ──< cases.assignee_id      (intelligence-center — ver nota abaixo)
+```
+
+## Nota para `intelligence-center`/`cases` (resolve pendência registrada em `narratives-exploration.md`)
+
+Com `user_profiles` existindo, a ⚠️ DECISÃO PENDENTE #3 de "Ações e
+decisões" (`assignee_id` referencia `auth.users` direto ou uma tabela de
+perfil própria?) fica **resolvida**: `cases.assignee_id uuid references
+user_profiles(id)` — dá nome de exibição (`full_name`) sem depender de
+metadata do Supabase Auth. Já aplicado em
+[../intelligence-center/data-model.md](../intelligence-center/data-model.md).
+
+## Seed — admin principal
+
+> ✅ Cadastrado nesta revisão (2026-07-13), pedido explícito do usuário:
+> "Cadastre 1 admin como principal que não pode ser excluído da solução:
+> lidiane.carvalho@gmail.com senha: 12345". A conta **já existia** (bootstrap
+> original, migration `20260707020000`, senha `lidi0311`) — esta migration
+> **atualiza a senha** para o valor pedido e insere a linha em
+> `user_profiles` com `is_admin = true, is_principal = true`.
+>
+> ⚠️ **Nota de segurança, mesmo padrão de aviso já usado em
+> `20260707020000_bootstrap_admin_user.sql`**: `12345` é uma senha
+> propositalmente fraca, pedida para o bootstrap. Recomendo trocá-la (via
+> `password-recovery.md`, já especificado neste módulo) assim que o
+> primeiro acesso real for confirmado — o hash fica no histórico do git,
+> reversível por força bruta se nunca for trocada.
+
+Ver migration `20260713000000_user_profiles_and_principal_admin.sql`
+(cria `user_profiles` + trigger/constraint/policies acima, atualiza a
+senha do usuário existente, insere o `user_profiles` do principal).
+
+## Notas para a migration
+
+- Depende de `organizations`/`organization_members`/`set_updated_at`
+  (`foundation`, migration `20260707000000`) já existirem — roda depois.
+- `on delete cascade` em `user_profiles.id → auth.users.id` é intencional:
+  se uma conta não-principal for excluída via Admin API, o perfil some
+  junto, sem linha órfã. Contas `is_principal` nunca chegam a esse ponto
+  (trigger bloqueia antes).

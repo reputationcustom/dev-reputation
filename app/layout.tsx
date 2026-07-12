@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Reputation OS",
+  title: "Digital Intelligent Communication",
   description: "Plataforma de inteligência reputacional",
 };
 

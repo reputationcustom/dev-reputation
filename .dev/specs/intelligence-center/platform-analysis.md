@@ -72,6 +72,20 @@ Mesmo público das demais páginas deste módulo.
   distinto de "Top Sites" (de onde as mentions vêm); mede que domínios são
   mais linkados/compartilhados dentro do conteúdo. Útil como widget
   adicional desta página se o produto quiser.
+- 💡 **Oportunidade futura, não desenhada ainda** (2026-07-13, pedido do
+  usuário — "a Brandwatch usa [hashtags/emojis/URLs/autores citados] pra
+  criar nuvem de palavras, podemos incorporar no frontend mais adiante"):
+  `bw_query_x_insights` (`foundation/data-model.md` — confirmado
+  2026-07-13 que cobre exatamente os 4 endpoints documentados em
+  `developers.brandwatch.com/docs/twitter-insights`: hashtags, emoticons,
+  stories/URLs, mentioned authors) já tem tudo que uma nuvem de
+  palavras/hashtags específica de X precisaria (`name`, `volume`,
+  `sentiment_positive/neutral/negative` por item) — não implementado nesta
+  spec porque não foi desenhado no protótipo, mas o dado já está
+  capturado e pronto quando o produto quiser essa visualização. Ver
+  também `bw_query_topics` (tematização geral, todas as plataformas) em
+  [sentiment-analysis.md](sentiment-analysis.md), "Drivers de sentimento" —
+  mesma ideia, escopo mais amplo.
 - **Conteúdos de destaque**: cards com preview de mentions específicas
   (autor, plataforma, sentimento, alcance, narrativa) — dado por mention
   individual (`mentions`/`content_source`/`reach_estimate`), mesmo padrão de

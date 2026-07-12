@@ -12,7 +12,7 @@ atualizado: 2026-07-12
 > direções exploradas, "Suave & Amigável" e "Editorial Executivo", não
 > foram levadas adiante). Documentado a pedido do usuário (2026-07-12) para
 > ser a fonte única de verdade de cor/tipografia da Sprint 2 — substitui a
-> nota antiga em `foundation/executive-overview.md` ("mapeamento exato de
+> nota antiga em `intelligence-center/executive-overview.md` ("mapeamento exato de
 > cor fica para o skill `frontend-design` quando a UI for implementada"): a
 > paleta já está definida, deixou de ser uma decisão em aberto.
 
@@ -47,30 +47,54 @@ atualizado: 2026-07-12
 | `accent-blue` | `#2f6fed` | Marca, navegação, série "volume total"/elemento neutro-informativo em gráficos |
 | `accent-blue-bg` | `#eef2ff` | Chips/badges sobre fundo claro |
 
-## Cores — funcionais (sentimento e risco)
+## Cores — funcionais (sentimento, momentum, velocidade e risco)
 
-⚠️ Estas cores mapeiam para os buckets já definidos em
-`reporting.narratives_overview`/`narrative_metrics` (`sentiment_bucket`:
-`positive`/`neutral`/`negative`) e `narratives.risk_level`
-(`low`/`medium`/`high`/`critical`) — ver `foundation/data-model.md` e
-`foundation/overview.md` ("Tabela interativa de Narrativas"). Não criar uma
-escala de cor paralela no frontend; sempre derivar do bucket que a
-API/view já devolve (Princípio técnico 2 — sem lógica de negócio no
-frontend).
+✅ **Reescrito 2026-07-13** — os 4 scores da tabela de Narrativas
+(Sentimento, Momentum, Velocidade, Risco) agora têm fórmula e faixas
+definitivas em
+[aggregated-metrics/sql-aggregation.md](aggregated-metrics/sql-aggregation.md),
+"Scores de Narrativa" — as tabelas abaixo mapeiam cada faixa pra uma cor.
+Não criar uma escala de cor paralela no frontend; sempre derivar da
+faixa/score que o envelope já devolve (Princípio técnico 2).
 
-| Token | Hex (texto/ícone) | Hex (fundo) | Bucket |
-|---|---|---|---|
-| `positive` / `risk-low` | `#1a9d5c` | `#eafaf1` | `sentiment_bucket = 'positive'` · `risk_level = 'low'` |
-| `neutral` / `risk-medium` | `#e0a13e` (texto de status "Em andamento": `#a5720a`) | `#fdf3e0` | `sentiment_bucket = 'neutral'` · `risk_level = 'medium'` |
-| `negative` / `risk-high` / `risk-critical` | `#e0483e` | `#fdecea` | `sentiment_bucket = 'negative'` · `risk_level = 'high'`/`'critical'` |
-| `neutral-gray` | `#c9cdd3` / `#8a8f98` | — | Segmento "neutro" em barras empilhadas; seta de tendência estável ("→") |
+### Sentimento (`net_sentiment`, -100 a 100, 7 faixas)
 
-⚠️ DECISÃO PENDENTE (herdada de `foundation/overview.md`): `risk_level` tem
-4 valores (`low`/`medium`/`high`/`critical`), mas a paleta do protótipo só
-define 3 cores funcionais (verde/âmbar/vermelho) — `high` e `critical`
-usam o mesmo `#e0483e`, ou `critical` ganha um tom próprio (mais
-escuro/saturado, para diferenciar visualmente do simplesmente "alto")?
-Não decidido ainda — não inventar um 4º tom sem confirmar.
+| Faixa | Rótulo | Token | Hex (texto/ícone) | Hex (fundo) |
+|---:|---|---|---|---|
+| ≥ +50 | Muito positivo | `sentiment-very-positive` | `#0d7a3e` | `#e0f5e9` |
+| +20 a +49 | Positivo | `sentiment-positive` | `#1a9d5c` | `#eafaf1` |
+| +5 a +19 | Levemente positivo | `sentiment-slightly-positive` | `#4caf7a` | `#eefaf3` |
+| -4 a +4 | Neutro | `sentiment-neutral` | `#8a8f98` | `#f3f4f6` |
+| -5 a -19 | Levemente negativo | `sentiment-slightly-negative` | `#e0a13e` | `#fdf3e0` |
+| -20 a -49 | Negativo | `sentiment-negative` | `#e0483e` | `#fdecea` |
+| ≤ -50 | Muito negativo | `sentiment-very-negative` | `#a52820` | `#fbe3e1` |
+
+### Momentum e Velocidade (0-100, 5 faixas — mesma rampa de cor pras duas;
+### a diferença visual entre elas é o ícone/seta e o rótulo, não a cor)
+
+| Faixa | Momentum | Velocidade | Token | Hex |
+|---:|---|---|---|---|
+| 0–19 | Muito baixo | ↓ Encolhendo rapidamente | `intensity-1` | `#c9cdd3` |
+| 20–39 | Baixo | ↘ Diminuindo | `intensity-2` | `#a8c5f5` |
+| 40–59 | Moderado | → Estável | `intensity-3` | `#2f6fed` (= `accent-blue`) |
+| 60–79 | Alto | ↑ Crescendo | `intensity-4` | `#f2811d` |
+| 80–100 | Explosivo | ↗ Viralizando | `intensity-5` | `#e0483e` |
+
+### Risco (`risk_score`, 0-100, 4 faixas)
+
+✅ **Resolve a antiga ⚠️ DECISÃO PENDENTE** ("`risk_level` tem 4 valores
+mas a paleta só definia 3 cores — `high` e `critical` deveriam ter tons
+diferentes?") — sim, `risk-high` e `risk-critical` são tons distintos:
+
+| Faixa | Situação | Token | Hex (texto/ícone) | Hex (fundo) |
+|---:|---|---|---|---|
+| 0–33 | Baixo | `risk-low` | `#1a9d5c` | `#eafaf1` |
+| 34–59 | Moderado | `risk-medium` | `#e0a13e` | `#fdf3e0` |
+| 60–84 | Alto | `risk-high` | `#f2811d` | `#fdf0e4` |
+| 85–100 | Crítico | `risk-critical` | `#c62828` | `#fbe3e1` |
+
+`neutral-gray` (`#c9cdd3` / `#8a8f98`) segue disponível pra outros usos
+neutros fora dos 4 scores acima (ex: estado vazio, texto secundário).
 
 ## Cores — plataformas
 
@@ -103,7 +127,7 @@ lá, tratar o dot "TikTok" como potencialmente ausente/agrupado sob outro
 
 ## Onde isso se aplica
 
-Toda a Sprint 2 (`foundation/executive-overview.md`,
-`intelligence-center/*.md`) — esta é a fonte única de tokens de cor/
+Toda a Sprint 2 (`intelligence-center/*.md`, incl. `executive-overview.md`)
+— esta é a fonte única de tokens de cor/
 tipografia do produto; specs individuais não devem redefinir cores
 próprias, só referenciar os tokens/buckets desta tabela.

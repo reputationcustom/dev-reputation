@@ -118,4 +118,4 @@ Mesma tabela de `executive-overview.md`.
 
 - [intelligence-center/overview.md](overview.md)
 - [foundation/data-model.md](../foundation/data-model.md)
-- [foundation/executive-overview.md](../foundation/executive-overview.md)
+- [executive-overview.md](executive-overview.md)

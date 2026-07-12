@@ -92,12 +92,13 @@ Mesmo público das demais páginas deste módulo.
 - **Sentimento por pauta**: idêntico a "Sentimento por Narrativa" de
   `sentiment-analysis.md` — sem gap adicional, é a mesma Narrativa de topo.
 - **Risco por pauta** (matriz volume × negatividade × momentum × alcance ×
-  risco): todos os campos de entrada já existem em
-  `narrative_metrics`/`narratives.risk_level` — é uma visualização nova
-  (matriz/scatter) sobre dado já disponível, sem gap de captura. Fórmula
-  exata de "momentum" já é uma ⚠️ DECISÃO PENDENTE registrada em
-  `foundation/overview.md` ("Tabela interativa de Narrativas") — esta página
-  reusa a mesma definição, não inventa uma nova.
+  risco): todos os campos de entrada já existem em `narrative_metrics` — é
+  uma visualização nova (matriz/scatter) sobre dado já disponível, sem gap
+  de captura. ✅ **Resolvido (2026-07-13)**: fórmulas de `momentum_score`/
+  `velocity_score`/`risk_score` definidas em
+  [../aggregated-metrics/sql-aggregation.md](../aggregated-metrics/sql-aggregation.md),
+  "Scores de Narrativa" — esta página reusa `get_narratives_table()`
+  filtrado a Narrativas de topo, não inventa um cálculo novo.
 - **Narrativas dentro de cada pauta**: ver decisão de modelagem acima.
 - **Plataforma por pauta**: idêntico a `bw_query_metrics_daily_by_platform`
   filtrado por `category_id` da pauta (mesma Narrativa de topo) — sem gap.

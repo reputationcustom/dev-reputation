@@ -17,32 +17,43 @@ Entities (Sprint 2) e para relatórios (Sprint 4).
 
 ## Usuários afetados
 
-Analistas (leitura, via Executive Overview/Intelligence Center). Criação e
-edição de Narrativas **não têm UI no Sprint 1** — ver Regras de negócio.
+Analistas (leitura, via Executive Overview/Intelligence Center). **Não há
+CRUD de Narrativas em nenhuma versão do produto** — ver "Interface (UI)" e
+"Regras de negócio", decisão fechada 2026-07-13.
 
 ## Fluxo principal (dados, não UI)
 
-1. **Correção 2026-07-10**: uma Narrativa é criada **automaticamente** por
-   `bw-sync` (`ensureNarrativesFromCategories()`, chamada no final do
-   bootstrap/refresh de metadata — ver `sync-brandwatch.md` passo 4) — uma
-   por Category **de topo** do Project (`bw_category_id` = a Category,
-   `title` = nome da Category), idempotente (nunca sobrescreve
-   `title`/`stage`/`risk_level` de uma Narrativa já existente/editada). A
-   versão original desta spec previa só criação manual (SQL/seed) por um
-   analista/dev — na prática isso deixava a tabela sempre vazia, já que não
-   há UI de gestão no Sprint 1 (ver Interface abaixo) e nenhum seed manual
-   avulso foi mantido em dia com a Brandwatch. Curadoria manual continua
-   possível por cima do que é auto-criado: editar `title`/`stage`/
-   `risk_level`/`priority`, desativar uma Narrativa indesejada, criar
-   Narrativas extras sem `bw_category_id` (só `narrative_signals`) ou para
-   subcategorias (não auto-criadas).
+1. ✅ **Toda Narrativa vem 100% da integração com a Brandwatch — decisão
+   fechada 2026-07-13** ("As narrativas vêm todas da integração com a
+   Brandwatch (categorias e subcategorias). Não haverá CRUD de narrativas
+   no sistema."). `bw-sync` (`ensureNarrativesFromCategories()`, chamada no
+   final do bootstrap/refresh de metadata — ver `sync-brandwatch.md` passo
+   4) cria uma Narrativa por `bw_categories` — **Category de topo e
+   Subcategory**, desde a correção de 2026-07-12 (`bw_categories.parent_id`
+   não importa mais pra decidir se auto-cria, só pra saber se é
+   "Pauta" ou "Narrativa dentro da pauta" na UI, ver
+   `intelligence-center/electoral-themes.md`). `bw_category_id` = a
+   Category/Subcategory, `title` = nome dela. Idempotente (nunca
+   sobrescreve `title`/`stage`/`risk_level` de uma Narrativa já existente).
+   **Não existe** caminho de criação fora deste — nem manual, nem por
+   sinal isolado (`narrative_signals` sem `bw_category_id`), nem por UI.
+   `narrative_signals` continua existindo no schema, mas só como
+   complemento **qualitativo** de uma Narrativa que já tem `bw_category_id`
+   (ex: palavras-chave extras pra contexto), nunca como mecanismo pra criar
+   uma Narrativa sem Category — ver Regras de negócio.
 2. `refresh_narrative_metrics()` roda diariamente via `pg_cron`
-   (ver [data-model.md](data-model.md)):
-   - Se `bw_category_id` preenchido: copia de `bw_query_metrics_daily`
-     (`source = 'bw_aggregate'`).
-   - Se não: agrega `mentions` que casam com `narrative_signals`, via
-     `narrative_matched_mentions()` (`source = 'mentions_sample'`).
-3. O Executive Overview (e futuramente Intelligence Center/relatórios) lê
+   (ver [data-model.md](data-model.md)): copia de `bw_query_metrics_daily`
+   (`source = 'bw_aggregate'`) para toda Narrativa (sempre tem
+   `bw_category_id`, ver item 1). ⚠️ **Nota de consistência**: a versão
+   anterior desta spec ainda descrevia aqui um fallback pra
+   `source = 'mentions_sample'` (agregação local sobre `narrative_signals`
+   quando não há `bw_category_id`) — esse caminho **nunca existe mais**
+   desde a premissa fixada em 2026-07-11 (migration `20260711010000`, ver
+   `foundation/overview.md`/`CLAUDE.md`) e, com a decisão de hoje, deixou
+   de ter até um cenário hipotético que o justificasse (não existe mais
+   Narrativa sem `bw_category_id`). Documentação corrigida pra refletir a
+   realidade atual, não redescrever um caminho já removido.
+3. O Executive Overview (e Intelligence Center/relatórios) lê
    `narrative_metrics`/`reporting.narratives_overview` — nunca recalcula por
    conta própria (ver Regra de negócio abaixo).
 
@@ -56,17 +67,19 @@ edição de Narrativas **não têm UI no Sprint 1** — ver Regras de negócio.
 
 ## Interface (UI)
 
-Não há tela de CRUD de Narrativas — Sprint 1 não tem UI nenhuma (só
-integração com a Brandwatch, ver `_index.md`); a única leitura prevista é
-consumo (Executive Overview, Sprint 2, ver `executive-overview.md`). Uma
-tela de criação/edição de
-Narrativas (gerenciar sinais, tags, vínculo com Category) é esperada no
-módulo `intelligence-center` (Sprint 2), mas não está comprometida nesta
-spec.
-
-> ⚠️ DECISÃO PENDENTE: confirmar com o usuário se `intelligence-center`
-> (Sprint 2) é de fato o lugar certo para o CRUD de Narrativas antes de
-> especificá-lo.
+✅ **Resolvido 2026-07-13**: **não há, e não haverá, tela de CRUD de
+Narrativas** — nem no Sprint 1, nem em nenhum sprint futuro. A única
+leitura prevista é consumo (Executive Overview/Intelligence Center, ver
+`../intelligence-center/executive-overview.md`). Narrativas existem
+exclusivamente porque `bw-sync` as espelhou de uma Category/Subcategory
+já configurada na Brandwatch (ver `brandwatch-setup.md`) — criar, editar
+estrutura ou excluir uma Narrativa pela aplicação nunca é uma operação
+suportada; a única forma de "criar" uma Narrativa é criar a
+Category/Subcategory correspondente na Brandwatch e esperar o próximo
+sync. Substitui a ⚠️ DECISÃO PENDENTE anterior desta seção ("confirmar se
+`intelligence-center` é o lugar certo pro CRUD de Narrativas") — não é
+mais uma pergunta em aberto, é uma decisão fechada: não existe CRUD em
+lugar nenhum do produto.
 
 ## Regras de negócio
 
@@ -78,14 +91,18 @@ spec.
   Narrativa" — qualquer feature nova que precise desse recorte (Intelligence
   Center, `narrative_entities` no Sprint 2) reusa essa função, não
   reimplementa o matching.
-- `risk_level` e `priority` são julgamento do analista (ou de uma sugestão
-  de IA, no Decision Center, Sprint 3) — nunca derivados automaticamente das
-  métricas.
+- `narratives.risk_level`/`priority` (colunas do schema) não têm mais UI
+  de edição prevista (ver "Interface (UI)" acima — decisão de não ter
+  CRUD) e, pra Risco, a UI hoje mostra `risk_score` (calculado, ver
+  `aggregated-metrics/sql-aggregation.md` "Scores de Narrativa"), não
+  `risk_level`. As colunas continuam no schema (podem ser populadas por
+  SQL/backend direto se necessário), mas não são mais descritas como
+  "julgamento do analista via UI" — não existe essa UI.
 
 ## Dados envolvidos
 
 - **Lê**: `bw_query_metrics_daily`, `mentions` (via `narrative_matched_mentions`).
-- **Escreve**: `narratives` (auto-criadas por `ensureNarrativesFromCategories()` em `bw-sync`, editáveis manualmente por cima — ver Fluxo principal), `narrative_signals`, `narrative_tags` (manual/seed), `narrative_metrics` (via `refresh_narrative_metrics()`).
+- **Escreve**: `narratives` (exclusivamente por `ensureNarrativesFromCategories()` em `bw-sync` — sem escrita via UI/cliente, ver "Interface (UI)"), `narrative_signals` (complemento qualitativo, manual/seed via backend, nunca cria Narrativa nova), `narrative_tags` (manual/seed), `narrative_metrics` (via `refresh_narrative_metrics()`).
 - Detalhes: [data-model.md](data-model.md).
 
 ## Permissões
@@ -93,14 +110,16 @@ spec.
 | Ação | Quem pode |
 |---|---|
 | Ler Narrativas/métricas | Membros da organização (RLS) |
-| Criar Narrativa a partir de Category | Automático (`bw-sync`, service role) |
-| Editar Narrativa, criar sinais/tags | Manual via SQL/backend no MVP — sem policy de INSERT/UPDATE via client no Sprint 1 |
+| Criar/editar/excluir Narrativa | Ninguém — sem CRUD em nenhuma camada do produto (ver "Interface (UI)") |
+| Criar Narrativa a partir de Category/Subcategory | Automático (`bw-sync`, service role) — único mecanismo existente |
+| Criar sinal complementar (`narrative_signals`) numa Narrativa já existente | Manual via SQL/backend, sem UI — não cria Narrativa nova, só adiciona contexto qualitativo a uma já auto-criada |
 
 ## Notificações / Feedback
 
-Nenhuma no Sprint 1 (sem UI de gestão). Eventos de "Narrativa detectada"
-automaticamente por IA (`feed_event_type = 'narrative_detected'`) são do
-`intelligent-feed`/Decision Center (Sprint 3), fora deste escopo.
+Nenhuma — sem UI de gestão em nenhum sprint. Eventos de "Narrativa
+detectada" automaticamente por IA (`feed_event_type = 'narrative_detected'`)
+são do `event-radar` (ex-`intelligent-feed`)/Decision Center (Sprint 3),
+fora deste escopo.
 
 ## Dependências técnicas
 
@@ -113,4 +132,4 @@ automaticamente por IA (`feed_event_type = 'narrative_detected'`) são do
 - [overview.md](overview.md) — validação de viabilidade completa, decisão de
   design (por que `bw_category_id` é coluna direta, não sinal EAV).
 - [data-model.md](data-model.md)
-- [executive-overview.md](executive-overview.md)
+- [../intelligence-center/executive-overview.md](../intelligence-center/executive-overview.md)

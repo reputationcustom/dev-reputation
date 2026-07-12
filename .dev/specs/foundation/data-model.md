@@ -39,8 +39,10 @@ create type narrative_stage as enum ('emerging', 'growing', 'stable', 'crisis', 
 ```
 
 > `severity_level` é criado aqui porque `narratives` precisa dele primeiro;
-> `command-center` (Sprint 2) reutiliza o mesmo tipo para `cases.risk_level`
-> e `cases.priority`, sem recriar.
+> `intelligence-center` (`cases`, ver `intelligence-center/data-model.md`)
+> reutiliza o mesmo tipo pra um eventual `cases.priority` no futuro (o
+> schema mínimo atual de `cases` não usa `risk_level`/`priority` ainda),
+> sem recriar.
 
 ## Função utilitária: `set_updated_at`
 
@@ -472,6 +474,7 @@ security` em ambas, **sem nenhuma policy** (deny-all para `anon`/
 | `engagement_score`       | `numeric`     | não | agregado oficial, `data/engagementScore/categories/days` — adicionado `20260710040000` |
 | `unique_authors`         | `integer`     | não | agregado oficial, `data/authors/categories/days` (por Narrativa) e `data/authors/days` (Query inteira) — adicionado `20260712020000`, ver nota abaixo |
 | `impressions`            | `bigint`      | não | agregado oficial, `data/impressions/categories/days` (por Narrativa) e `data/impressions/queries/days` (Query inteira) — adicionado `20260712030000`, ver nota abaixo |
+| `net_sentiment`          | `numeric`     | não | agregado oficial, `data/netSentiment/categories/days` (por Narrativa) e `data/netSentiment/queries/days` (Query inteira) — ⚠️ especificado 2026-07-13, ainda sem migration (ver nota abaixo). Score único de -100 a 100 (mesmo campo já usado em `bw_query_metrics_daily_by_platform`/`bw_query_demographics_daily` desde `20260712020000` — agora também na dimensão `categories`/`queries`) |
 | `synced_at`              | `timestamptz` | sim | `now()` |
 
 **Índices**: unique `(project_id, query_id, category_id_key, metric_date)`.
@@ -497,7 +500,7 @@ security` em ambas, **sem nenhuma policy** (deny-all para `anon`/
 > **nunca inclui uma linha "Query inteira"** (`category_id is null`). Ou
 > seja, a linha de `category_id is null` de `bw_query_metrics_daily` (usada
 > pelos cards "Alcance estimado"/"Engajamento total" do Executive Overview
-> — ver `executive-overview.md`) **nunca teve `reach_estimate`/
+> — ver `../intelligence-center/executive-overview.md`) **nunca teve `reach_estimate`/
 > `engagement_score` populados** desde que essas colunas existem —
 > `total_mentions`/sentimento funcionam para `category_id is null` porque
 > `syncSentimentMetrics()` já trata esse caso (omite o filtro `category`),
@@ -553,10 +556,21 @@ security` em ambas, **sem nenhuma policy** (deny-all para `anon`/
 > `blogComments`/`forumPosts`/`forumViews`/`influence`/`outreach`/`reach`
 > — estão marcados **deprecated** pela própria Brandwatch, não
 > implementados por esse motivo, não por omissão):
-> - `volume`, `reachEstimate`, `engagementScore`, `authors`, `impressions`,
->   `netSentiment` — ✅ cobertos (ver notas desta seção e de
->   `bw_query_metrics_daily_by_platform`/`bw_query_demographics_daily`
->   acima).
+> - `volume`, `reachEstimate`, `engagementScore`, `authors`, `impressions`
+>   — ✅ cobertos (ver notas desta seção).
+>   `netSentiment` — ⚠️ **overclaim corrigido 2026-07-13**: esta linha
+>   dizia "✅ coberto" citando só `bw_query_metrics_daily_by_platform`/
+>   `bw_query_demographics_daily` — verdade pras dimensões `pageTypes`/
+>   localização, **mas não** pra dimensão `categories`/`queries` (por
+>   Narrativa / Query inteira), que é exatamente o que a tabela interativa
+>   de Narrativas precisa pro indicador de Sentimento (ver
+>   `../intelligence-center/executive-overview.md`) — até esta revisão,
+>   `net_sentiment` não existia em `bw_query_metrics_daily`, então o
+>   Sentimento da tabela calculava um placeholder local
+>   (`(sentiment_positive - sentiment_negative) / total_mentions`) em vez
+>   de ler o score oficial da Brandwatch. Corrigido nesta revisão — ver
+>   `bw_query_metrics_daily.net_sentiment` acima e
+>   `reporting.narratives_overview` abaixo.
 > - `domains` **como aggregate** (contagem de domínios distintos, distinto
 >   da dimensão `domains` usada por `bw_query_top_sites`) — ⚠️ **não
 >   capturado**. Nenhuma spec/página pediu esse número até agora; não
@@ -609,11 +623,77 @@ passo 0.5b), a Edge Function só busca de novo quando não existe linha
 "fresca" (semanal: sem `synced_at` nos últimos 7 dias; mensal: 30 dias) —
 ver `ensureBootstrapSeed`/`isGrainStale` em `bw-sync/index.ts`.
 
+### `bw_query_metrics_hourly`
+
+> ✅ **Adicionada 2026-07-13** — resolve a ⚠️ DECISÃO PENDENTE registrada em
+> `event-radar/detection-engine.md` ("as janelas de 'hora atual'/'últimas
+> 3h' exigem grão horário, mais fino que o diário oficial... não existe
+> ainda"). Pedido do usuário: "Verificar se podemos corrigir a integração
+> com a brandwatch para trazer essas informações no grão [horário]".
+> Confirmado contra `developers.brandwatch.com/docs/chart-dimensions-and-aggregates`:
+> a lista de dimensões de tempo de chart **inclui `hours`** (junto de
+> `days`/`weeks`/`months`, já usadas neste projeto, e também `minutes`/
+> `hourOfDay`/`dayOfWeek`, não usadas ainda) — o mesmo padrão de URL já
+> usado pra `data/volume/sentiment/days` funciona trocando `days` por
+> `hours` (`data/volume/sentiment/hours`), e o mesmo vale pra
+> `netSentiment`/`categories`/`queries` já usados em `bw_query_metrics_daily`.
+> ⚠️ Mesmo nível de confirmação já aceito neste projeto pra outras
+> combinações de dimensão: a doc lista `hours` como dimensão válida
+> genericamente pra "chart endpoints", mas não há exemplo de payload
+> específico combinando `hours` com `volume`/`sentiment`/`netSentiment` —
+> revisar contra logs reais após deploy, mesma ressalva já usada pra
+> `reachEstimate`/`engagementScore`/`unique_authors`.
+
+Estrutura idêntica a `bw_query_metrics_daily`, trocando `metric_date` por
+`metric_hour` (`timestamptz`, não `date` — precisão de hora importa aqui) e
+**restrita a `total_mentions`/`sentiment_positive`/`neutral`/`negative`/
+`net_sentiment`** (sem `reach_estimate`/`engagement_score`/`unique_authors`/
+`impressions` — não pedidos pra detecção de curto prazo, evita gastar
+orçamento de chamada Brandwatch em dado que ninguém consome neste grão;
+adicionar depois se `event-radar`/`aggregated-metrics` precisarem):
+
+| Campo                  | Tipo          | Obrigatório | Descrição |
+|--------------------------|---------------|-------------|-----------|
+| `id`                     | `uuid`        | sim | PK |
+| `project_id`             | `bigint`      | sim | FK → `bw_projects(id)` ON DELETE CASCADE |
+| `query_id`               | `bigint`      | sim | FK → `bw_queries(id)` ON DELETE CASCADE |
+| `category_id`            | `bigint`      | não | FK → `bw_categories(id)` ON DELETE CASCADE; `null` = agregado da Query inteira — mesmo padrão de `bw_query_metrics_daily` |
+| `category_id_key`        | `bigint`      | sim | gerada, `coalesce(category_id, 0)` — mesmo padrão anti-`NULL <> NULL` |
+| `metric_hour`            | `timestamptz` | sim | início do bucket de hora (UTC ou `America/Sao_Paulo`, mesma decisão de timezone já usada no resto do projeto) |
+| `total_mentions`         | `integer`     | sim | default `0` |
+| `sentiment_positive`     | `integer`     | sim | default `0` |
+| `sentiment_neutral`      | `integer`     | sim | default `0` |
+| `sentiment_negative`     | `integer`     | sim | default `0` |
+| `net_sentiment`          | `numeric`     | não | mesmo campo/escala de `bw_query_metrics_daily.net_sentiment` |
+| `synced_at`              | `timestamptz` | sim | `now()` |
+
+**Índices**: unique `(project_id, query_id, category_id_key, metric_hour)`.
+
+**Políticas RLS**: `org_isolation_bw_query_metrics_hourly` — via `project_id`, mesmo padrão de
+`bw_query_metrics_daily`.
+
+**Janela de captura, deliberadamente curta** (diferente de `daily`/`weekly`/`monthly`, que
+cobrem o histórico completo desde `BRANDWATCH_MENTIONS_START_DATE`): este grão existe só pra
+detecção de curto prazo (`event-radar`) e pra Velocidade (`aggregated-metrics`), não pra
+histórico/BI — `bw-sync` busca **últimos 30 dias** a cada invocação (não só as horas desde o
+último sync). Motivo do tamanho: 30 dias cobre tanto a janela "Últimas 3h" quanto "Hora atual vs.
+média das últimas 4 semanas na mesma hora" (`event-radar/detection-engine.md`) com a **mesma
+tabela** — a segunda janela calcula a média agrupando por hora-do-dia sobre os próprios registros
+já armazenados aqui (`extract(hour from metric_hour)`), sem precisar de uma segunda chamada
+usando a dimensão cíclica `hourOfDay` da Brandwatch. Sem custo extra de chamada por causa disso —
+uma chamada de chart devolve todos os buckets do range pedido numa resposta só (mesmo princípio
+já vale pra `days`/`weeks`/`months`), então pedir 30 dias de `hours` custa a mesma 1 chamada que
+pedir 3 dias custaria. Ainda assim **sem job de retenção/limpeza** — mesma filosofia de
+"histórico acumula indefinidamente por design" já aplicada a `daily`/`weekly`/`monthly` (ver
+`CLAUDE.md`, "Data storage is historical by design"); o volume de linhas em grão horário continua
+pequeno o bastante (24× o diário, ainda trivial pra Postgres) pra não precisar de exceção a essa
+regra.
+
 ### `bw_query_group_metrics_weekly`
 
 Resolve a ⚠️ DECISÃO PENDENTE de `overview.md` ("SOV de Query Group... grão
 exato fica para data-model.md", nunca fechada até 2026-07-07) — o card de
-Share of Voice do Executive Overview (`executive-overview.md`) depende desta
+Share of Voice do Executive Overview (`../intelligence-center/executive-overview.md`) depende desta
 tabela.
 
 | Campo             | Tipo          | Obrigatório | Descrição |
@@ -841,6 +921,18 @@ citado sem depender de reler texto restrito. ✅ **Implementado 2026-07-11**
 (migration `20260711070000`) — priorizado depois de validar contra um
 export real de dashboard Brandwatch ("X Themes": Top Stories/Hashtags/
 Posters/Emojis, exatamente este shape de dado).
+
+> ✅ **Cobertura reconfirmada (2026-07-13)** — pedido do usuário: "no
+> endpoint twitter-insights é possível capturar Hashtags, Emoticons,
+> Stories, Mentioned authors. Tudo isso deve existir na foundation."
+> Revisitada a doc ao vivo (`developers.brandwatch.com/docs/twitter-insights`)
+> nesta data: são exatamente os 4 endpoints já listados acima
+> (`data/hashtags`, `data/emoticons`, `data/urls` = "Stories",
+> `data/mentionedauthors`) — sem gap, os 4 já implementados desde
+> `20260711070000`. Ver também
+> [../intelligence-center/platform-analysis.md](../intelligence-center/platform-analysis.md)
+> pra uma nota sobre uso futuro deste dado como nuvem de palavras no
+> frontend (mesmo uso que a própria Brandwatch faz desses agregados).
 
 | Campo | Tipo | Obrigatório | Descrição |
 |---|---|---|---|
@@ -1327,6 +1419,7 @@ narrative_id in (
 | `engagement_total`     | `numeric`     | não | de `bw_query_metrics_daily.engagement_score` — mesma regra |
 | `unique_authors`       | `integer`     | não | de `bw_query_metrics_daily.unique_authors` — mesma regra. ✅ Adicionado `20260712020000`, ver nota de `unique_authors` em `bw_query_metrics_daily` acima |
 | `impressions`          | `bigint`      | não | de `bw_query_metrics_daily.impressions` — mesma regra. ✅ Adicionado `20260712030000` |
+| `net_sentiment`        | `numeric`     | não | de `bw_query_metrics_daily.net_sentiment` — mesma regra. ⚠️ Especificado 2026-07-13, ainda sem migration |
 | `created_at`           | `timestamptz` | sim | `now()` |
 
 **Índices**: unique `(narrative_id, metric_date, period)`.
@@ -1445,7 +1538,9 @@ as $$
           and (
             (s.signal_type = 'author_handle' and m.author_handle_normalized = lower(s.signal_value))
             or (s.signal_type = 'domain' and m.domain = s.signal_value)
-            or (s.signal_type = 'hashtag' and s.signal_value = any(m.tag_names))
+            or (s.signal_type = 'hashtag' and lower(s.signal_value) = any(
+                  select lower(h) from unnest(m.insights_hashtag) as h
+                ))
             or (s.signal_type = 'keyword' and (
                   m.snippet ilike '%' || s.signal_value || '%'
                   or m.full_text ilike '%' || s.signal_value || '%'
@@ -1463,6 +1558,23 @@ $$;
 > skill `supabase-postgres-best-practices`. Sempre passar `p_since`/`p_until`
 > em produção — nunca escanear todas as partições de `mentions` sem filtro de
 > data.
+>
+> ✅ **Bug corrigido (2026-07-13, migration `20260713020000`)** — pedido do
+> usuário: reveja a pendência de "extração de hashtag como campo
+> estruturado" no endpoint de X Insights. Essa pendência já estava
+> **resolvida de fato** desde 2026-07-10: `mentions.insights_hashtag
+> text[]` (campo nativo `insightsHashtag`, específico de X/Instagram,
+> confirmado contra `mention-metadata-field-definitions`) é exatamente o
+> campo estruturado — a spec só nunca tinha sido atualizada pra remover o
+> ⚠️ DECISÃO PENDENTE (ver `overview.md`, "Validação de viabilidade").
+> Revisão encontrou, junto disso, um **bug real**: `signal_type = 'hashtag'`
+> aqui casava contra `mentions.tag_names` — que é a feature de **Tags** da
+> Brandwatch (`ruletags`, aplicadas manualmente, fora de escopo do MVP per
+> `_index.md`), não os hashtags do post. Corrigido pra `insights_hashtag`
+> (case-insensitive, `lower()`, mesmo padrão já usado pra `author_handle`).
+> Sinais de `signal_type = 'hashtag'` só funcionam pra mentions de
+> X/Instagram (`insights_hashtag` não é populado pras demais fontes) — mesma
+> limitação já documentada pra outros campos restritos por plataforma.
 
 ## Função: `refresh_narrative_metrics`
 
@@ -1513,6 +1625,7 @@ create or replace view reporting.narratives_overview as
 with daily as (
   select narrative_id, query_id, metric_date, total_mentions,
          sentiment_positive, sentiment_neutral, sentiment_negative,
+         net_sentiment, reach_estimated, engagement_total, unique_authors,
          lag(total_mentions) over (partition by narrative_id order by metric_date) as prev_total_mentions
   from narrative_metrics
   where period = 'daily'
@@ -1531,20 +1644,40 @@ select
   n.risk_level,
   d.metric_date,
   d.total_mentions,
+  d.net_sentiment,
+  d.reach_estimated,
+  d.engagement_total,
+  d.unique_authors,
   round(100.0 * d.total_mentions / nullif(t.query_total_mentions, 0), 1) as sov_percent,
   round(100.0 * (d.total_mentions - d.prev_total_mentions) / nullif(d.prev_total_mentions, 0), 1) as trend_percent,
-  case
-    when d.total_mentions = 0 then 'neutral'
-    when (d.sentiment_positive - d.sentiment_negative)::numeric / d.total_mentions > 0.2 then 'positive'
-    when (d.sentiment_positive - d.sentiment_negative)::numeric / d.total_mentions < -0.2 then 'negative'
-    else 'neutral'
-  end as sentiment_bucket
+  coalesce(
+    -- score oficial da Brandwatch (net_sentiment), quando já sincronizado
+    case
+      when d.net_sentiment >= 50 then 'very_positive'
+      when d.net_sentiment >= 20 then 'positive'
+      when d.net_sentiment >= 5 then 'slightly_positive'
+      when d.net_sentiment >= -4 then 'neutral'
+      when d.net_sentiment >= -19 then 'slightly_negative'
+      when d.net_sentiment >= -49 then 'negative'
+      when d.net_sentiment is not null then 'very_negative'
+    end,
+    -- fallback só enquanto net_sentiment ainda não sincronizou pra essa linha
+    -- (histórico pré-20260713010000, ou sync ainda não passou por essa Narrativa/dia) —
+    -- mesma escala de bucket, aproximada a partir de sentiment_positive/negative
+    -- (já oficiais/não amostrados, só não é o score nativo netSentiment)
+    case
+      when d.total_mentions = 0 then 'neutral'
+      when (d.sentiment_positive - d.sentiment_negative)::numeric / d.total_mentions > 0.2 then 'positive'
+      when (d.sentiment_positive - d.sentiment_negative)::numeric / d.total_mentions < -0.2 then 'negative'
+      else 'neutral'
+    end
+  ) as sentiment_bucket
 from narratives n
 join daily d on d.narrative_id = n.id
 left join query_totals t on t.metric_date = d.metric_date and t.query_id = d.query_id;
 
 comment on view reporting.narratives_overview is
-  'View usada pela tabela interativa de Narrativas no Executive Overview e exposta para BI externo. sov_percent = menções da Narrativa / total de menções de todas as Narrativas da MESMA Query no mesmo dia — corrigido 2026-07-11 (ver nota abaixo). Thresholds de sentiment_bucket (±20%) e o bucket de Momentum (calculado no frontend a partir de trend_percent) são placeholders — ver ⚠️ DECISÃO PENDENTE em overview.md.';
+  'View usada pela tabela interativa de Narrativas no Executive Overview e exposta para BI externo. sov_percent = menções da Narrativa / total de menções de todas as Narrativas da MESMA Query no mesmo dia — corrigido 2026-07-11 (ver nota abaixo). sentiment_bucket usa net_sentiment (score oficial da Brandwatch, 7 faixas, ver aggregated-metrics/sql-aggregation.md) com fallback pro cálculo local só enquanto net_sentiment não sincronizou. Momentum/Velocidade/Risco (scores 0-100) NÃO vivem nesta view — são período-dependentes (a UI escolhe 7/14/30 dias) e ficam em aggregated-metrics.get_narratives_table(), que já recebe period_start/period_end; esta view expõe só dado bruto por dia, reaproveitado tanto pela UI quanto pelo BI externo.';
 
 -- Role só-leitura para BI externo (Qlik Cloud, Power BI, ferramentas próprias)
 create role bi_reader login noinherit;
@@ -1687,6 +1820,12 @@ revoke all on schema public from bi_reader;
       `narrative_metrics.reach_estimated` (migration `20260712000000`) —
       overflow real observado em `bw_query_x_insights.impressions` (valor
       ~3.96 bilhões, acima do teto de `integer`, ~2.1 bilhões)
+      → ⚠️ **ainda pendente de implementação** (spec escrita 2026-07-13,
+      sem migration ainda): `bw_query_metrics_daily.net_sentiment` + nova
+      tabela `bw_query_metrics_hourly` + nova fase `hourly_metrics` em
+      `SYNC_STEPS` (ver `sync-brandwatch.md` passos 6.3d/6.3e) — resolve os
+      gaps de Sentimento por Narrativa e de detecção intra-dia do
+      `event-radar`
 - [ ] Triggers `set_updated_at` em `organizations`, `brandwatch_credentials`, `narratives`
 - [ ] RLS habilitada em **todas** as tabelas deste módulo (inclusive
       `sync_cursors`/`sync_log`, deny-all)

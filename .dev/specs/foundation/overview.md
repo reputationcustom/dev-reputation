@@ -11,17 +11,26 @@ atualizado: 2026-07-06
 
 > ✅ **Escopo de Sprint confirmado (2026-07-10)**: Sprint 1 é **inteiramente**
 > a integração com a Brandwatch (sync serial+rate-limited pra Supabase) —
-> nenhuma UI. A tela de consumo (Executive Overview e demais dashboards)
-> passa a ser Sprint 2 ("a interface web com os gráficos"), consumindo os
-> dados que Sprint 1 já deixa prontos no Supabase. `sync-brandwatch` e
-> `narratives` (a base de dados + a lógica de agregação) são Sprint 1;
-> `executive-overview` (a tela em si) é Sprint 2 — ver tabela abaixo.
+> nenhuma UI. `sync-brandwatch` e `narratives` (a base de dados + a lógica
+> de agregação) são Sprint 1; toda a interface web ("a interface web com os
+> gráficos", incluindo a tela de entrada pós-login) é Sprint 2 e vive
+> inteira em `intelligence-center` — ver "✅ Executive Overview movida para
+> `intelligence-center`" abaixo.
 
 Estabelecer a base de dados sincronizada da Brandwatch no Supabase — todo o
-dado que qualquer tela ou módulo futuro (`executive-overview` no Sprint 2;
-`entities`, `command-center`, `threshold-engine`... nos Sprints seguintes)
-vai precisar pra operar. Nenhum desses tem dado sem este módulo — é a
-fundação literal do produto.
+dado que qualquer tela ou módulo futuro (`intelligence-center` no Sprint 2,
+incl. `cases`; `entities`, `event-radar`... nos Sprints seguintes) vai
+precisar pra operar. Nenhum desses tem dado sem este módulo — é a fundação
+literal do produto.
+
+> ✅ **Executive Overview movida para `intelligence-center` (2026-07-12)**:
+> a spec da tela pós-login (`executive-overview.md`) vivia aqui apesar de
+> `foundation` ser, por definição, só backend — conflitava com
+> `aggregated-metrics/overview.md`, que já listava `/overview` como página
+> de `intelligence-center` como as demais. Movida para
+> [../intelligence-center/executive-overview.md](../intelligence-center/executive-overview.md),
+> que agora é a versão única e confiável dessa spec. `foundation` continua
+> dono só dos dados que ela lê — nada mudou de schema.
 
 ## Funcionalidades
 
@@ -29,27 +38,25 @@ fundação literal do produto.
 |----------------------|------------------------------------------------------------------------------|--------|----|------|
 | `sync-brandwatch`    | Edge Function que sincroniza projects/queries/query-groups/categories/mentions/métricas (diária/semanal/mensal, plataforma, temas, top autores, SOV) da Brandwatch para o Supabase | 1 | **implementado** (ver `CLAUDE.md` "Brandwatch sync model" pro estado atual completo — mentions, narrativas auto-criadas, métricas não-amostradas por Narrativa incluídas) | [sync-brandwatch.md](sync-brandwatch.md) |
 | `narratives`         | Tabela de Narrativas como entidade viva (auto-criada a partir de Category, sinais, tags, métricas históricas incl. engajamento/reach/reposts/comments), priorizando agregados oficiais da Brandwatch sobre soma local de mentions | 1 | **implementado** | [narratives.md](narratives.md) |
-| `executive-overview` | Tela pós-login com métricas cacheadas: volume/sentimento, share of voice, contagem total, tabela interativa de Narrativas | **2** | não iniciado — depende só de ler o que Sprint 1 já deixa em `narratives_overview`/`bw_query_metrics_daily` | [executive-overview.md](executive-overview.md) |
 
 ## Dependências
 
 - **Módulos que este depende**: nenhum — é a fundação.
-- **Módulos que dependem deste**: `executive-overview` (Sprint 2, primeira
-  tela — lê direto do que este módulo sincroniza, sem lógica de negócio
-  própria), `entities` (Sprint 2/3, usa `mentions.author` para o JOIN de
-  enriquecimento), `command-center` (`cases.category_id` referencia
-  `bw_categories`), `threshold-engine` e `intelligent-feed` (Sprint 3,
-  consomem `mentions`/`bw_categories` sincronizados).
+- **Módulos que dependem deste**: `intelligence-center` (Sprint 2, primeira
+  tela é `executive-overview.md` — lê direto do que este módulo sincroniza,
+  sem lógica de negócio própria), `aggregated-metrics` (Sprint 2, camada de
+  agregação que serve todas as páginas), `entities` (Sprint 2/3, usa
+  `mentions.author` para o JOIN de enriquecimento), `cases`
+  (`intelligence-center/data-model.md`, `narrative_id` referencia
+  `narratives`), `event-radar` (Sprint
+  3, consome os agregados oficiais já sincronizados — nunca `mentions` cru,
+  ver `event-radar/detection-engine.md`).
 
 ## Rotas/Páginas
 
-⚠️ Sprint 2 — nenhuma rota abaixo existe no app Next.js ainda (`app/` tem só
-o scaffold inicial). Listada aqui porque é a única UI que `foundation`
-prevê consumir; a implementação em si não é entrega de Sprint 1.
-
-| Rota         | Componente/Página     | Acesso       |
-|--------------|-------------------------|--------------|
-| `/overview`  | `ExecutiveOverviewPage` | autenticado  |
+Este módulo não tem rotas próprias — é só backend (ver nota acima). A tela
+que consome estes dados (`/overview`) é especificada e implementada em
+[../intelligence-center/executive-overview.md](../intelligence-center/executive-overview.md).
 
 ## Dados gerenciados
 
@@ -218,16 +225,23 @@ volumétrica antes de virar migration (motivos abaixo):
 > mecanismo **secundário/best-effort** para fontes não restritas (blogs,
 > forums, news dentro do limite de 256 caracteres).
 > Campos **disponíveis para todas as fontes, incluindo X/Reddit/LinkedIn** e
-> por isso seguros para sinais/métricas: `tag_names`, `domain`, `author`/
+> por isso seguros para sinais/métricas: `domain`, `author`/
 > `author_handle_normalized` (já existe como coluna gerada em `mentions`),
 > `category_ids`, `language`, `country_code`, `page_type`. Sinais de
 > `signal_type = 'author_handle'` (renomeado de `actor` na proposta original)
 > usam diretamente `author_handle_normalized`, que já tem índice.
 >
-> Extração de hashtag como campo estruturado próprio (fora do texto) não foi
-> confirmada na documentação lida — marcado como ⚠️ DECISÃO PENDENTE, a
-> verificar no payload real da API antes de assumir que existe fora de
-> `full_text`/`snippet`.
+> ✅ **Resolvido (2026-07-13)**: extração de hashtag como campo estruturado
+> próprio existe, sim — `mentions.insights_hashtag text[]` (campo nativo
+> `insightsHashtag`, adicionado em `20260710010000`, confirmado contra
+> `mention-metadata-field-definitions`). Diferente dos campos da lista
+> acima, **só está disponível pra X/Instagram** (não é um campo universal
+> como `domain`/`author`) — sinais de `signal_type = 'hashtag'` em
+> `narrative_signals` ficam restritos a mentions dessas duas fontes. A
+> revisão que fechou esta pendência também encontrou um bug real na função
+> que consome isso — ver `narrative_matched_mentions()` em
+> `data-model.md`, corrigia contra `tag_names` (Tags da Brandwatch, campo
+> errado) em vez de `insights_hashtag`.
 
 Estrutura final proposta para `data-model.md`:
 
@@ -250,54 +264,6 @@ bw_query_metrics_daily (id, project_id, query_id, category_id null,
                        sentiment_neutral, sentiment_negative, synced_at,
                        unique(project_id, query_id, category_id, metric_date))
 ```
-
-### `executive-overview` — comportamento esperado
-
-- Tela pós-login (`/overview`), lê **direto do Supabase** (dados já
-  sincronizados) — nunca chama `api.brandwatch.com` em tempo real a partir do
-  frontend.
-- **Série temporal de volume por sentimento**: lida direto de
-  `bw_query_metrics_daily` (já populada pelo `sync-brandwatch` a partir de
-  `data/volume/sentiment/days`) — **não** recalculada por agregação local
-  sobre `mentions`, exatamente por causa do sampling em Queries de alto
-  volume (ver seção `narratives` acima).
-- **Share of Voice (Query Group)**: se a organização tiver um Query Group
-  configurado, comparação de volume por Query dentro do grupo, por semana —
-  também cacheada via `sync-brandwatch` (`data/volume/queryGroups/weeks`),
-  não recalculada localmente.
-- **Contagem total de mentions** no período selecionado, a partir de
-  `bw_query_metrics_daily` (soma de `total_mentions`).
-- **Timezone fixo `America/Sao_Paulo`** para todos os buckets de data (o
-  parâmetro `timezone` da Brandwatch, quando usado no sync, só afeta como os
-  buckets são calculados — não filtra dados).
-- Estados de loading/erro/vazio seguem o padrão da skill `web-app-structure`
-  (`references/frontend.md`): `<Spinner />`, `<ErrorMessage retry />`,
-  `<EmptyState />`.
-
-#### Tabela interativa de Narrativas
-
-Uma linha por Narrativa ativa da organização, colunas: **Narrativa**, **SOV**,
-**Tendência**, **Sentimento**, **Momentum**, **Risco**, **Ação**. Nenhum
-número é armazenado duplicado nas tabelas — tudo calculado sob demanda por uma
-view/função `narratives_overview(organization_id, at_date)` sobre `narratives`
-+ `narrative_metrics` (detalhada em `data-model.md`). Para Narrativas com
-`bw_category_id`, a view usa as linhas com `source = 'bw_aggregate'`
-(prioridade sobre `mentions_sample`, conforme a nota de sampling acima):
-
-| Coluna | Origem | Cálculo |
-|---|---|---|
-| Narrativa | `narratives.title` | direto |
-| SOV | `narrative_metrics.total_mentions` | `total_mentions` da narrativa ÷ soma de `total_mentions` de todas as Narrativas da **mesma Query** (`narrative_metrics.query_id`) no mesmo `metric_date` — **Share of Voice (Narrativa)**, não confundir com o SOV de Query Group já descrito acima (ver `_glossary.md`). ⚠️ **Corrigido 2026-07-11** (bug de produção real: a implementação original agrupava por `organization_id` inteira em vez de por Query — divergente assim que uma organização monitora mais de um candidato/Query no mesmo Project; ver `data-model.md` "Camada de reporting" pro detalhe da correção) |
-| Tendência | 2 linhas consecutivas de `narrative_metrics` | variação % entre o período atual e o anterior (mesmo `period`) |
-| Sentimento | `sentiment_positive/neutral/negative` | bucket a partir do sentimento líquido `(positive - negative) / total`; thresholds exatos ⚠️ DECISÃO PENDENTE (decisão de produto, não técnica) |
-| Momentum | magnitude/direção da Tendência | bucket categórico (ex: "Explodindo" / "Forte" / "Médio" / "Esfriando"); thresholds exatos ⚠️ DECISÃO PENDENTE — candidato natural a virar configurável no `threshold-engine` (Sprint 3) em vez de hard-coded |
-| Risco | `narratives.risk_level` | direto — é julgamento (analista/IA), não derivado das métricas |
-| Ação | — | link "Ver" → detalhe da Narrativa (rota exata fica para quando `intelligence-center`, Sprint 2, for especificado; para o Sprint 1 pode ser um detalhe mínimo: título, descrição, sinais, métricas atuais) |
-
-`period` e o intervalo de comparação da Tendência (diário vs. semanal) ficam
-como ⚠️ DECISÃO PENDENTE — a imagem de referência sugere variações do tipo
-"+8%"/"-3%" que soam a comparação semana a semana, mas o valor exato é
-configurável, não uma restrição técnica.
 
 ### Preparação para relatórios e cruzamento (Narrativa × Entity)
 
@@ -395,55 +361,56 @@ no JWT. Substituído pelo seguinte design, que suporta **um usuário pertencer a
   abaixo).
 - `organization_members` tem sua própria RLS: `select` permitido apenas onde
   `user_id = (select auth.uid())` (o usuário só vê suas próprias associações).
-- **Fora do MVP, só a estrutura**: não há tela/fluxo de convite, criação de
-  organização ou troca de organização ativa — a tabela existe e a RLS já
-  funciona para múltiplas organizações, mas popular `organization_members`
-  continua manual (seed/SQL direto) até um módulo futuro de gestão de
-  organizações ser especificado.
+- ✅ **Atualizado 2026-07-13**: convite de usuário e vínculo com 1+
+  organizações agora têm tela própria, admin-only — ver
+  [../auth/user-management.md](../auth/user-management.md). Troca de
+  organização ativa também resolvida — seletor no header, ver
+  `intelligence-center/executive-overview.md`, "Header"/"Fluxo principal"
+  (RLS já garante o isolamento, o seletor só troca qual organização está
+  "ativa" na sessão do frontend). Continua fora do MVP: criação de
+  organização pela UI — segue manual/SQL direto.
 
-> ⚠️ DECISÃO PENDENTE (ajustes de schema a aplicar na migration inicial, antes
-> de implementar `sync-brandwatch`/`executive-overview` — detalhamento completo
-> vai para `data-model.md`):
+> ✅ **Todos os 8 itens abaixo confirmados aplicados (2026-07-13)** — esta
+> nota ficou marcada `⚠️ DECISÃO PENDENTE` desde a versão original do
+> overview e nunca foi atualizada depois que a migration inicial
+> (`20260707000000_foundation_schema.sql`) e as seguintes foram escritas.
+> Revisão pedida pelo usuário ("O RLS do Supabase obrigatoriamente precisa
+> respeitar user_id e organization_id... Reveja se a foundation também
+> está atendendo a esse requisito") — conferido linha a linha contra as
+> migrations reais, não só contra esta spec:
 >
-> 1. **Gap de RLS real**: `organizations`, `bw_projects`, `bw_queries`,
->    `bw_query_groups`, `bw_categories` não têm `ENABLE ROW LEVEL SECURITY` no
->    schema anexo. Como o Executive Overview lê essas tabelas direto do client
->    Supabase (padrão `web-app-structure`), sem RLS qualquer usuário
->    autenticado de qualquer organização conseguiria ler projetos/queries de
->    **todos os tenants** via PostgREST. Precisa de RLS + policy
->    `org_isolation_*` (usando `auth_organization_ids()` acima; mesmo padrão de
->    derivar organização via tabela pai já usado em
->    `entity_accounts`/`entity_tags` para as tabelas satélite).
-> 2. `sync_cursors`/`sync_log` também sem RLS — são de uso exclusivo da Edge
->    Function (via `SUPABASE_SECRET_KEY`, que ignora RLS de qualquer forma),
->    mas devem ganhar RLS deny-all (sem policy) por defesa em profundidade e
->    para não acusar erro no Database Linter do Supabase.
-> 3. Todas as policies (novas e as já existentes no schema anexo) usam a
->    função `auth_organization_ids()` acima, que já é `stable` — não repetir o
->    padrão antigo de claim JWT em nenhuma tabela.
-> 4. Falta a função/trigger `set_updated_at` referenciada implicitamente pelas
->    colunas `updated_at` já presentes em `brandwatch_credentials`, `entities`,
->    `cases` e, agora, `narratives` (Princípio técnico 4).
-> 5. `narratives`/`narrative_signals`/`narrative_tags`/`narrative_metrics`
->    precisam de `ENABLE ROW LEVEL SECURITY` + policy `org_isolation_*` desde
->    a criação (via `auth_organization_ids()`; satélites derivam a organização
->    de `narratives` como no padrão já usado por `entity_accounts`/`entity_tags`).
-> 6. Criar o schema `reporting` + role `bi_reader` (Princípio técnico 6) como
->    parte da mesma migration inicial, já que as duas primeiras views
->    (`mentions_daily`, `narratives_overview`) dependem das tabelas deste
->    módulo.
-> 7. `bw_query_metrics_daily` é derivada de `bw_projects`/`bw_queries`
->    (organização via `project_id`) — precisa de RLS + policy
->    `org_isolation_*` no mesmo padrão do item 1, não é uma tabela
->    "interna only" como `sync_cursors`/`sync_log`.
-> 8. Especificar a view/função única `narrative_matched_mentions(narrative_id)`
->    (ver "Preparação para relatórios e cruzamento" acima) — `refresh_narrative_metrics()`
->    deve ser implementada sobre ela, não com lógica de matching própria,
->    para não divergir do que `entities`/Intelligence Center (Sprint 2) vierem
->    a usar para o mesmo cruzamento.
+> 1. ✅ **RLS aplicada em todas as tabelas** — `organizations`,
+>    `bw_projects`, `bw_queries`, `bw_query_groups`, `bw_categories` (e
+>    toda tabela de agregado criada depois: `bw_query_metrics_weekly`/
+>    `monthly`, `bw_query_metrics_daily_by_platform`, `bw_query_topics`,
+>    `bw_query_top_authors`/`top_tweeters`/`top_sites`/`top_shared_sites`,
+>    `bw_query_author_topics`, `bw_query_x_insights`,
+>    `bw_query_demographics_daily`) têm `ENABLE ROW LEVEL SECURITY` +
+>    policy `org_isolation_*`.
+> 2. ✅ `sync_cursors`/`sync_log`/`bw_sync_lock` têm RLS ativa, **sem**
+>    nenhuma policy (deny-all) — só `SUPABASE_SECRET_KEY` acessa.
+> 3. ✅ Toda policy usa `auth_organization_ids()` (`stable`/`security
+>    definer`) — nenhuma tabela ficou com o padrão antigo de claim JWT.
+> 4. ✅ Trigger `set_updated_at` existe (`20260707000000`) e é reusada por
+>    toda tabela nova com coluna `updated_at` (`brandwatch_credentials`,
+>    `narratives`, e agora também `user_profiles` em `auth/data-model.md`).
+> 5. ✅ `narratives`/`narrative_signals`/`narrative_tags`/`narrative_metrics`
+>    têm RLS + `org_isolation_*` desde a criação.
+> 6. ✅ Schema `reporting` + role `bi_reader` criados na migration inicial.
+> 7. ✅ `bw_query_metrics_daily` tem RLS + `org_isolation_bw_query_metrics_daily_select`
+>    (não é tratada como tabela "interna only").
+> 8. ✅ `narrative_matched_mentions(narrative_id)` existe em
+>    `data-model.md` e é reusada por `refresh_narrative_metrics()` e por
+>    todo consumidor de "quais mentions pertencem a esta Narrativa"
+>    (`intelligence-center/narratives-exploration.md`, grafo simplificado).
 >
-> Nenhum desses ajustes foi aplicado ainda — ficam para a migration inicial,
-> a ser desenhada em `data-model.md` após aprovação deste overview.
+> ⚠️ **Gap real diferente, encontrado na mesma revisão** (não é sobre
+> `foundation` — é sobre como `aggregated-metrics` consome `foundation`):
+> os Edge Functions `get-page-*` não podem usar `SUPABASE_SECRET_KEY` como
+> o padrão do Princípio técnico 5 sugere, porque isso bypassa a RLS que
+> este módulo cuidadosamente implementa — corrigido em
+> [../aggregated-metrics/edge-functions-per-page.md](../aggregated-metrics/edge-functions-per-page.md),
+> "Autenticação do client Supabase (exceção ao padrão)".
 
 ## Referências relacionadas
 

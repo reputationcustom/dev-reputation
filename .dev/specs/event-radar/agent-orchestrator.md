@@ -1,0 +1,88 @@
+﻿---
+tipo: feature-spec
+módulo: event-radar
+funcionalidade: agent-orchestrator
+status: rascunho
+atualizado: 2026-07-12
+---
+
+# Orquestrador de Agent (única chamada à IA por evento)
+
+## Objetivo
+
+Transformar um evento estatístico (já deduplicado e com severidade calculada) em um card
+legível para a equipe de comunicação — com exatamente uma chamada de IA por evento.
+
+## Usuários afetados
+
+Consumido indiretamente por qualquer usuário autenticado que visualize uma página com
+`highlights` (ver módulo `aggregated-metrics`) ou a fila de aprovação de `cases` pendentes.
+
+## Fluxo principal
+
+1. Uma Edge Function consome `radar_staging_events` já deduplicados, com severidade calculada,
+   e dentro do cap diário (ver [volume-limits.md](volume-limits.md)).
+2. Monta o payload agregado (ver regras abaixo — nunca texto bruto de menções).
+3. Faz **uma única chamada** à API do Claude, com saída estruturada forçada via schema JSON.
+4. Recebe a resposta e grava conforme [schema-integration.md](schema-integration.md).
+
+## Regras de negócio
+
+- Uma única chamada à IA por evento — não uma cadeia de 4 agents. Os quatro "papéis" (análise,
+  dedup semântico, recomendação, resumo executivo) são seções de um único system prompt.
+- O dedup semântico entre narrativas relacionadas (ex: volume + sentimento + engajamento de
+  "Segurança" virando um card só) é a única parte desta etapa que exige IA — porque depende de
+  julgamento sobre o que conta como "o mesmo movimento". É uma etapa dentro do mesmo prompt, não
+  um agent separado.
+- O payload enviado à IA contém **apenas dados agregados**: métricas já calculadas, top tópicos
+  com percentuais, principais plataformas, contagens de autores. **Nunca** enviar texto bruto
+  das menções — isso encarece o prompt sem agregar precisão. Para conteúdo de X/Twitter, usar os
+  endpoints X Insights (`data/hashtags`, `data/emoticons`, `data/urls`, `data/mentionedauthors`)
+  como fonte de evidência agregada, já decidido em sprint anterior.
+- Prompt-base deve reforçar: não inventar números/causas, diferenciar correlação de causa, usar
+  linguagem como "associado a" quando a evidência for insuficiente, títulos ≤ 90 caracteres,
+  resumo ≤ 300 caracteres.
+- Resumo executivo (antigo "Agent 4") roda separado, em lote — uma chamada por dia agregando
+  todos os cards publicados nas últimas 72h, nunca uma chamada por evento.
+
+## Schema de saída (contrato obrigatório)
+
+> ⚠️ Este schema é compartilhado com o bloco `highlights` do envelope de `aggregated-metrics`.
+> Não renomear campos aqui sem atualizar `standard-json-envelope.md` na mesma alteração — ver
+> [aggregated-metrics-integration.md](aggregated-metrics-integration.md).
+
+| Campo                  | Tipo               | Obrigatório | Descrição                                     |
+|--------------------------|---------------------|-------------|-------------------------------------------------|
+| `should_publish`          | boolean             | sim         | Se `false`, evento é descartado, nada é gravado |
+| `event_type`               | string              | sim         | ex: `spike`, `queda`, `mudanca_sentimento`      |
+| `severity`                  | enum                | sim         | `low`\|`medium`\|`high`\|`critical` (vem de 1.3, não recalculado pela IA) |
+| `severity_score`            | number              | sim         | vem de 1.3, repassado no payload de saída        |
+| `severity_explanation`      | string              | sim         | por que essa severidade, em linguagem natural    |
+| `title`                      | string (≤90 chars)  | sim         | título do card                                    |
+| `summary`                    | string (≤300 chars) | sim         | resumo curto                                       |
+| `explanation`                | string              | sim         | explicação mais detalhada (causa provável etc.)   |
+| `recommendation`             | string ou null      | não         | ação sugerida, quando aplicável                    |
+| `confidence`                  | number (0-1)        | sim         | confiança da IA na análise                          |
+| `tags`                        | string[]            | sim         | tags livres para busca/filtro                      |
+
+## Fluxos alternativos e erros
+
+| Situação                                | Comportamento esperado                                   |
+|--------------------------------------------|--------------------------------------------------------------|
+| IA retorna `should_publish: false`         | Evento não é gravado em `feed_events`, fica só no log interno |
+| Chamada à IA falha (erro/timeout)           | Evento permanece pendente, reprocessado na próxima execução |
+| Resposta não bate com o schema JSON forçado | Descartar e logar erro — nunca gravar payload malformado    |
+
+## Dados envolvidos
+
+- **Lê**: `radar_staging_events` (deduplicados, com severidade, dentro do cap diário).
+- **Escreve**: via [schema-integration.md](schema-integration.md) — `feed_events` e,
+  quando aplicável, linha pendente em `cases`.
+
+## Referências relacionadas
+
+- [overview.md](overview.md)
+- [severity.md](severity.md)
+- [volume-limits.md](volume-limits.md)
+- [schema-integration.md](schema-integration.md)
+- [aggregated-metrics-integration.md](aggregated-metrics-integration.md)

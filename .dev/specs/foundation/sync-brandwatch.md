@@ -54,7 +54,8 @@ computação síncrona, diferente de esperar rede).
 |---|---|
 | `metadata` | Passo 3 (bootstrap/refresh condicional) |
 | `mentions` | Passo 5 (polling paginado) |
-| `daily_metrics` | Passos 6, 6.3, 6.3b (sentimento diário + reach/engagement/autores únicos/impressões + plataforma incl. autores/engajamento/sentimento líquido por plataforma — sempre rodam, não são "stale-gated") |
+| `daily_metrics` | Passos 6, 6.3, 6.3b (sentimento diário + reach/engagement/autores únicos/impressões + plataforma incl. autores/engajamento/sentimento líquido por plataforma — sempre rodam, não são "stale-gated") + **net sentiment** ⚠️ especificado 2026-07-13, passo 6.3d, ainda sem migration |
+| `hourly_metrics` | ⚠️ Passo 6.3e — **especificado 2026-07-13, ainda sem migration**: volume/sentimento/net sentiment em grão horário (`bw_query_metrics_hourly`), janela móvel de 30 dias — sempre roda, não é "stale-gated" (é o oposto do throttle semanal: precisa estar sempre fresco pra detecção de curto prazo) |
 | `weekly_monthly` | Passo 6.1 (semanal/mensal, throttle 7/30 dias) |
 | `topics` | Passo 6.4 (temas — endpoint novo `data/topics` + endpoint legado `data/volume/topics/queries`, throttle 7 dias) |
 | `platform_by_narrative` | Passo 6.3c (breakdown de plataforma por Narrativa, throttle 7 dias) |
@@ -67,11 +68,15 @@ computação síncrona, diferente de esperar rede).
 | `demographics` | Passo 6.6 (demografia — gender/localização + sentimento líquido por localização, throttle 7 dias) |
 | `sov` | Passo 6.2 (Share of Voice de Query Group + reach por candidato, throttle 7 dias) |
 
-Todas as fases acima estão ✅ **implementadas** — `x_insights`, `top_sites`,
-`demographics` (mais `reach_estimate` em `sov`) foram priorizadas depois de
-validar o modelo de dados contra um export real de dashboard Brandwatch
-(ver "Validação contra dashboard real" mais abaixo); `top_tweeters`/
-`top_shared_sites` foram adicionadas em 2026-07-12 (migration
+Todas as fases acima estão ✅ **implementadas**, com duas exceções recentes
+ainda só especificadas (sem migration): `hourly_metrics` (fase nova) e a
+coluna `net_sentiment` dentro de `daily_metrics` (passo 6.3d) — ambas
+adicionadas à spec em 2026-07-13, ver notas nos passos 6.3d/6.3e acima e
+`data-model.md`, "Checklist antes de aplicar a migration". `x_insights`,
+`top_sites`, `demographics` (mais `reach_estimate` em `sov`) foram
+priorizadas depois de validar o modelo de dados contra um export real de
+dashboard Brandwatch (ver "Validação contra dashboard real" mais abaixo);
+`top_tweeters`/`top_shared_sites` foram adicionadas em 2026-07-12 (migration
 `20260712040000`) a partir de uma auditoria pedida pelo usuário contra a
 doc oficial da Brandwatch, que encontrou dois endpoints genuinamente
 distintos (não cobertos por engano como "a mesma coisa" que `top_authors`/
@@ -142,13 +147,14 @@ Brandwatch realmente entrega, painel a painel — resultado:
   `tweets`/`retweets`/`account_type`/`country_code`/`country_name` em
   `bw_query_top_authors` (extração de campos já capturados).
 - **Itens em aberto, sem conclusão ainda**:
-  - **"Post Type" por candidato** (retweet/reply/original, como painel
-    agregado comparando candidatos): não encontrada dimensão de chart
-    oficial equivalente — só `mentions.mention_role` por mention
-    individual. Replicar esse painel exigiria somar localmente sobre
-    `mentions` (amostrada), o que conflita com a premissa do projeto.
-    Decisão de produto pendente (mesmo padrão da decisão já tomada pra
-    `emotion` em `data-model.md` §3).
+  - ✅ **"Post Type" — pendência retirada (2026-07-13)**: a informação em
+    si (`mentions.mention_role`, por mention individual) já é capturada
+    sem gap — usada no grafo de disseminação (`intelligence-center/narratives-exploration.md`),
+    não num painel agregado. Um painel comparando candidatos por % de
+    retweet/reply/original continuaria sem dimensão de chart oficial
+    (só `mention_role` por mention, somar seria sobre `mentions`
+    amostrada), mas deixou de ser uma pendência registrada por não ser um
+    caso de uso pedido — ver `_index.md`, "Fora de escopo do MVP".
   - ✅ **"Most Karma" (Reddit) em Top Authors — confirmado (2026-07-12)**:
     auditoria direta contra `developers.brandwatch.com/docs/top-authors`
     confirma os campos `redditAwardeeKarma`/`redditAwarderKarma`/
@@ -590,6 +596,41 @@ própria `platform_by_narrative` (passo 6.3c abaixo) — ver `data-model.md`
    não faz parte do passo 6.3 (que roda toda invocação sem quebra por
    Narrativa) pra não reintroduzir o risco de CPU corrigido na "Execução em
    fases".
+6.3d. ⚠️ **Sentimento líquido (`netSentiment`) por Narrativa e por Query
+   inteira — especificado 2026-07-13, ainda sem migration** (revisão pedida pelo usuário: "verifique
+   se na foundation os dados de net sentiment estão vindo da brandwatch").
+   Mesmo mecanismo do passo 6.3b: `data/netSentiment/categories/days`
+   (todas as Narrativas numa chamada, via `syncCategoryDailyAggregate()`
+   passando `"netSentiment"` como aggregate) + `data/netSentiment/queries/days`
+   (Query inteira, `category_id is null`, via `syncQueryDailyAggregate()` —
+   mesma função que já cobre esse gap para `unique_authors`/`impressions`,
+   ver `data-model.md`). Upsert parcial (só `net_sentiment`) em
+   `bw_query_metrics_daily`. Roda em **toda** invocação, mesmo throttle do
+   passo 6.3b — é o mesmo tipo de agregado (chart oficial, não amostrado),
+   só um aggregate a mais na mesma dimensão já coberta. Já havia sido
+   marcado "✅ coberto" por engano na auditoria de `data-model.md`
+   (`chart-dimensions-and-aggregates`) — o que já existia era só pras
+   dimensões `pageTypes`/localização (`bw_query_metrics_daily_by_platform`/
+   `bw_query_demographics_daily`), não pra `categories`/`queries`; corrigido
+   nesta revisão.
+6.3e. ⚠️ **Volume/sentimento em grão horário — especificado 2026-07-13,
+   ainda sem migration** (resolve gap registrado em `event-radar/detection-engine.md`). Mesmo
+   mecanismo do passo 6, trocando a dimensão de tempo `days` por `hours`:
+   `data/volume/sentiment/hours` (volume + split de sentimento) e
+   `data/netSentiment/categories/hours` + `data/netSentiment/queries/hours`
+   (mesmo padrão do passo 6.3d). Upsert em `bw_query_metrics_hourly`,
+   **restrito a uma janela móvel de 30 dias** (`startDate = now() - 30d`) —
+   diferente de todo o resto deste sync, que cobre o histórico completo
+   desde `BRANDWATCH_MENTIONS_START_DATE`; aqui o propósito é só detecção
+   de curto prazo (`event-radar`) e Velocidade (`aggregated-metrics`), não
+   histórico/BI. 30 dias (não só 72h) porque cobre também a janela "Hora
+   atual vs. média das últimas 4 semanas" sem uma segunda chamada — ver
+   `foundation/data-model.md`, `bw_query_metrics_hourly`, "Janela de
+   captura". Roda em **toda** invocação (não é "stale-gated" — o oposto do
+   throttle semanal: o valor de existir é justamente estar sempre fresco).
+   Orçamento: +3 chamadas por invocação (volume/sentiment + 2×
+   netSentiment), dentro do `BRANDWATCH_CALL_BUDGET = 25` já existente
+   (ver "Fluxo principal", `brandwatchCallCount`).
 6.4. Temas: se não existir linha "fresca" (7 dias) em `bw_query_topics`
    para o par (e cada `categoryTarget`, mesmo padrão do passo 6.1): busca
    `data/topics?extract=words,phrases,hashtags,entities,people,places,

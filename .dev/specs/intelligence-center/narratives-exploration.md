@@ -33,17 +33,19 @@ membro de ao menos uma organização.
 
 1. Usuário acessa `/narratives` (ou navega a partir de "Ver" na tabela do
    Executive Overview).
-2. Tabela com **todas** as Narrativas da organização/Query ativa (mesmas
-   colunas do Executive Overview: Narrativa, SOV, Tendência, Sentimento,
-   Momentum, Risco, Ação) — ordenação personalizada (ver
-   `foundation/overview.md`, "Tabela interativa de Narrativas", já
-   especificada lá; esta página reusa o mesmo componente, sem duplicar
-   regra).
+2. Tabela com **todas** as Narrativas da organização ativa (header
+   global, ver [executive-overview.md](executive-overview.md), "Header" —
+   combina todas as Queries da organização, transparente ao usuário) —
+   mesmas 7 colunas do Executive Overview: Narrativa, SOV, Velocidade,
+   Sentimento, Momentum, Risco, Ação — ordenação personalizada (ver
+   [executive-overview.md](executive-overview.md), "Tabela interativa de
+   Narrativas", já especificada lá; esta página reusa o mesmo componente,
+   sem duplicar regra).
 3. Clique numa linha → painel de resumo abaixo da tabela (nome, resumo,
    indicadores-chave, mix de plataformas) sem navegar de página —
    equivalente ao estado `hasSelection` do protótipo.
 4. Nenhuma linha selecionada → grid de cards, um por Narrativa (nome,
-   resumo, SOV, momentum, tendência, botão "Explorar narrativa") —
+   resumo, SOV, momentum, velocidade, botão "Explorar narrativa") —
    equivalente a `hasNoSelection`/`narrativeCards` no protótipo.
 5. "Ver página completa" (no painel de resumo) ou "Explorar narrativa" (no
    card) → abre o detalhe. ✅ **Decidido (2026-07-12)**: modal sobre a
@@ -65,6 +67,7 @@ membro de ao menos uma organização.
 | Nenhuma Narrativa cadastrada | `<EmptyState />`, mesma mensagem de `executive-overview.md` |
 | Narrativa sem `bw_category_id` (só `narrative_signals`) | Não aparece em `narrative_metrics` (ver `foundation/data-model.md`) — linha/card mostra "—" nos campos de métrica, mas continua navegável (Risco/Narrativa sempre vêm de `narratives`) |
 | Narrativa sem nenhuma linha em `bw_query_top_authors`/`bw_query_topics` para a Category (sync ainda não cobriu esse `categoryTarget` — throttle semanal, ver `sync-brandwatch.md`) | Seções "Principais disseminadores"/"Menções relevantes" mostram `<EmptyState />` textual ("ainda sincronizando"), não erro |
+| Narrativa sem nenhuma linha em `cases` (schema é somente leitura, sem UI de criação ainda — ver `data-model.md`) | Seção "Ações e decisões" mostra `<EmptyState />` textual ("Nenhuma ação registrada ainda"), não erro — não bloqueia o resto da página |
 | Falha ao carregar um widget | `<ErrorMessage retry />` por widget, mesmo padrão de `executive-overview.md` |
 
 ## Interface (UI)
@@ -82,20 +85,22 @@ ficam como ampliação futura, sem spec de comportamento por ora.
 
 ### Detalhe (`/narratives/[id]`)
 
-- **Cabeçalho**: nome, badges de SOV/sentimento/risco/momentum, botão
-  "Voltar para Narrativas".
+- **Cabeçalho**: nome, badges de SOV/sentimento/risco/momentum/velocidade
+  (mesmos scores e faixas de `executive-overview.md`), botão "Voltar para
+  Narrativas".
 - **Cards de indicadores**: crescimento vs. período anterior, autores
   únicos, alcance estimado, engajamento total — **ver nota de gap abaixo
   sobre "autores únicos"**.
-- **Resumo executivo**: texto de 3–5 linhas. ✅ **Decidido (2026-07-12)**:
-  quem/como esse texto é preenchido (edição manual vs. geração automática
-  no backend) ainda **não foi desenvolvido** — o usuário confirmou que essa
-  lógica fica para depois. O frontend deve só **reservar o campo** (ler e
-  exibir `narratives.description`, já existente em
-  `foundation/data-model.md` — vazio/`<EmptyState />` textual quando
-  `null`), pronto para receber o valor assim que o backend (edição manual
-  ou geração automática — geração por IA continua fora de escopo do MVP
-  por ora, ver `_index.md`) existir. Não bloqueia o resto da página.
+- **Resumo executivo**: texto de 3–5 linhas. ✅ **Atualizado 2026-07-13**:
+  como não há CRUD de Narrativas em nenhuma camada do produto (ver
+  `foundation/narratives.md`), **edição manual está descartada** — a única
+  via possível pra preencher `narratives.description` é geração automática
+  no backend (candidato natural: `narrative_text` de `ai-synthesis.md`,
+  reaproveitando os `highlights` do `event-radar` daquela Narrativa, em vez
+  de um campo solto sem produtor). Ainda não desenvolvido — o frontend
+  continua só **reservando o campo** (ler e exibir
+  `narratives.description`, `foundation/data-model.md` — vazio/`<EmptyState />`
+  textual quando `null`). Não bloqueia o resto da página.
 - **Evolução (narrativa vs. volume geral)**: série temporal de
   `narrative_metrics.total_mentions` (Narrativa) sobreposta a
   `bw_query_metrics_daily.total_mentions` com `category_id is null` (Query
@@ -131,17 +136,30 @@ ficam como ampliação futura, sem spec de comportamento por ora.
   `reach_estimate`/`impact` — uso de dado por mention individual (não
   agregado/somado), consistente com o mesmo padrão já usado para
   `mention_role`/`emotion` (ver nota de sampling em `foundation/data-model.md`).
-- **Ações e decisões**: ✅ **Detalhado (2026-07-12)** em
-  [command-center/overview.md](../command-center/overview.md) — resumo: o
-  protótipo precisa só de um subconjunto de `cases` (título, status,
-  `assignee_id`, `due_date`) filtrado por `narrative_id`, mas isso esbarra
-  em 4 pendências ainda não fechadas (tabela `cases` não existe, FK
-  `narrative_id` não fechada, `assignee_id` sem tabela de perfil de usuário
-  para referenciar, mapeamento dos 5 valores de `case_status` pros 3
-  rótulos do protótipo) — ver a spec linkada para o detalhe de cada uma e a
-  recomendação de como destravar sem abrir o Command Center inteiro agora.
-  Até essas pendências fecharem, esta seção mostra `<EmptyState />`
-  ("Nenhuma ação registrada ainda") — não bloqueia o resto da página.
+- **Ações e decisões**: mostra um subconjunto de `cases` (título, status,
+  `assignee_id`, `due_date` — ver entidade "Caso" em `_glossary.md`)
+  filtrado por `narrative_id`. ✅ **Simplificado (2026-07-13)**: o módulo
+  `command-center` foi removido da documentação — era um módulo separado
+  (Sprint 2, nunca chegou a ganhar spec própria) para um requisito pequeno
+  o bastante para viver dentro de `intelligence-center` sem overhead de um
+  módulo à parte (checklist/comentários/arquivos/histórico de status
+  completos nunca foram pedidos; o que o protótipo precisa é só esta
+  listagem somente-leitura). `cases` passa a ser dado próprio de
+  `intelligence-center` — ver [data-model.md](data-model.md).
+
+  ✅ **Todas as pendências desta seção resolvidas (2026-07-13)**:
+  `cases.narrative_id references narratives(id)` (não `bw_category_id`),
+  `assignee_id references user_profiles(id)` (não `auth.users` direto), e
+  mapeamento dos 5 valores de `case_status` pros 3 rótulos do protótipo
+  (`open`/`waiting` → Pendente, `in_progress` → Em andamento,
+  `resolved`/`archived` → Concluída, "manter igual ao protótipo por
+  enquanto") — ver [data-model.md](data-model.md) e
+  [../auth/data-model.md](../auth/data-model.md).
+
+  Esta versão é **somente leitura** — criar/editar Casos pela UI (e o
+  eventual checklist/comentários/arquivos/histórico, se algum dia forem
+  pedidos) fica para uma spec própria futura, sem reabrir um módulo
+  separado só para isso.
 
 ## Regras de negócio
 
@@ -183,6 +201,6 @@ organização (RLS via `auth_organization_ids()`).
 ## Referências relacionadas
 
 - [intelligence-center/overview.md](overview.md)
-- [foundation/executive-overview.md](../foundation/executive-overview.md)
+- [executive-overview.md](executive-overview.md)
 - [foundation/data-model.md](../foundation/data-model.md)
 - [foundation/narratives.md](../foundation/narratives.md)
