@@ -249,6 +249,13 @@ Campos originais: `organization_id`, `project_id`,
 > `bw_query_top_authors`, `bw_query_top_sites`, `bw_query_x_insights`, e
 > `narrative_metrics.reach_estimated` (populado direto de
 > `bw_query_metrics_daily.reach_estimate`, mesmo risco).
+>
+> ⚠️ **`bw_query_top_sites.monthly_visitors` também estourou (2026-07-12,
+> migration `20260712020000`)** — mesma classe de bug, mas essa coluna
+> ficou de fora da correção acima porque não é chamada `reach_estimate`/
+> `impressions`. É um valor nativo da Brandwatch (`monthlyVisitors`, não
+> somado localmente) e domínios grandes passam facilmente de 2.1 bilhões
+> de visitantes mensais estimados. Widened pra `bigint`.
 
 > ⚠️ **`full_text` deixa de ser sempre `null` — busca seletiva planejada
 > (2026-07-11, revisão de spec pré-implementação)**: a decisão original
@@ -872,7 +879,7 @@ domínio (nome/gênero/tipo de conta/interesses), não só do site em si.
 | `category_id_key` | `bigint` | sim | gerada, `coalesce(category_id, 0)` |
 | `domain` | `text` | sim | |
 | `volume` | `integer` | sim | default `0` |
-| `monthly_visitors` | `integer` | não | de `monthlyVisitors` |
+| `monthly_visitors` | `bigint` | não | de `monthlyVisitors`; corrigido de `integer` pra `bigint` em `20260712020000` (bug de overflow, ver §5) |
 | `reach_estimate` | `bigint` | não | corrigido de `integer` pra `bigint` em `20260712000000` (bug de overflow) |
 | `impact` | `numeric` | não | |
 | `author_name` | `text` | não | autor típico associado ao domínio (o payload trata isso como propriedade do site, não uma lista de autores) |
