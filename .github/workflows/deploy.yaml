@@ -17,9 +17,16 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
+      # Versão fixa em vez de "latest" — "latest" faz o action resolver a
+      # release mais recente via API do GitHub a cada run, e runners
+      # compartilhados do GitHub Actions batem no rate limit não-autenticado
+      # (60 req/h por IP) com facilidade, causando "Failed to resolve latest
+      # Supabase CLI release: rate limit exceeded" de forma intermitente.
+      # Atualizar manualmente de vez em quando (checar releases em
+      # https://github.com/supabase/cli/releases).
       - uses: supabase/setup-cli@v1
         with:
-          version: latest
+          version: 2.109.1
 
       # Vincula ao projeto remoto — precisa da senha do banco (Dashboard > Settings > Database)
       # cadastrada como secret SUPABASE_DB_PASSWORD no repo (Settings > Secrets and variables > Actions).
