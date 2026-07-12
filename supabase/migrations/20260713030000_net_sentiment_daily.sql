@@ -60,11 +60,22 @@ begin
 end;
 $$;
 
--- reporting.narratives_overview passa a expor net_sentiment e usar o score
--- oficial no sentiment_bucket (7 faixas), com fallback pro cálculo local
--- só enquanto net_sentiment ainda não sincronizou pra essa linha — ver
--- foundation/data-model.md pra tabela de faixas completa.
-create or replace view reporting.narratives_overview as
+-- public.narratives_overview (a view canônica — reporting.narratives_overview
+-- é só um espelho fino dela, ver Reporting/BI split em CLAUDE.md) passa a
+-- expor net_sentiment/reach_estimated/engagement_total/unique_authors e a
+-- usar o score oficial no sentiment_bucket (7 faixas), com fallback pro
+-- cálculo local só enquanto net_sentiment ainda não sincronizou pra essa
+-- linha — ver foundation/data-model.md pra tabela de faixas completa.
+--
+-- As 4 métricas novas são anexadas DEPOIS de sentiment_bucket (não
+-- intercaladas entre total_mentions e sov_percent) porque `create or
+-- replace view` proíbe renomear/reordenar colunas de saída já existentes —
+-- só permite acrescentar no final. Inserir net_sentiment antes de
+-- reach_estimated/engagement_total/unique_authors (como numa primeira
+-- tentativa desta migration) empurrava sov_percent da posição 8 pra 12 e
+-- quebrava com "cannot change name of view column sov_percent to
+-- net_sentiment" (SQLSTATE 42P16).
+create or replace view public.narratives_overview as
 with daily as (
   select narrative_id, query_id, metric_date, total_mentions,
          sentiment_positive, sentiment_neutral, sentiment_negative,
@@ -87,10 +98,6 @@ select
   n.risk_level,
   d.metric_date,
   d.total_mentions,
-  d.net_sentiment,
-  d.reach_estimated,
-  d.engagement_total,
-  d.unique_authors,
   round(100.0 * d.total_mentions / nullif(t.query_total_mentions, 0), 1) as sov_percent,
   round(100.0 * (d.total_mentions - d.prev_total_mentions) / nullif(d.prev_total_mentions, 0), 1) as trend_percent,
   coalesce(
@@ -109,10 +116,23 @@ select
       when (d.sentiment_positive - d.sentiment_negative)::numeric / d.total_mentions < -0.2 then 'negative'
       else 'neutral'
     end
-  ) as sentiment_bucket
+  ) as sentiment_bucket,
+  d.net_sentiment,
+  d.reach_estimated,
+  d.engagement_total,
+  d.unique_authors
 from narratives n
 join daily d on d.narrative_id = n.id
 left join query_totals t on t.metric_date = d.metric_date and t.query_id = d.query_id;
 
+comment on view public.narratives_overview is
+  'View usada pela tabela interativa de Narrativas no Executive Overview (via PostgREST/RLS). sov_percent = menções da Narrativa / total de menções de todas as Narrativas da MESMA Query (candidato/monitoramento) no mesmo dia. sentiment_bucket usa net_sentiment (score oficial da Brandwatch, 7 faixas) com fallback pro cálculo local só enquanto net_sentiment não sincronizou. Momentum/Velocidade/Risco (scores 0-100) NÃO vivem nesta view — são período-dependentes e ficam em aggregated-metrics.get_narratives_table().';
+
+-- reporting.narratives_overview continua um espelho fino de
+-- public.narratives_overview (Reporting/BI split, CLAUDE.md) — herda as 4
+-- colunas novas automaticamente via select *.
+create or replace view reporting.narratives_overview as
+select * from public.narratives_overview;
+
 comment on view reporting.narratives_overview is
-  'View usada pela tabela interativa de Narrativas no Executive Overview e exposta para BI externo. sov_percent = menções da Narrativa / total de menções de todas as Narrativas da MESMA Query no mesmo dia. sentiment_bucket usa net_sentiment (score oficial da Brandwatch, 7 faixas) com fallback pro cálculo local só enquanto net_sentiment não sincronizou. Momentum/Velocidade/Risco (scores 0-100) NÃO vivem nesta view — são período-dependentes e ficam em aggregated-metrics.get_narratives_table().';
+  'Espelho de public.narratives_overview para BI externo via bi_reader (conexão Postgres direta). bi_reader tem bypassrls — enxerga todas as organizações por design (uso interno da Lidi, ver Princípio técnico 6 em _index.md); não confundir com acesso multi-tenant seguro.';
