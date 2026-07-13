@@ -2422,6 +2422,78 @@ starvation math is derived from the fixed call sequence and
 `BRANDWATCH_CALL_BUDGET`, not from an observed log line; revisit if a
 future session has log access and Narrativa counts to confirm.
 
+### Narrative card redesign + envelope fields for the future AI text (2026-07-21)
+
+User request: reformat every Narrative card in the app to match an
+attached visual reference — left border colored by sentiment (red/green/
+neutral), SOV + mention count prominent, a progress bar, a body paragraph,
+a positive/neutral/negative sentiment bar, and a tag row — and fix
+`get-page-narratives`/the other narratives-consuming Edge Functions so the
+envelope actually carries all of that data, including the textual part of
+the card being ready to receive AI-generated content in the next sprint.
+
+**Backend — `get_narratives_table` gained 3 field groups** (migration
+`20260721010000`, required a `drop function` first since Postgres won't
+let `create or replace` add output columns — same constraint already hit
+in `20260717000000`):
+
+- `sentiment_positive_pct`/`sentiment_neutral_pct`/`sentiment_negative_pct`
+  — full split of `narrative_metrics.sentiment_positive/neutral/negative`
+  summed over the requested period, normalized by `(pos+neu+neg)`, **never**
+  by `total_mentions` (the exact dilution bug fixed for `sentiment_bucket`
+  the day before, in `20260720000000` — same care applied here from the
+  start). Same numeric base as `get_narrative_sentiment_breakdown`
+  (`20260717000000`), just returned per-row instead of via a separate
+  breakdown call.
+- `summary` — `narratives.description`, the field `foundation/narratives.md`
+  has reserved since 2026-07-13 for a future `ai-synthesis`-generated
+  executive summary (no CRUD anywhere in the product; the only legitimate
+  writer is a future backend job). Always `null` today — this round's
+  actual deliverable is that the frontend (`NarrativeCard`) now reads and
+  renders this field with an honest "summary not available yet" fallback,
+  so nothing on the frontend needs to change again once `ai-synthesis`
+  starts writing to it.
+- `tags` — top 6 terms/hashtags per Narrativa from `bw_query_topics`
+  (`topic_type in ('hashtags', 'phrases', 'words')`, latest synced week),
+  an official Brandwatch aggregate, never sampled. ⚠️ **Deliberately no
+  "emotion" tag** — the reference image had one ("emoção: raiva"), but
+  there's no non-sampled source for "dominant emotion of a Narrativa":
+  `bw_query_topics`/`data/topics` has no emotion dimension, and
+  `mentions.emotion` is a best-effort per-mention signal — aggregating it
+  would violate this project's standing premise (never compute a total
+  locally over sampled `mentions`, see the "Retire os cálculos locais..."
+  entry earlier in this file). Documented as a natural candidate for
+  `summary`/`ai-synthesis` instead (an LLM classifying over the already-
+  synced set), not a local calculation invented here.
+
+**Frontend — one shared `NarrativeCard`** (`components/intelligence-center/
+narrative-card.tsx`), replacing two separate ad hoc card layouts:
+`narratives/page.tsx`'s "no selection" grid, and `overview/page.tsx`'s
+`TopThreeNarrativeCards`. Left border color uses only 3 buckets (not the
+usual 7-band `SentimentBadge` granularity) — explicit user ask ("variação
+entre vermelho, verde ou neutro"); the risk progress bar reuses the same
+`risk_label`/color already shown in the badge next to the title, not a new
+palette (no pink/magenta token exists in `_design-tokens.md`, and inventing
+one wasn't the point of the request — the structure/color logic was).
+
+**Simplification this unlocked**: `TopThreeNarrativeCards` used to fetch a
+separate `breakdowns` entry (`type: 'narrative'`, from
+`get_narrative_sentiment_breakdown`) and match it back to each
+`NarrativeRow` by comparing `title` strings — fragile, and now unnecessary
+since the same split lives directly on the row. Removed that lookup, and
+removed `'narrative'` from `PAGE_BREAKDOWN_TYPES.overview` (in
+`aggregated-metrics-service.ts` and all 6 deployed `get-page-*`/
+`get-narrative-detail` copies, Principle 5) since nothing on `/overview`
+consumes that breakdown anymore — leaving it in would have meant an RPC
+call with zero consumers on every page load. `narratives`/`sentiment`
+pages still request it (`sentiment` page's own "Sentimento por narrativa"
+widget still depends on it), untouched.
+
+**Verification**: `npx tsc --noEmit` and `npm run build` both pass clean
+(18 routes). Migration not run against a real Postgres instance this
+session (no DB access, same limitation as every prior session) — reviewed
+manually against the existing `get_narratives_table` body it replaces.
+
 ### Full prototype re-import + visual/object parity pass, and full nav IA (2026-07-13)
 
 User request: re-import the original prototype
@@ -2564,6 +2636,96 @@ literally to re-diff against the source file.
   every change above (card grids, word cloud, filled pills, reordered
   widgets) was not visually confirmed in a real browser, same recurring
   limitation as every prior prototype-parity session in this file.
+
+### `/overview` KPI pending-sync state, chart label size, KPI title contrast, sentiment-panel dedup (2026-07-21)
+
+User request, 4 items on `/overview` plus 2 clarifications given mid-session:
+1) null-looking values in Autores únicos/Alcance estimado/Engajamento
+total when "Diário" is selected; 2) narrative sentiment reading
+predominantly neutral; 3) +3pt on the line chart's label font size; 4) KPI
+titles bold. Mid-turn: "make KPI titles bold **and black**, same as graph
+titles" (clarifying #4 — they were already `font-bold`, the actual gap was
+color), and a 5th item: replace the "Sentimento geral" panel next to the
+line chart with "O que os gráficos mostram?" (it duplicated the KPI grid's
+own `SentimentMetricCard`).
+
+- **Item 1 — real bug, fixed.** `bw_query_metrics_daily.reach_estimate`/
+  `engagement_score`/`unique_authors` are nullable columns with no
+  default, populated by calls that run *after* the sentiment loop and the
+  2 `netSentiment` calls (reordered 2026-07-20) inside `bw-sync`'s
+  `daily_metrics` phase — calls that can still be pending for *today*
+  specifically (budget exhausted before reaching them, or no invocation
+  yet since midnight), even though `total_mentions`/sentiment (populated
+  first, unconditionally) are already there. `get_metrics_cards` did
+  `coalesce(sum(...), 0)` unconditionally for these 3 metrics — harmless
+  for a 7/30-day period (other synced days mask one pending day in the
+  sum), but for "Diário" (1 day = today, the only day in scope) this
+  turned "not yet synced" into a false `0` and a false "-100% vs. período
+  anterior". Fixed (migration `20260721000000`): `current_value`/
+  `previous_value` for these 3 metrics now return `null` (distinct from a
+  confirmed `0`) specifically when the day already has mentions
+  (`total_mentions > 0`) but the metric column itself is still fully
+  unsynced for that range; stay `0` when there's genuinely no mention at
+  all. `MetricCard.value` (`@reputation/shared-types`, plus the identical
+  copy in `aggregated-metrics-service.ts` and all 6 deployed
+  `get-page-*`/`get-narrative-detail` functions, Principle 5) widened
+  `number` → `number | null`; `fetchMetrics` no longer coalesces `??  0`
+  at the envelope edge. `MetricCard` (`metric-card.tsx`) renders
+  "—"/"Ainda sincronizando…" for `value === null`, never a real card
+  value's placeholder `0`.
+- **Item 2 — reaudited, no new bug found.** Same complaint, same wording
+  as 2026-07-20's session. Re-verified line by line that that session's
+  fix (dilution-biased fallback formula + `netSentiment` calls starved by
+  call-budget ordering, migration `20260720000000`) is correctly in place
+  today: `narratives_overview.sentiment_bucket` uses the unbiased
+  `positivo/(positivo+negativo)` fallback base, `runDailyMetricsStep` runs
+  the 2 `netSentiment` calls right after the sentiment loop before
+  reach/engagement/authors/impressions, `get_narratives_table.sentiment_label`
+  passes `sentiment_bucket` through with no parallel/divergent
+  calculation, and `get_narrative_sentiment_breakdown` sums real
+  proportions (no threshold, can't inherit the dilution bug). No further
+  code-level cause found this session — see
+  `aggregated-metrics/sql-aggregation.md` for the full re-audit note. If
+  this is still observed after this session's changes deploy, the next
+  step needs real `bw-sync` production logs (not available in this
+  environment) to confirm whether `net_sentiment`/`sentiment_positive`/
+  `negative` are actually landing in `bw_query_metrics_daily` for the
+  affected Narrativas, rather than more code inspection.
+- **Item 3.** `trend-line-chart.tsx`'s `AXIS_FONT_SIZE` 10px→13px and the
+  on-hover per-point value label (the one Cross-cutting UX rule 10 already
+  treats as permanent, see above) 9px→12px. Both +3pt as asked; the axis
+  labels are no longer smaller than the rest of the page's `text-xs`
+  (12px) — accepted as an explicit, literal request, not a new visual
+  hierarchy decision.
+- **Item 4, clarified mid-turn.** `MetricCard`'s label and
+  `SentimentMetricCard`'s "Sentimento geral" label were already
+  `font-bold` (Cross-cutting UX rule 7, 2026-07-13) — the actual gap was
+  color: both used `text-text-tertiary` (light gray, `#9aa0ab`), unlike
+  `WidgetCard`'s `<h2>` title (`text-text-primary`, near-black). Both now
+  use `text-text-primary` too, matching the "graph titles" the user
+  pointed at.
+- **5th item, given mid-turn.** `/overview`'s two-column row (chart +
+  side panel) had the KPI grid's "Sentimento geral"
+  (`SentimentMetricCard`) duplicated immediately below it as a second,
+  larger "Sentimento geral" widget (`BreakdownPanel`, same `breakdowns`
+  `type='sentiment'` data) — a redundancy accepted deliberately in
+  2026-07-13's KPI-card redesign note, since removing it then would've
+  meant restructuring the page layout, out of scope at the time. This
+  session's request explicitly asks for that restructuring: the side
+  panel is now `NarrativeTextPanel`/"O que os gráficos mostram?"
+  (`envelope.narrative_text`), moved up from its own separate full-width
+  widget further down the page (removed, not duplicated — one copy now,
+  not two). `BreakdownPanel` import dropped from
+  `overview/page.tsx` (no longer used there). No backend/envelope change,
+  pure repositioning.
+- **Verification**: `npx tsc --noEmit` and `npm run build` both pass clean
+  (18 routes, same route table as before — no route added/removed this
+  session). No live Supabase/Brandwatch access in this environment —
+  migration `20260721000000` reviewed manually, not run against a real
+  database (same recurring limitation as every session without deploy
+  credentials); the actual authenticated `/overview` rendering (KPI
+  pending-state copy, larger chart labels, panel swap) was not visually
+  confirmed in a browser.
 
 ## Directory structure
 

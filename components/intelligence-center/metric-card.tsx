@@ -35,10 +35,16 @@ export function MetricCard({ metric }: { metric: MetricCardData }) {
     metric.trend === "up" ? "text-sentiment-positive" : metric.trend === "down" ? "text-sentiment-negative" : "text-text-tertiary";
   const trendIcon = metric.trend === "up" ? "↑" : metric.trend === "down" ? "↓" : "→";
   const tooltipText = KPI_TOOLTIPS[metric.key];
+  // metric.value === null: ainda sincronizando, distinto de 0 (get_metrics_cards,
+  // 20260721000000 — hoje só acontece pra reach_estimate/engagement_score/
+  // unique_authors no período "Diário", quando o dia já tem menções mas essa
+  // métrica em si ainda não chegou de uma chamada mais tardia de bw-sync).
+  // Mostrar "0"/uma queda de -100% aqui seria um dado falso, não um "sem dado".
+  const isPending = metric.value === null;
 
   return (
     <div className="rounded-xl border border-border-default bg-bg-card p-5">
-      <p className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-text-tertiary">
+      <p className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-text-primary">
         {metric.label}
         {tooltipText && (
           <Tooltip text={tooltipText}>
@@ -52,12 +58,21 @@ export function MetricCard({ metric }: { metric: MetricCardData }) {
           </Tooltip>
         )}
       </p>
-      <p className="mt-2 text-2xl font-bold text-text-primary">{formatValue(metric.value)}</p>
-      {metric.delta_pct !== null && metric.delta_pct !== undefined && (
-        <p className={`mt-1 flex items-center gap-1 text-xs font-medium ${trendColor}`}>
-          <span aria-hidden>{trendIcon}</span>
-          {Math.abs(metric.delta_pct)}% vs. período anterior
-        </p>
+      {isPending ? (
+        <>
+          <p className="mt-2 text-2xl font-bold text-text-tertiary">—</p>
+          <p className="mt-1 text-xs font-medium text-text-tertiary">Ainda sincronizando…</p>
+        </>
+      ) : (
+        <>
+          <p className="mt-2 text-2xl font-bold text-text-primary">{formatValue(metric.value as number)}</p>
+          {metric.delta_pct !== null && metric.delta_pct !== undefined && (
+            <p className={`mt-1 flex items-center gap-1 text-xs font-medium ${trendColor}`}>
+              <span aria-hidden>{trendIcon}</span>
+              {Math.abs(metric.delta_pct)}% vs. período anterior
+            </p>
+          )}
+        </>
       )}
     </div>
   );
@@ -110,7 +125,7 @@ export function SentimentMetricCard({ breakdown }: { breakdown: Breakdown | unde
 
   return (
     <div className="rounded-xl border border-border-default bg-bg-card p-5">
-      <p className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-text-tertiary">
+      <p className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-text-primary">
         Sentimento geral
         <Tooltip text={SENTIMENT_TOOLTIP}>
           <span

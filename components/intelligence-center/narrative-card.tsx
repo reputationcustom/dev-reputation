@@ -1,0 +1,120 @@
+import Link from "next/link";
+import type { NarrativeRow } from "@reputation/shared-types";
+import { RiskBadge } from "./score-badges";
+
+// Card de Narrativa — pedido do usuário 2026-07-21 (referência visual
+// anexada): borda esquerda colorida pelo sentimento (só 3 estados —
+// vermelho/verde/neutro, não as 7 faixas finas de SentimentBadge — pedido
+// explícito do usuário), SOV + menções em destaque, barra de risco (mesma
+// cor/faixa do badge "CRÍTICA"/etc ao lado do título), resumo textual
+// (reservado pra IA — ai-synthesis, sprint futura, ver
+// foundation/narratives.md "Resumo executivo"), barra de sentimento
+// positivo/neutro/negativo e tags (termos/hashtags reais de
+// bw_query_topics via get_narratives_table — nunca um marcador de "emoção",
+// sem fonte não-amostrada pra isso, ver a migration 20260721010000).
+// Reusado por toda tela que lista Narrativas em formato de card (lista de
+// Narrativas sem seleção, "Top 3 Narrativas" da Visão Geral) — não
+// duplicar este layout por página.
+const SENTIMENT_BORDER: Record<string, string> = {
+  very_positive: "border-l-sentiment-positive",
+  positive: "border-l-sentiment-positive",
+  slightly_positive: "border-l-sentiment-positive",
+  neutral: "border-l-sentiment-neutral",
+  slightly_negative: "border-l-sentiment-negative",
+  negative: "border-l-sentiment-negative",
+  very_negative: "border-l-sentiment-negative",
+};
+
+const RISK_BAR_COLOR: Record<string, string> = {
+  low: "bg-risk-low",
+  medium: "bg-risk-medium",
+  high: "bg-risk-high",
+  critical: "bg-risk-critical",
+};
+
+function formatMentions(value: number) {
+  return new Intl.NumberFormat("pt-BR").format(value);
+}
+
+export function NarrativeCard({ narrative }: { narrative: NarrativeRow }) {
+  const borderClass = SENTIMENT_BORDER[narrative.sentiment_label] ?? "border-l-sentiment-neutral";
+  const riskBarColor = narrative.risk_label ? RISK_BAR_COLOR[narrative.risk_label] : null;
+
+  const hasSentimentSplit =
+    narrative.sentiment_positive_pct !== null &&
+    narrative.sentiment_neutral_pct !== null &&
+    narrative.sentiment_negative_pct !== null;
+
+  return (
+    <div className={`flex flex-col gap-3 rounded-xl border border-border-default border-l-4 ${borderClass} bg-bg-card p-5`}>
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <h3 className="font-bold text-text-primary">{narrative.title}</h3>
+          {narrative.risk_label && <RiskBadge score={narrative.risk_score} label={narrative.risk_label} />}
+        </div>
+        <div className="flex-shrink-0 text-right">
+          <div className="text-2xl font-extrabold text-text-primary">
+            {narrative.sov_pct === null ? "—" : `${narrative.sov_pct}%`}
+          </div>
+          <div className="whitespace-nowrap text-xs text-text-tertiary">
+            {formatMentions(narrative.total_mentions ?? 0)} menções
+          </div>
+        </div>
+      </div>
+
+      {riskBarColor && narrative.risk_score !== null && (
+        <div className="h-1.5 w-full overflow-hidden rounded-full bg-border-subtle-2">
+          <div
+            className={`h-full ${riskBarColor}`}
+            style={{ width: `${Math.max(0, Math.min(100, narrative.risk_score))}%` }}
+          />
+        </div>
+      )}
+
+      {/* Resumo textual — reservado pra síntese por IA (ai-synthesis, sprint
+          futura). Hoje sempre vazio (narratives.description ainda sem
+          produtor) — o frontend já lê/exibe o campo pra estar pronto assim
+          que essa sprint futura o popular, sem mudança de contrato. */}
+      {narrative.summary ? (
+        <p className="text-sm text-text-secondary">{narrative.summary}</p>
+      ) : (
+        <p className="text-sm italic text-text-tertiary">Resumo automático ainda não disponível para esta Narrativa.</p>
+      )}
+
+      {hasSentimentSplit && (
+        <div className="flex flex-col gap-1.5">
+          <div className="flex h-2 w-full overflow-hidden rounded-full bg-border-subtle-2">
+            <div className="h-full bg-sentiment-positive" style={{ width: `${narrative.sentiment_positive_pct}%` }} />
+            <div className="h-full bg-sentiment-neutral" style={{ width: `${narrative.sentiment_neutral_pct}%` }} />
+            <div className="h-full bg-sentiment-negative" style={{ width: `${narrative.sentiment_negative_pct}%` }} />
+          </div>
+          <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs font-semibold text-text-secondary">
+            <span>
+              pos <b className="text-sentiment-positive">{narrative.sentiment_positive_pct}%</b>
+            </span>
+            <span>
+              neu <b className="text-sentiment-neutral">{narrative.sentiment_neutral_pct}%</b>
+            </span>
+            <span>
+              neg <b className="text-sentiment-negative">{narrative.sentiment_negative_pct}%</b>
+            </span>
+          </div>
+        </div>
+      )}
+
+      {narrative.tags.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {narrative.tags.map((tag) => (
+            <span key={tag} className="rounded-full bg-bg-page px-2.5 py-1 text-xs font-medium text-text-secondary">
+              {tag}
+            </span>
+          ))}
+        </div>
+      )}
+
+      <Link href={`/narratives/${narrative.id}`} className="mt-1 text-sm font-semibold text-accent-blue hover:underline">
+        Explorar narrativa →
+      </Link>
+    </div>
+  );
+}

@@ -3,7 +3,7 @@ tipo: feature-spec
 módulo: foundation
 funcionalidade: narratives
 status: implementado
-atualizado: 2026-07-20
+atualizado: 2026-07-21
 ---
 
 # Narratives
@@ -67,6 +67,17 @@ atualizado: 2026-07-20
 >    25 chamadas/invocação se esgotava antes de chegar nelas — reordenado
 >    pra rodar logo após o loop de sentimento, com prioridade sobre as
 >    demais métricas. Ver migration `20260720000000` e `CLAUDE.md`.
+
+> ✅ **Cards de Narrativa redesenhados (2026-07-21)**: `get_narratives_table`
+> (migration `20260721010000`) ganhou `sentiment_positive_pct`/
+> `sentiment_neutral_pct`/`sentiment_negative_pct` (split de
+> `narrative_metrics.sentiment_*`, normalizado por `(pos+neu+neg)`, nunca
+> pelo total de mentions), `summary` (= `narratives.description`, o mesmo
+> campo reservado desde sempre nesta spec, "Regras de negócio" — segue sem
+> produtor, mas agora lido pelo frontend) e `tags` (top termos/hashtags de
+> `bw_query_topics` por Narrativa). Ver
+> `aggregated-metrics/sql-aggregation.md`, "Campos do card de Narrativa", e
+> `intelligence-center/narratives-exploration.md`.
 
 ## Objetivo
 

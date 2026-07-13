@@ -36,10 +36,11 @@ const PADDING_BOTTOM = 26;
 const PLOT_HEIGHT = HEIGHT - PADDING_TOP - PADDING_BOTTOM;
 const Y_TICK_COUNT = 4;
 const MAX_X_LABELS = 6;
-// Um pouco menor que o texto do resto da página (legenda/tooltip usam
-// text-xs, 12px) — eixo é informação de apoio, não deve competir com título/
-// legenda pela atenção do leitor (skill de dataviz: "texto recessivo").
-const AXIS_FONT_SIZE = 10;
+// Pedido do usuário 2026-07-21: aumentar em 3pt o tamanho dos rótulos do
+// gráfico (10px → 13px). Passa a ficar levemente acima do texto do resto da
+// página (legenda/tooltip usam text-xs, 12px) — aceito como pedido
+// explícito, não mais tratado como "texto recessivo" de propósito.
+const AXIS_FONT_SIZE = 13;
 
 function plotWidth(width: number): number {
   return width - PADDING_LEFT - PADDING_RIGHT;
@@ -235,8 +236,10 @@ export function TrendLineChart({ trend, emptyMessage }: { trend: Trend | undefin
             pontos/segmentos" literalmente, e o usuário confirmou 2x que
             quer o valor visível no próprio gráfico, não só abaixo dele.
             Tratar como definitivo — não remover de novo sem confirmar com o
-            usuário primeiro. Tamanho/peso reduzidos (9px/600/halo 2px) pra
-            não destoar do resto da página (harmonização 2026-07-12). */}
+            usuário primeiro. Tamanho reduzido na harmonização 2026-07-12
+            (9px/600/halo 2px) pra não destoar do resto da página; pedido do
+            usuário 2026-07-21 aumentou em 3pt de novo (9px → 12px), junto
+            com AXIS_FONT_SIZE acima. */}
         {hoverIndex !== null &&
           groups.map((group) => {
             const point = group.series[hoverIndex];
@@ -249,7 +252,7 @@ export function TrendLineChart({ trend, emptyMessage }: { trend: Trend | undefin
                 x={x}
                 y={y}
                 textAnchor="middle"
-                fontSize={9}
+                fontSize={12}
                 fontWeight={600}
                 fill={GROUP_COLORS[group.group] ?? "#9aa0ab"}
                 stroke="#ffffff"

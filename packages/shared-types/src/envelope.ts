@@ -67,7 +67,13 @@ export interface EnvelopeFilters {
 export interface MetricCard {
   key: string;
   label: string;
-  value: number;
+  // null = ainda sincronizando (não é o mesmo que 0 = confirmado sem
+  // dados) — ver get_metrics_cards, 20260721000000. Hoje só acontece pra
+  // reach_estimate/engagement_score/unique_authors no período "Diário"
+  // (1 dia), quando o dia já tem menções mas essa métrica específica ainda
+  // não chegou de uma chamada mais tardia da fase daily_metrics de
+  // bw-sync.
+  value: number | null;
   unit?: string;
   delta_pct?: number | null;
   trend: TrendDirection;
@@ -117,11 +123,28 @@ export interface NarrativeRow {
   total_mentions: number;
   net_sentiment: number;
   sentiment_label: SentimentLabel;
+  // Split completo positivo/neutro/negativo (não um score único como
+  // net_sentiment) — narrative_metrics.sentiment_*, normalizado por
+  // (positivo+neutro+negativo) no período pedido, nunca pelo total de
+  // mentions (mesma base de get_narrative_sentiment_breakdown). Usado pela
+  // barra de sentimento do card de Narrativa.
+  sentiment_positive_pct: number | null;
+  sentiment_neutral_pct: number | null;
+  sentiment_negative_pct: number | null;
   momentum_score: number;
   velocity_score: number;
   velocity_label: VelocityLabel;
   risk_score: number;
   risk_label: RiskLevel;
+  // Reservado para texto gerado por IA (ai-synthesis, sprint futura) — lido
+  // de narratives.description, sem produtor ainda hoje (sempre null até
+  // essa sprint popular a coluna). Ver foundation/narratives.md, "Resumo
+  // executivo".
+  summary: string | null;
+  // Top termos/hashtags reais da Narrativa (bw_query_topics, agregado
+  // oficial da Brandwatch, nunca amostrado) — nunca inclui um marcador de
+  // emoção (sem fonte não-amostrada pra isso, ver get_narratives_table).
+  tags: string[];
 }
 
 export interface AuthorRow {

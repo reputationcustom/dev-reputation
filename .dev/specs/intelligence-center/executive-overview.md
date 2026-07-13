@@ -3,7 +3,7 @@ tipo: feature-spec
 módulo: intelligence-center
 funcionalidade: executive-overview
 status: implementado
-atualizado: 2026-07-20
+atualizado: 2026-07-21
 ---
 
 # Executive Overview
@@ -277,6 +277,20 @@ Qualquer usuário autenticado, membro de ao menos uma organização (ver
 > entrada desta data) em vez de reestruturar o layout da página, que não
 > fazia parte do pedido.
 
+> ✅ **Redundância revertida — o frame ao lado do gráfico virou "O que os
+> gráficos mostram?" (2026-07-21)** — pedido do usuário: "Na página
+> overview o Sentimento geral está tanto na KPI quanto em um frame ao lado
+> do gráfico de linhas, portanto, substitua o frame ao lado do gráfico pelo
+> frame que 'O que os gráficos mostram?'". A redundância aceita em
+> 2026-07-13 (nota acima) deixa de ser aceita — o widget "Sentimento
+> geral" (`BreakdownPanel`/`SentimentBar`) ao lado de "Volume e sentimento
+> ao longo do tempo" foi removido; nesse lugar entra
+> `NarrativeTextPanel`/`narrative_text` (protótipo original "O que os
+> gráficos mostram?"), que antes só existia numa caixa própria mais abaixo
+> na página — não há mais 2 cópias dele, só a nova posição. Nenhuma mudança
+> de backend/envelope — mesmo dado (`envelope.narrative_text`), só
+> reposicionado (`app/(intelligence-center)/(analytics)/overview/page.tsx`).
+
 ## Interface (UI)
 
 - **Header**: nome da organização ativa (+ seletor, se aplicável), seletor
@@ -305,7 +319,7 @@ Qualquer usuário autenticado, membro de ao menos uma organização (ver
 
   | Botão | Intervalo | Observação |
   |---|---|---|
-  | Diário | 1 dia (hoje, fuso do usuário) | ⚠️ **Suposição, não confirmada contra o protótipo real**: "hoje" corrido, não uma janela de 24h — mesma disciplina de fuso de `lib/date/format.ts`. Sem granularidade horária ainda (`bw_query_metrics_hourly` existe mas nenhuma function do envelope a usa, ver `_pending.md`) — o gráfico de evolução mostra 1 ponto só nesse modo até isso ser resolvido |
+  | Diário | 1 dia (hoje, fuso do usuário) | ⚠️ **Suposição, não confirmada contra o protótipo real**: "hoje" corrido, não uma janela de 24h — mesma disciplina de fuso de `lib/date/format.ts`. ✅ **Resolvido (2026-07-19)**: `get_volume_trend` usa grão horário (`bw_query_metrics_hourly`) nesse modo — o gráfico de evolução mostra uma série real, não mais 1 ponto único (ver bullet "Gráfico" abaixo). ⚠️ **Gap distinto ainda aberto (2026-07-21)**: 3 dos 5 cards de topo (Autores únicos/Alcance estimado/Engajamento total) podem mostrar "Ainda sincronizando…" nesse modo — não é falta de grão, é o dia corrente ainda não ter recebido essas 3 métricas específicas de `bw-sync` (ver bullet "Cards de topo" abaixo) |
   | Semanal | 7 dias corridos terminando hoje | Equivalente ao antigo botão "7 dias" |
   | Mensal | 30 dias corridos terminando hoje | Equivalente ao antigo botão "30 dias"; o antigo "14 dias" foi **removido** — não existe no protótipo |
   | Personalizado | `start`/`end` escolhidos pelo usuário via 2 campos de data | Sem limite mínimo/máximo de intervalo definido — ⚠️ revisitar se o backend precisar de um teto (ex: performance de `get_volume_trend` num intervalo de anos) |
@@ -322,6 +336,21 @@ Qualquer usuário autenticado, membro de ao menos uma organização (ver
   principal" acima), cada um com variação vs. período anterior. Share of
   Voice (se alguma Query da organização pertencer a um Query Group) —
   `<EmptyState />` textual se não houver Query Group, não esconder o card.
+  ✅ **"Ainda sincronizando…" no lugar de um 0 falso no modo "Diário"
+  (2026-07-21)** — pedido do usuário: "Valores nulos em Autores únicos,
+  Alcance estimado e engajamento total quando o período Diário é
+  selecionado." Autores únicos/Alcance estimado/Engajamento total só
+  chegam em `bw_query_metrics_daily` por chamadas que rodam depois do loop
+  de sentimento dentro da fase `daily_metrics` de `bw-sync` — pra um
+  período de 7/30 dias um único dia pendente é mascarado pela soma dos
+  demais, mas no modo "Diário" (1 dia = hoje) essas 3 métricas podiam
+  ficar presas em `0` (dado ainda não sincronizado, não um "sem
+  atividade") até a próxima invocação alcançar essa chamada. `MetricCard`
+  agora mostra "—"/"Ainda sincronizando…" nesse caso, nunca um `0`/queda
+  de -100% enganosos — ver `aggregated-metrics/sql-aggregation.md`
+  (`get_metrics_cards`) e `CLAUDE.md` para o detalhamento completo. Total
+  de menções/Sentimento geral não são afetados (populados pela mesma
+  chamada, que sempre roda primeiro nessa fase).
 - **Gráfico**: série temporal de volume por sentimento (linhas/área
   empilhada), timezone fixo `America/Sao_Paulo`. ✅ **Grão horário no modo
   "Diário" (2026-07-19)** — `get_volume_trend` (ver
@@ -330,7 +359,12 @@ Qualquer usuário autenticado, membro de ao menos uma organização (ver
   dia; sem isso, o modo "Diário" caía no mesmo grão `day` das janelas
   curtas e devolvia um único ponto (o dia inteiro), inútil como série
   temporal. Nenhuma mudança de parâmetro no frontend — é automático a
-  partir da duração do período já enviado.
+  partir da duração do período já enviado. ✅ **Rótulos +3pt (2026-07-21)**
+  — pedido do usuário, eixo 10px→13px e rótulo de valor no ponto (hover)
+  9px→12px (`trend-line-chart.tsx`, `AXIS_FONT_SIZE` e o `<text>` de
+  hover) — deixa de ser "texto recessivo" abaixo do resto da página
+  (12px) de propósito, é um ajuste explícito, não uma nova escolha de
+  hierarquia visual.
 - **Tabela interativa de Narrativas** (ver imagem de referência do usuário):
   uma linha por Narrativa ativa **de qualquer Query da organização** —
   lista única, sem agrupar/expor de qual Query cada uma vem (ver "Fluxo

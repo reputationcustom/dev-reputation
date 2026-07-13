@@ -3,7 +3,7 @@ tipo: feature-spec
 módulo: aggregated-metrics
 funcionalidade: sql-aggregation
 status: pronto
-atualizado: 2026-07-20
+atualizado: 2026-07-21
 ---
 
 # Camada SQL de Agregação
@@ -84,6 +84,55 @@ observado — **sem `query_id`** (revertido 2026-07-13, ver nota abaixo).
 > eventual página de relatórios), só não é mais o que este card
 > específico renderiza. Ver `intelligence-center/executive-overview.md`
 > e `CLAUDE.md` para o detalhamento completo.
+
+> ✅ **`get_metrics_cards` distingue "ainda sincronizando" de "zero
+> confirmado" (2026-07-21)** — pedido do usuário: "Valores nulos em
+> Autores únicos, Alcance estimado e engajamento total quando o período
+> Diário é selecionado." Causa raiz: `reach_estimate`/`engagement_score`/
+> `unique_authors` em `bw_query_metrics_daily` são colunas nullable sem
+> default, preenchidas por chamadas que rodam depois do loop de
+> sentimento e das 2 chamadas de `netSentiment` (reordenadas 2026-07-20,
+> ver `foundation` "Sentimento por narrativa/autores") dentro da fase
+> `daily_metrics` de `bw-sync` — chamadas que podem não ter rodado ainda
+> pra HOJE (orçamento de 25 chamadas esgotado antes de chegar nelas, ou
+> invocação ainda não rodou desde meia-noite). `get_metrics_cards` fazia
+> `coalesce(sum(...), 0)` incondicional pras 3 métricas — inofensivo num
+> período de 7/30 dias (a soma dos outros dias mascara um dia pendente),
+> mas pro período "Diário" (1 dia = hoje, único dia no período) isso
+> transformava "ainda não sincronizado" num falso 0 (e um falso "-100% vs.
+> período anterior"). Corrigido (migration `20260721000000`):
+> `current_value`/`previous_value` dessas 3 métricas agora retornam `null`
+> só quando o dia já tem menções (`total_mentions > 0`) mas a métrica em
+> si ainda está sem nenhum valor sincronizado nesse intervalo; continuam
+> em `0` quando realmente não houve menção nenhuma (0 é o valor correto
+> nesse caso, não um placeholder). `MetricCard.value`
+> (`@reputation/shared-types`) passou de `number` pra `number | null` —
+> `fetchMetrics` (`aggregated-metrics-service.ts` + as 6 cópias nas Edge
+> Functions, Princípio técnico 5) não coalesce mais pra `0` na borda do
+> envelope. Frontend (`metric-card.tsx`) renderiza "—"/"Ainda
+> sincronizando…" pra `value === null`, em vez do "0"/queda de -100%
+> enganosos de antes.
+
+> ✅ **"Sentimentos de narrativas estão predominante neutros" —
+> reauditado, nenhum bug novo encontrado (2026-07-21)** — mesmo pedido do
+> usuário repetido (verbatim igual ao de 2026-07-20). Reconfirmado nesta
+> sessão, função por função, que a causa raiz já identificada e corrigida
+> em `20260720000000` (fórmula de fallback enviesada pra 'neutral' +
+> chamadas de `netSentiment` esgotando o orçamento antes de rodar) segue
+> corretamente implementada: `public.narratives_overview.sentiment_bucket`
+> usa a base não-diluída (`positivo/(positivo+negativo)`, mesma definição
+> de `net_sentiment`) e `runDailyMetricsStep` já roda as 2 chamadas de
+> `netSentiment` logo após o loop de sentimento, antes de reach/
+> engajamento/autores/impressões. `get_narratives_table.sentiment_label`
+> repassa `narratives_overview.sentiment_bucket` sem nenhum cálculo
+> paralelo divergente; `get_narrative_sentiment_breakdown` soma
+> proporções reais (não usa threshold nenhum, não pode sofrer o mesmo viés
+> de diluição). Nenhuma causa adicional encontrada nesta revisão — se o
+> sintoma persistir depois deste deploy, o próximo passo exige acesso a
+> log de produção real de `bw-sync` (não disponível nesta sessão, mesma
+> limitação já registrada em `CLAUDE.md`) pra confirmar se
+> `net_sentiment`/`sentiment_positive`/`negative` estão de fato chegando
+> em `bw_query_metrics_daily` pras Narrativas afetadas.
 
 > ✅ **`get_x_insights` — nomes de campo reconfirmados ao vivo (2026-07-18)**:
 > `volume`/`tweets`/`retweets`/`impressions`/`reachEstimate`/`sentiment` são
@@ -272,6 +321,49 @@ necessário — não travar a implementação por causa disso.
   os funde num só número — ver
   [../event-radar/severity.md](../event-radar/severity.md), "Relação com
   `risk_score`".
+
+### Campos do card de Narrativa (2026-07-21, migration `20260721010000`)
+
+✅ **Implementado** — pedido do usuário: redesenhar todo card de Narrativa
+(lista de Narrativas, "Top 3 Narrativas" da Visão Geral) seguindo uma
+referência visual, com borda colorida por sentimento, SOV+menções, barra
+de risco, texto de resumo e barra de sentimento positivo/neutro/negativo.
+`get_narratives_table` ganhou 5 colunas de saída além das já existentes:
+
+- `sentiment_positive_pct`/`sentiment_neutral_pct`/`sentiment_negative_pct`
+  (`numeric`, 0-100): split completo de `narrative_metrics.sentiment_positive/
+  neutral/negative` somado no `period_start`/`period_end` pedido,
+  normalizado por `(pos+neu+neg)` — **nunca** por `total_mentions` (mesmo
+  cuidado do fix de `sentiment_bucket` em `20260720000000`, que corrigiu
+  exatamente essa diluição). Mesma base numérica de
+  `get_narrative_sentiment_breakdown` (`20260717000000`), só que devolvida
+  por linha da tabela de Narrativas em vez de uma breakdown à parte.
+- `summary` (`text`, nullable): `narratives.description` — campo já
+  reservado desde `foundation/narratives.md` ("Resumo executivo"), sem
+  produtor ainda (`ai-synthesis`, Sprint 2 tardia/Sprint 3, não
+  implementado). Sempre `null` hoje; o frontend (`NarrativeCard`) já lê e
+  exibe o campo com um estado "resumo ainda não disponível", pronto para
+  quando essa sprint futura popular a coluna sem precisar mudar o
+  contrato do envelope de novo.
+- `tags` (`text[]`): top 6 termos/hashtags de `bw_query_topics`
+  (`topic_type in ('hashtags', 'phrases', 'words')`) por Narrativa, na
+  semana mais recente sincronizada para a Category/Subcategory —
+  agregado oficial já existente (`foundation`, "Novos aggregate tables"),
+  nunca amostrado. ⚠️ **Não inclui um marcador de "emoção"** — a
+  referência visual do pedido tinha um chip "emoção: raiva", mas não
+  existe fonte não-amostrada para "emoção dominante da Narrativa":
+  `bw_query_topics`/`data/topics` não tem dimensão de emoção, e
+  `mentions.emotion` é um sinal *por mention*, best-effort, e usá-lo
+  agregado violaria a premissa de "nunca calcular localmente sobre
+  `mentions` amostrada" (ver `CLAUDE.md`). Se o produto quiser esse chip,
+  é candidato natural para `summary`/`ai-synthesis` (classificação feita
+  pela IA sobre o conjunto já sincronizado), não um cálculo local novo.
+
+A barra de risco do card usa a mesma cor/faixa de `risk_label`
+(`_design-tokens.md`) já usada pelo badge ao lado do título — não uma
+paleta nova. A borda esquerda do card usa só 3 estados (verde/vermelho/
+neutro, não as 7 faixas finas de `sentiment_label`) — pedido explícito do
+usuário ("variação entre vermelho, verde ou neutro").
 
 ## Regras de negócio
 

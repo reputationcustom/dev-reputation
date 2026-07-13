@@ -3,7 +3,7 @@ tipo: feature-spec
 módulo: intelligence-center
 funcionalidade: narratives-exploration
 status: pronto
-atualizado: 2026-07-20
+atualizado: 2026-07-21
 ---
 
 # Exploração de Narrativas (lista + detalhe)
@@ -96,6 +96,19 @@ filtros de **período** e **organização** do header global
 (`executive-overview.md`) continuam valendo. Filtros próprios desta página
 ficam como ampliação futura, sem spec de comportamento por ora.
 
+✅ **Cards redesenhados (2026-07-21)**, referência visual do usuário: o
+grid de cards ("nenhuma linha selecionada" — item 4 do "Fluxo principal")
+usa o novo `NarrativeCard` compartilhado (`components/intelligence-center/
+narrative-card.tsx`) — borda esquerda colorida pelo sentimento (3 estados:
+vermelho/verde/neutro), SOV + total de menções em destaque, barra de risco
+(mesma cor/faixa do badge de risco), texto de resumo, barra de sentimento
+positivo/neutro/negativo e tags (termos/hashtags reais). Mesmo componente
+reusado pelo widget "Top 3 Narrativas" da Visão Geral (`executive-overview.md`)
+— todo card de Narrativa no produto segue este layout, não um por página.
+Ver `aggregated-metrics/sql-aggregation.md`, "Campos do card de Narrativa",
+para de onde vem cada campo novo (`sentiment_positive_pct`/`summary`/`tags`
+em `get_narratives_table`).
+
 ### Detalhe (`/narratives/[id]`)
 
 - **Cabeçalho**: nome, badges de SOV/sentimento/risco/momentum/velocidade
@@ -113,7 +126,12 @@ ficam como ampliação futura, sem spec de comportamento por ora.
   de um campo solto sem produtor). Ainda não desenvolvido — o frontend
   continua só **reservando o campo** (ler e exibir
   `narratives.description`, `foundation/data-model.md` — vazio/`<EmptyState />`
-  textual quando `null`). Não bloqueia o resto da página.
+  textual quando `null`). Não bloqueia o resto da página. ✅ **2026-07-21**:
+  o mesmo campo (`summary` no bloco `narratives` do envelope, ver
+  `aggregated-metrics/sql-aggregation.md`) também passou a ser lido e
+  exibido pelo `NarrativeCard` da lista/grid — a "reserva" deixou de ser só
+  teórica, o componente já está no ar pronto para receber o texto assim
+  que `ai-synthesis` popular a coluna, sem mudança de contrato.
 - **Evolução (narrativa vs. volume geral)**: série temporal de
   `narrative_metrics.total_mentions` (Narrativa) sobreposta a
   `bw_query_metrics_daily.total_mentions` com `category_id is null` (Query

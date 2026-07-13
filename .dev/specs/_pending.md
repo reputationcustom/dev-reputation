@@ -1,6 +1,6 @@
 ---
 tipo: pending-tracker
-atualizado: 2026-07-20 (rev. 11)
+atualizado: 2026-07-21 (rev. 12)
 ---
 
 # Pendências — Digital Intelligent Communication
@@ -97,6 +97,26 @@ painel agregado); síntese de página — assíncrona e armazenada em banco por 
 igual ao protótipo (`open`/`waiting`→Pendente, `in_progress`→Em andamento,
 `resolved`/`archived`→Concluída).
 
+✅ **Resolvida 2026-07-21** (pedido do usuário, não numerada): redesenhar
+todo card de Narrativa (lista de Narrativas, "Top 3 Narrativas" da Visão
+Geral) seguindo uma referência visual anexada, e corrigir a Edge Function
+de Narrativas pra devolver todo o dado necessário no envelope, incluindo a
+parte textual do card já preparada pra receber texto gerado por IA numa
+sprint futura. `get_narratives_table` (migration `20260721010000`) ganhou
+`sentiment_positive_pct`/`neutral_pct`/`negative_pct` (split completo,
+mesma base de `get_narrative_sentiment_breakdown`), `summary` (=
+`narratives.description`, campo já reservado desde `foundation/narratives.md`,
+segue sem produtor até `ai-synthesis`) e `tags` (top termos/hashtags reais
+de `bw_query_topics`). Novo `NarrativeCard` (`components/intelligence-center/
+narrative-card.tsx`) reusado pela lista de Narrativas e por "Top 3
+Narrativas" — o que também permitiu simplificar `TopThreeNarrativeCards`
+(não precisa mais casar por título com uma breakdown separada) e remover
+`'narrative'` de `PAGE_BREAKDOWN_TYPES.overview` (chamada RPC que ficou sem
+consumidor nesta página). ⚠️ Sem marcador de "emoção" no card — nenhuma
+fonte não-amostrada existe pra isso hoje (ver `sql-aggregation.md`, "Campos
+do card de Narrativa"). Ver `CLAUDE.md`, `aggregated-metrics/sql-aggregation.md`
+e `intelligence-center/narratives-exploration.md`.
+
 ## Gaps técnicos (spec pronta, sem migration/código ainda)
 
 > Diferente da lista acima — estes não são decisões em aberto, é trabalho já desenhado esperando
@@ -133,6 +153,7 @@ na época. Itens #2/#3 resolvidos na mesma data (ver acima).
 | 22 | `intelligence-center`/`aggregated-metrics` | Card "Share of Voice por Query Group" da Visão Geral nunca foi construído — `get_metrics_cards` só retorna os 5 KPIs de `bw_query_metrics_daily` (`total_mentions`/`sentiment_*`/`reach_estimate`/`engagement_score`/`unique_authors`), sem function SQL nem bloco de envelope para SOV agregado por Query Group. Achado ao revisar `executive-overview.md` contra o código em 2026-07-16 | [intelligence-center/executive-overview.md](intelligence-center/executive-overview.md), "Cards de topo" |
 | 23 | `foundation` | `bw_query_top_authors.sentiment_positive/neutral/negative` (e o mesmo em `bw_query_top_tweeters`) — mapeamento de `d.sentiment` da resposta de `data/volume/topauthors/queries` **nunca confirmado** contra a documentação real do endpoint (diferente de todo campo vizinho na mesma tabela, que tem nota de confirmação explícita). Risco real de ser sempre `0/0/0` em produção sem erro. Achado numa auditoria de sentimento por autor (2026-07-17) — `aggregated-metrics.get_authors_ranking` foi corrigida pra não ler mais estas colunas (usa `bw_query_author_topics` em vez disso), mas as colunas em si continuam sem confirmação/uso — revisar contra logs reais antes de reativar | [foundation/data-model.md](foundation/data-model.md), "bw_query_top_authors" |
 | 24 | `aggregated-metrics` | `get_term_signals` mistura todo `topic_type` (`words`/`phrases`/`hashtags`/`entities`/`people`/`places`/`organisations`) num só ranking de "drivers" — nenhuma spec pediu filtrar só `phrases` (não é um gap de verdade), mas registrado caso o produto queira restringir no futuro | [intelligence-center/sentiment-analysis.md](sentiment-analysis.md) |
+| 25 | `foundation`/`aggregated-metrics` | "Sentimento de narrativas predominantemente neutro" reportado de novo pelo usuário em 2026-07-21, mesma queixa da sessão de 2026-07-20 (migration `20260720000000`). Reauditado função por função nesta sessão (`narratives_overview.sentiment_bucket`, ordem de chamadas de `runDailyMetricsStep`, `get_narratives_table.sentiment_label`, `get_narrative_sentiment_breakdown`) — a correção de 2026-07-20 está corretamente implementada, nenhuma causa adicional encontrada por inspeção de código. Se persistir depois deste deploy, o próximo passo precisa de logs reais de produção de `bw-sync` (não disponível em nenhuma sessão até agora) pra confirmar se `net_sentiment`/`sentiment_positive`/`negative` estão realmente chegando em `bw_query_metrics_daily` pras Narrativas afetadas — não é mais uma questão de revisão de código | [aggregated-metrics/sql-aggregation.md](aggregated-metrics/sql-aggregation.md), [foundation/data-model.md](foundation/data-model.md) |
 
 ✅ Item #6 (`auth` — UI + Edge Functions) removido desta tabela: já estava
 `implementado` desde 2026-07-13 (ver `CLAUDE.md`, "Módulo auth (Sprint

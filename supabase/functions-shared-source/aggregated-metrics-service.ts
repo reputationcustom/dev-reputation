@@ -72,7 +72,9 @@ export interface EnvelopeFilters {
 export interface MetricCard {
   key: string
   label: string
-  value: number
+  // null = ainda sincronizando (não é o mesmo que 0 = confirmado sem
+  // dados) — ver get_metrics_cards, 20260721000000.
+  value: number | null
   unit?: string
   delta_pct?: number | null
   trend: TrendDirection
@@ -121,11 +123,21 @@ export interface NarrativeRow {
   total_mentions: number
   net_sentiment: number | null
   sentiment_label: string
+  // Split completo positivo/neutro/negativo — ver get_narratives_table
+  // (20260721010000), mesma base de get_narrative_sentiment_breakdown.
+  sentiment_positive_pct: number | null
+  sentiment_neutral_pct: number | null
+  sentiment_negative_pct: number | null
   momentum_score: number | null
   velocity_score: number | null
   velocity_label: string | null
   risk_score: number | null
   risk_label: string | null
+  // Reservado pra IA (ai-synthesis, sprint futura) — narratives.description,
+  // sem produtor ainda, sempre null hoje.
+  summary: string | null
+  // Top termos/hashtags reais (bw_query_topics), nunca amostrados.
+  tags: string[]
 }
 
 export interface AuthorRow {
@@ -245,11 +257,13 @@ export const PAGE_BLOCKS: Record<PageKey, BlockKey[]> = {
 // _pending.md) — fetchBreakdown() loga e retorna null pra esse tipo, o
 // bloco só fica sem aquele item, nunca quebra o envelope inteiro.
 const PAGE_BREAKDOWN_TYPES: Partial<Record<PageKey, Breakdown['type'][]>> = {
-  // 'narrative' adicionado 2026-07-13 (paridade com protótipo, "Top 3
-  // Narrativas" — cards com split positivo/neutro/negativo por Narrativa,
-  // reaproveita get_narrative_sentiment_breakdown já usado por
-  // `sentiment`, nenhuma function nova).
-  overview: ['sentiment', 'narrative'],
+  // ✅ 'narrative' removido de `overview` (2026-07-21, redesenho dos cards de
+  // Narrativa): NarrativeRow.sentiment_positive_pct/neutral_pct/negative_pct
+  // (get_narratives_table, migration 20260721010000) já traz o split direto
+  // na linha da Narrativa — sem outro consumidor desta breakdown em
+  // `overview`, mantê-la só geraria uma chamada RPC sem uso. `narrative`
+  // continua em `sentiment` (widget "Sentimento por narrativa").
+  overview: ['sentiment'],
   narrative_detail: ['sentiment', 'platform', 'region'],
   sentiment: ['sentiment', 'platform', 'theme', 'narrative', 'region'],
   platforms: ['platform'],
@@ -344,11 +358,16 @@ interface NarrativeTableRow {
   total_mentions: number
   net_sentiment: number | null
   sentiment_label: string
+  sentiment_positive_pct: number | null
+  sentiment_neutral_pct: number | null
+  sentiment_negative_pct: number | null
   momentum_score: number | null
   velocity_score: number | null
   velocity_label: string | null
   risk_score: number | null
   risk_label: string | null
+  summary: string | null
+  tags: string[] | null
 }
 
 interface AuthorRankingRow {
@@ -408,7 +427,10 @@ async function fetchMetrics(supabase: SupabaseClient, ctx: PageContext): Promise
       return {
         key: row.metric_key,
         label: meta.label,
-        value: row.current_value ?? 0,
+        // row.current_value já vem null distinto de 0 (get_metrics_cards,
+        // 20260721000000) — não coalescer aqui, senão "ainda sincronizando"
+        // vira um falso 0 de novo.
+        value: row.current_value,
         unit: meta.unit,
         delta_pct: row.delta_pct,
         trend: row.trend,
@@ -566,7 +588,7 @@ async function fetchNarratives(page: PageKey, supabase: SupabaseClient, ctx: Pag
       p_scope: narrativesScopeForPage(page),
     })
     if (error) throw error
-    return (data ?? []) as NarrativeTableRow[]
+    return ((data ?? []) as NarrativeTableRow[]).map((row) => ({ ...row, tags: row.tags ?? [] }))
   } catch (err) {
     console.error('[aggregated-metrics] fetchNarratives failed', err)
     return []

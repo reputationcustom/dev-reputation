@@ -1,14 +1,13 @@
 "use client";
 
-import Link from "next/link";
-import type { Breakdown, NarrativeRow } from "@reputation/shared-types";
+import type { NarrativeRow } from "@reputation/shared-types";
 import { usePageEnvelope } from "@/hooks/use-page-envelope";
 import { PageHeaderBar } from "@/components/intelligence-center/page-header-bar";
 import { WidgetCard } from "@/components/intelligence-center/widget-card";
 import { MetricCard, SentimentMetricCard } from "@/components/intelligence-center/metric-card";
-import { BreakdownPanel } from "@/components/intelligence-center/charts/breakdown-panel";
 import { TrendLineChart } from "@/components/intelligence-center/charts/trend-line-chart";
 import { NarrativesTable } from "@/components/intelligence-center/narratives-table";
+import { NarrativeCard } from "@/components/intelligence-center/narrative-card";
 import { HighlightsPanel, NarrativeTextPanel } from "@/components/intelligence-center/insights-panel";
 import { ScoreLegend } from "@/components/intelligence-center/score-badges";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -53,11 +52,15 @@ export default function OverviewPage() {
               />
             </WidgetCard>
           </div>
-          <WidgetCard title="Sentimento geral" status={status} onRetry={retry}>
-            <BreakdownPanel
-              breakdown={envelope?.breakdowns.find((b) => b.type === "sentiment")}
-              emptyMessage="Nenhum dado de sentimento ainda."
-            />
+          {/* Pedido do usuário 2026-07-21: "Sentimento geral" já aparece na
+              grade de KPI (SentimentMetricCard, mesma página) — o frame ao
+              lado do gráfico duplicava exatamente o mesmo dado (breakdown
+              type='sentiment'), então esse espaço passa a ser "O que os
+              gráficos mostram?" (protótipo original, movido daqui de baixo
+              — não há mais uma cópia separada dele na página). Mesmo
+              `narrative_text` de sempre, só reposicionado. */}
+          <WidgetCard title="O que os gráficos mostram?" status={status} onRetry={retry}>
+            <NarrativeTextPanel text={envelope?.narrative_text ?? null} />
           </WidgetCard>
         </div>
 
@@ -77,41 +80,28 @@ export default function OverviewPage() {
           </div>
         </WidgetCard>
 
-        {/* "O que os gráficos mostram?" (protótipo original) — mesmo
-            `narrative_text` já usado no widget "Insights" abaixo, só numa
-            caixa própria logo após os gráficos (posição do protótipo);
-            reaproveita o mesmo dado, não duplica lógica nova. */}
-        <WidgetCard title="O que os gráficos mostram?" status={status} onRetry={retry}>
-          <NarrativeTextPanel text={envelope?.narrative_text ?? null} />
-        </WidgetCard>
-
         <WidgetCard title="Insights" status={status} onRetry={retry}>
           <HighlightsPanel highlights={envelope?.highlights ?? []} />
         </WidgetCard>
 
         {/* "Top 3 Narrativas" (protótipo original `topThreeCards`) — as 3
-            Narrativas de maior SOV, com o split positivo/neutro/negativo
-            (reaproveita a breakdown type='narrative', já usada em
-            Sentimento — `get_narrative_sentiment_breakdown`, nenhum
-            cálculo novo). */}
+            Narrativas de maior SOV. ✅ Simplificado 2026-07-21: o split
+            positivo/neutro/negativo agora vem direto em
+            NarrativeRow.sentiment_positive_pct/neutral_pct/negative_pct
+            (get_narratives_table, migration 20260721010000) — não precisa
+            mais casar por título com a breakdown type='narrative' separada
+            (frágil: dependia de NarrativeRow.title === Breakdown.label).
+            Mesmo NarrativeCard reusado pela lista de Narrativas (pedido do
+            usuário: todo card de Narrativa segue o mesmo layout). */}
         <WidgetCard title="Top 3 Narrativas" status={status} onRetry={retry}>
-          <TopThreeNarrativeCards
-            narratives={envelope?.narratives ?? []}
-            sentimentBreakdown={envelope?.breakdowns.find((b) => b.type === "narrative")}
-          />
+          <TopThreeNarrativeCards narratives={envelope?.narratives ?? []} />
         </WidgetCard>
       </div>
     </>
   );
 }
 
-function TopThreeNarrativeCards({
-  narratives,
-  sentimentBreakdown,
-}: {
-  narratives: NarrativeRow[];
-  sentimentBreakdown: Breakdown | undefined;
-}) {
+function TopThreeNarrativeCards({ narratives }: { narratives: NarrativeRow[] }) {
   const top3 = [...narratives].sort((a, b) => b.sov_pct - a.sov_pct).slice(0, 3);
 
   if (top3.length === 0) {
@@ -120,34 +110,9 @@ function TopThreeNarrativeCards({
 
   return (
     <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-      {top3.map((narrative) => {
-        const sentiment = sentimentBreakdown?.items.find((item) => item.label === narrative.title);
-        return (
-          <div key={narrative.id} className="flex flex-col gap-3 rounded-[10px] border border-border-default bg-bg-card p-4">
-            <span className="font-bold text-text-primary">{narrative.title}</span>
-            <span className="inline-flex w-fit items-center rounded-md bg-accent-blue-bg px-2 py-0.5 text-xs font-bold text-accent-blue">
-              {narrative.sov_pct}% das menções
-            </span>
-            <div className="flex gap-4">
-              <div>
-                <div className="text-base font-extrabold text-sentiment-positive">{sentiment?.positive ?? 0}%</div>
-                <div className="text-[10.5px] text-text-tertiary">Positivo</div>
-              </div>
-              <div>
-                <div className="text-base font-extrabold text-sentiment-negative">{sentiment?.negative ?? 0}%</div>
-                <div className="text-[10.5px] text-text-tertiary">Negativo</div>
-              </div>
-              <div>
-                <div className="text-base font-extrabold text-sentiment-neutral">{sentiment?.neutral ?? 0}%</div>
-                <div className="text-[10.5px] text-text-tertiary">Neutro</div>
-              </div>
-            </div>
-            <Link href={`/narratives/${narrative.id}`} className="mt-1 text-sm font-bold text-accent-blue hover:underline">
-              Ver detalhes →
-            </Link>
-          </div>
-        );
-      })}
+      {top3.map((narrative) => (
+        <NarrativeCard key={narrative.id} narrative={narrative} />
+      ))}
     </div>
   );
 }

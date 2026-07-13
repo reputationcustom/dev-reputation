@@ -42,9 +42,29 @@ export function useUserProfile() {
 
     async function load() {
       const supabase = createClient();
+
+      // Filtro explícito por `id`, não só a RLS — `user_profiles_select_own`
+      // era estritamente "só a própria linha", mas passou a devolver mais de
+      // uma linha (RLS ampliada por algum motivo fora deste hook, ex.
+      // visibilidade de admin sobre outros membros da organização), e
+      // `.maybeSingle()` sem `.eq('id', ...)` trata ">1 linha" como erro
+      // (PGRST116) mesmo com HTTP 200 — "meu perfil" nunca deveria depender
+      // implicitamente da RLS ser estreita o bastante pra isso.
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (cancelled) return;
+
+      if (!user) {
+        setState({ status: "error" });
+        return;
+      }
+
       const { data, error } = await supabase
         .from("user_profiles")
         .select("full_name, is_admin, is_principal, timezone")
+        .eq("id", user.id)
         .maybeSingle();
 
       if (cancelled) return;
