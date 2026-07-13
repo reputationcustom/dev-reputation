@@ -3,11 +3,22 @@ tipo: feature-spec
 módulo: intelligence-center
 funcionalidade: executive-overview
 status: implementado
-atualizado: 2026-07-22
+atualizado: 2026-07-25
 ---
 
 # Executive Overview
 
+> ✅ **"Top 3 Narrativas" renomeado (2026-07-25)**, pedido do usuário:
+> "renomeie no frontend: Top 3 Narrativas para Top 3 Narrativas por
+> Menções." `TopThreeNarrativeCards` (`overview/page.tsx`) também trocou o
+> critério de ordenação de `sov_pct` (SOV) para `total_mentions` — o título
+> anterior era ambíguo sobre o critério de "top", e "por Menções" só faz
+> sentido se a ordenação for por volume de menções, não por participação
+> relativa (SOV pondera pela Query, então uma Narrativa pequena numa Query
+> pequena podia superar uma Narrativa com muito mais menções absolutas).
+> Mesmo `NarrativeCard`, mesmo dado — só o rótulo e o critério de seleção
+> das 3 mudaram.
+>
 > ✅ **Segunda leva de ajustes de UI (2026-07-13)**: 5 pedidos do usuário,
 > ver `CLAUDE.md`, "UI polish pass" (seção estendida) pra detalhamento
 > completo:

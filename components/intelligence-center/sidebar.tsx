@@ -12,6 +12,9 @@ const ANALYSIS_ITEMS = [
   { href: "/platforms", label: "Plataformas" },
   { href: "/themes", label: "Pautas Eleitorais" },
   { href: "/authors", label: "Autores e Influenciadores" },
+  // Módulo `communications` (Sprint 2.1) — pedido explícito do usuário de
+  // nomear o item de menu "Comunicação", ver .dev/specs/communications/overview.md.
+  { href: "/communications", label: "Comunicação" },
 ];
 
 // Mesmos rótulos da seção "CONFIGURAÇÕES" do protótipo

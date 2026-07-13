@@ -3,7 +3,7 @@ tipo: feature-spec
 módulo: event-radar
 funcionalidade: detection-engine
 status: rascunho
-atualizado: 2026-07-22
+atualizado: 2026-07-25
 ---
 
 # Motor de Detecção (100% SQL, sem IA)
@@ -114,5 +114,6 @@ calculado por soma local sobre uma tabela amostrada).
 ## Referências relacionadas
 
 - [overview.md](overview.md)
+- [data-model.md](data-model.md) — schema completo de `radar_staging_events`
 - [deduplication-grouping.md](deduplication-grouping.md)
 - [../foundation/data-model.md](../foundation/data-model.md)

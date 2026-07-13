@@ -3,7 +3,7 @@ tipo: feature-spec
 módulo: event-radar
 funcionalidade: deduplication-grouping
 status: rascunho
-atualizado: 2026-07-12
+atualizado: 2026-07-25
 ---
 
 # Deduplicação e Agrupamento Determinístico (SQL, sem IA)
@@ -43,5 +43,6 @@ atualizados em vez de recriados — tudo antes de qualquer custo de token.
 ## Referências relacionadas
 
 - [overview.md](overview.md)
+- [data-model.md](data-model.md) — schema completo de `radar_staging_events` (incl. `closed_at`)
 - [detection-engine.md](detection-engine.md)
 - [severity.md](severity.md)

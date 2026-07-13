@@ -2,11 +2,38 @@
 tipo: feature-spec
 módulo: communications
 funcionalidade: communication-registration
-status: rascunho
+status: implementado
 atualizado: 2026-07-25
 ---
 
 # Cadastro de Comunicações e Decisões
+
+> ✅ **Implementado (2026-07-25)** — `app/(intelligence-center)/(analytics)/communications/page.tsx`,
+> `components/communications/{communication-form-modal,communications-table,
+> narrative-combobox}.tsx`, Edge Functions `create-communication`/
+> `update-communication`/`delete-communication`. Fiel ao desenho abaixo,
+> com 2 achados/desvios documentados:
+> - **Gap de RLS real, encontrado ao implementar**: `user_profiles`
+>   (`user_profiles_select_own`) e `organization_members`
+>   (`organization_members_select_own`) só deixam um usuário ver a própria
+>   linha — nenhum membro comum consegue, via client direto, ver o nome de
+>   outro colega da mesma organização. Isso bloqueava popular o select
+>   "Responsável" e resolver `assignee_id`/`created_by` → nome na tabela.
+>   Resolvido com uma Edge Function nova, não prevista nesta spec original:
+>   `list-organization-members` (chave secreta, valida a associação do
+>   chamador manualmente antes de devolver os demais membros — mesmo
+>   espírito de `admin-list-users`, mas pra qualquer membro, não só admin).
+>   Ver `CLAUDE.md`, "Módulo communications (Sprint 2.1)".
+> - **Sem filtro de período na lista** (`/communications`), diferente do
+>   "Fluxo principal" item 3 abaixo: aplicar o período global (default
+>   "Semanal", 7 dias) esconderia a maior parte de um registro histórico
+>   sem nenhum sinal do porquê — julgado uma regressão de UX pior que não
+>   ter o filtro. Narrativa/Tipo de registro/Tipo de comunicação
+>   continuam implementados como filtros reais.
+> - Não verificado numa sessão com `npm run dev`/navegador real (sem
+>   credenciais Supabase neste ambiente) — `npx tsc --noEmit` e
+>   `npm run build` passam limpos (rotas `/communications` e
+>   `/communications/[narrativeId]` resolvem corretamente).
 
 ## Objetivo
 
@@ -82,10 +109,15 @@ restrição de `is_admin` (ver `data-model.md`, "Políticas RLS").
    técnicas") → insere em `communications`, `organization_id` derivado no
    servidor via trigger (`data-model.md`) a partir da Narrativa escolhida.
 6. Editar (ação da linha) → mesmo modal, pré-preenchido, com o seletor
-   "Tipo de registro" já travado no valor original (trocar o tipo de um
-   registro existente — de Comunicação para Decisão ou vice-versa — não é
-   suportado; para isso, excluir e recriar) → Edge Function
-   `update-communication`.
+   "Tipo de registro" **e** o campo Narrativa travados no valor original
+   (nem o tipo — Comunicação/Decisão — nem a Narrativa de um registro
+   existente podem ser trocados; para isso, excluir e recriar). A
+   Narrativa é travada por um motivo técnico, não só de UX:
+   `organization_id` só é derivado de `narrative_id` no **INSERT**
+   (trigger `communications_set_organization`, ver `data-model.md`) —
+   permitir trocar a Narrativa num UPDATE poderia deixar a linha com
+   `organization_id` desatualizado. → Edge Function
+   `update-communication` (que também não aceita `narrative_id` no corpo).
 7. Excluir (ação da linha, com confirmação explícita) → Edge Function
    `delete-communication`.
 8. Cada linha da tabela tem um link "Ver impacto →" para

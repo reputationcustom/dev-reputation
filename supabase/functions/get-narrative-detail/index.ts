@@ -252,9 +252,9 @@ export const PAGE_BLOCKS: Record<PageKey, BlockKey[]> = {
   narratives: ['narratives'],
   narrative_detail: ['breakdowns', 'trends', 'authors', 'graph', 'narrative_text'],
   sentiment: ['breakdowns', 'trends', 'highlights', 'term_signals', 'narrative_text'],
-  platforms: ['breakdowns', 'trends', 'narratives', 'authors', 'x_insights', 'narrative_text'],
+  platforms: ['breakdowns', 'trends', 'narrative_text'],
   themes: ['breakdowns', 'trends', 'narratives', 'authors', 'highlights', 'term_signals', 'narrative_text'],
-  authors: ['authors'],
+  authors: ['authors', 'x_insights'],
   alerts: ['highlights'],
   reports: ['metrics', 'breakdowns', 'trends', 'narratives', 'highlights', 'narrative_text'],
 }

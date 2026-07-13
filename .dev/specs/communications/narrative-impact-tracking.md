@@ -2,11 +2,27 @@
 tipo: feature-spec
 módulo: communications
 funcionalidade: narrative-impact-tracking
-status: rascunho
+status: implementado
 atualizado: 2026-07-25
 ---
 
 # Acompanhamento Pós-Comunicação/Decisão (Linha do Tempo de Impacto)
+
+> ✅ **Implementado (2026-07-25)** — migration
+> `20260726010000_communication_impact_functions.sql` (extensão
+> `p_reference_at` em `get_narratives_table`, `get_communication_impact`,
+> `get_narrative_communication_timeline`), Edge Function
+> `get-narrative-communication-timeline`,
+> `app/(intelligence-center)/(analytics)/communications/[narrativeId]/page.tsx`,
+> `components/communications/impact-timeline.tsx` (reaproveitado também no
+> resumo compacto do detalhe de Narrativa, via
+> `narrative-communications-section.tsx`). Fiel ao desenho desta spec,
+> incluindo `risk_label`/`trend_label` antes/depois (adicionados ao retorno
+> das functions além do que o esqueleto original desenhava, para que
+> `RiskBadge`/`TrendIndicator` no frontend tivessem o rótulo, não só o
+> score). Não executado contra um banco real nesta sessão (sem
+> credenciais) — revisado manualmente; `npx tsc --noEmit`/`npm run build`
+> passam limpos do lado frontend.
 
 ## Objetivo
 

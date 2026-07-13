@@ -84,16 +84,23 @@ export default function OverviewPage() {
           <HighlightsPanel highlights={envelope?.highlights ?? []} />
         </WidgetCard>
 
-        {/* "Top 3 Narrativas" (protótipo original `topThreeCards`) — as 3
-            Narrativas de maior SOV. ✅ Simplificado 2026-07-21: o split
-            positivo/neutro/negativo agora vem direto em
-            NarrativeRow.sentiment_positive_pct/neutral_pct/negative_pct
-            (get_narratives_table, migration 20260721010000) — não precisa
-            mais casar por título com a breakdown type='narrative' separada
-            (frágil: dependia de NarrativeRow.title === Breakdown.label).
+        {/* "Top 3 Narrativas por Menções" (protótipo original `topThreeCards`)
+            — renomeado 2026-07-25 (pedido do usuário) de "Top 3 Narrativas"
+            pra deixar explícito o critério de ordenação; o título anterior
+            era ambíguo (o card já não mostrava SOV como métrica isolada de
+            destaque) — o critério agora é literalmente o que o título diz:
+            as 3 Narrativas com mais `total_mentions` no período, não mais
+            `sov_pct` (SOV pondera pela Query, então uma Narrativa pequena
+            numa Query pequena podia superar uma Narrativa com muito mais
+            menções absolutas — não é isso que "por Menções" comunica).
+            ✅ Simplificado 2026-07-21: o split positivo/neutro/negativo já
+            vem direto em NarrativeRow.sentiment_positive_pct/neutral_pct/
+            negative_pct (get_narratives_table, migration 20260721010000) —
+            não precisa mais casar por título com a breakdown type='narrative'
+            separada (frágil: dependia de NarrativeRow.title === Breakdown.label).
             Mesmo NarrativeCard reusado pela lista de Narrativas (pedido do
             usuário: todo card de Narrativa segue o mesmo layout). */}
-        <WidgetCard title="Top 3 Narrativas" status={status} onRetry={retry}>
+        <WidgetCard title="Top 3 Narrativas por Menções" status={status} onRetry={retry}>
           <TopThreeNarrativeCards narratives={envelope?.narratives ?? []} />
         </WidgetCard>
       </div>
@@ -102,7 +109,7 @@ export default function OverviewPage() {
 }
 
 function TopThreeNarrativeCards({ narratives }: { narratives: NarrativeRow[] }) {
-  const top3 = [...narratives].sort((a, b) => b.sov_pct - a.sov_pct).slice(0, 3);
+  const top3 = [...narratives].sort((a, b) => b.total_mentions - a.total_mentions).slice(0, 3);
 
   if (top3.length === 0) {
     return <EmptyState message="Nenhuma Narrativa em monitoramento ainda." />;

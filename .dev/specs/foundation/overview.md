@@ -315,6 +315,16 @@ como fonte. Quando isso existir, adicionar `reporting.narrative_entities`
 como terceira view da camada de BI (ver abaixo) — não faz parte do Sprint 1,
 só fica registrado aqui para o módulo `entities` não redesenhar do zero.
 
+> ✅ **`entities` especificado (2026-07-13)** — ver
+> [entities/overview.md](../entities/overview.md)/[entities/data-model.md](../entities/data-model.md).
+> `mentions.author_handle_normalized` → `entity_accounts.username` → `entities` → `entity_tags`
+> confirmado exatamente como previsto acima (`entity_accounts.username`, mesmo nome de coluna já
+> antecipado aqui). `narrative_entities` (cross-tab materializado) **não** entrou nesta rodada —
+> deliberadamente fora de escopo (o pedido do usuário era o CRUD de Entidades + o vínculo com o
+> ranking de Autores, não a otimização de relatório) — continua registrado aqui como recomendação
+> para quando um relatório concreto precisar dela, ver `entities/overview.md`, "Notas para
+> implementação".
+
 ## Camada de reporting (BI externo)
 
 Ver Princípio técnico 6 em [`_index.md`](../_index.md). Para o Sprint 1, os

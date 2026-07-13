@@ -156,6 +156,15 @@ escaneável sem exigir arrastar/rolar lateralmente, mais alinhado ao
 "localização" pedido. Revisitar se o usuário preferir explicitamente o
 padrão de rolagem horizontal.
 
+✅ **Estender/recolher por raia (2026-07-25)**, pedido do usuário, mesma
+sessão: cada cabeçalho de categoria em `NarrativeCategoryLanes` é um botão
+(`aria-expanded`/`aria-controls`, acessível) que alterna a grade daquela
+categoria — mesmo indicador visual ▲/▼ já usado pelo botão "Filtros" do
+header global (`page-header-bar.tsx`), não um ícone novo. Todas as
+categorias começam expandidas; o estado (`Set` de categorias recolhidas)
+vive só no componente, sem persistência entre navegações — mesmo padrão
+já aceito para `filtrosOpen` no header.
+
 ### Detalhe (`/narratives/[id]`)
 
 - **Cabeçalho**: nome, badges de SOV/sentimento/risco/momentum/tendência

@@ -3,7 +3,7 @@ tipo: feature-spec
 módulo: event-radar
 funcionalidade: volume-limits
 status: rascunho
-atualizado: 2026-07-12
+atualizado: 2026-07-25
 ---
 
 # Limites de Volume
@@ -33,5 +33,6 @@ quantos eventos são publicados por organização por dia.
 ## Referências relacionadas
 
 - [overview.md](overview.md)
+- [data-model.md](data-model.md)
 - [severity.md](severity.md)
 - [agent-orchestrator.md](agent-orchestrator.md)

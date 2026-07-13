@@ -3,7 +3,7 @@ tipo: feature-spec
 módulo: event-radar
 funcionalidade: severity
 status: rascunho
-atualizado: 2026-07-22
+atualizado: 2026-07-25
 ---
 
 # Severidade (SQL, sem IA)
@@ -83,6 +83,7 @@ não aqui, pra não duplicar a mesma decisão em dois arquivos.
 ## Referências relacionadas
 
 - [overview.md](overview.md)
+- [data-model.md](data-model.md)
 - [deduplication-grouping.md](deduplication-grouping.md)
 - [agent-orchestrator.md](agent-orchestrator.md)
 - [aggregated-metrics-integration.md](aggregated-metrics-integration.md)

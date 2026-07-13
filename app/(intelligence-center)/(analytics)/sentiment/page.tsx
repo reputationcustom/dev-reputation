@@ -4,6 +4,7 @@ import { usePageEnvelope } from "@/hooks/use-page-envelope";
 import { PageHeaderBar } from "@/components/intelligence-center/page-header-bar";
 import { WidgetCard } from "@/components/intelligence-center/widget-card";
 import { BreakdownPanel } from "@/components/intelligence-center/charts/breakdown-panel";
+import { BrazilSentimentMap } from "@/components/intelligence-center/charts/brazil-sentiment-map";
 import { TrendLineChart } from "@/components/intelligence-center/charts/trend-line-chart";
 import { PositiveDriversList, NegativeDriversList } from "@/components/intelligence-center/term-signals-list";
 import { HighlightsPanel, NarrativeTextPanel } from "@/components/intelligence-center/insights-panel";
@@ -69,12 +70,22 @@ export default function SentimentPage() {
 
         {/* ✅ Repivotado 2026-07-25 (pedido do usuário: "breakdown por
             estado brasileiro") — get_region_breakdown lê dimension_type='region'
-            (estado), não mais 'country'. Ver sql-aggregation.md. */}
+            (estado), não mais 'country'. Ver sql-aggregation.md.
+            ✅ Mapa adicionado (2026-07-25, mesmo dia, pedido do usuário:
+            "Sentimento por estado pode ser representado em um mapa com
+            rótulos e cores") — complementa a tabela abaixo (leitura
+            geográfica de relance + número exato por estado), não a
+            substitui. Ver brazil-sentiment-map.tsx. */}
         <WidgetCard title="Sentimento por estado" status={status} onRetry={retry}>
-          <BreakdownPanel
-            breakdown={envelope?.breakdowns.find((b) => b.type === "region")}
-            emptyMessage="Nenhum dado por estado ainda."
-          />
+          <div className="flex flex-col gap-6">
+            <BrazilSentimentMap items={envelope?.breakdowns.find((b) => b.type === "region")?.items ?? []} />
+            <div className="border-t border-border-subtle pt-4">
+              <BreakdownPanel
+                breakdown={envelope?.breakdowns.find((b) => b.type === "region")}
+                emptyMessage="Nenhum dado por estado ainda."
+              />
+            </div>
+          </div>
         </WidgetCard>
 
         <div className="grid grid-cols-1 gap-6 md:grid-cols-2">

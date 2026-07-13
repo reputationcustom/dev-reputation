@@ -1,3 +1,6 @@
+"use client";
+
+import { useState } from "react";
 import type { NarrativeRow } from "@reputation/shared-types";
 import { NarrativeCard } from "./narrative-card";
 
@@ -17,6 +20,14 @@ import { NarrativeCard } from "./narrative-card";
 // achar uma Narrativa rápido, não priorizar por risco (a tabela acima já
 // cobre priorização); dentro de cada categoria, a ordem original (risco
 // desc, já vinda de `get_narratives_table`) é preservada.
+//
+// ✅ Estender/recolher por raia (2026-07-25, pedido do usuário): cada
+// cabeçalho de categoria é um botão que alterna a visibilidade da grade
+// daquela categoria — mesmo padrão visual (▲/▼) já usado pelo botão
+// "Filtros" de `page-header-bar.tsx`, não um ícone novo. Todas as
+// categorias começam expandidas (nenhum estado persistido entre
+// navegações — mesmo padrão de `filtrosOpen` em `page-header-bar.tsx`,
+// que também reseta ao montar).
 function groupByCategory(rows: NarrativeRow[]): Array<{ category: string; rows: NarrativeRow[] }> {
   const groups = new Map<string, NarrativeRow[]>();
   for (const row of rows) {
@@ -35,24 +46,52 @@ function groupByCategory(rows: NarrativeRow[]): Array<{ category: string; rows: 
 
 export function NarrativeCategoryLanes({ rows }: { rows: NarrativeRow[] }) {
   const groups = groupByCategory(rows);
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+
+  function toggle(category: string) {
+    setCollapsed((current) => {
+      const next = new Set(current);
+      if (next.has(category)) {
+        next.delete(category);
+      } else {
+        next.add(category);
+      }
+      return next;
+    });
+  }
 
   return (
-    <div className="flex flex-col gap-8">
-      {groups.map(({ category, rows: groupRows }) => (
-        <div key={category} className="flex flex-col gap-4">
-          <div className="flex items-center gap-2 border-b border-border-subtle pb-2">
-            <h3 className="font-bold text-text-primary">{category}</h3>
-            <span className="rounded-full bg-bg-page px-2 py-0.5 text-xs font-semibold text-text-secondary">
-              {groupRows.length}
-            </span>
+    <div className="flex flex-col gap-6">
+      {groups.map(({ category, rows: groupRows }) => {
+        const isExpanded = !collapsed.has(category);
+        const panelId = `narrative-lane-${category.replace(/\s+/g, "-")}`;
+
+        return (
+          <div key={category} className="flex flex-col gap-4">
+            <button
+              type="button"
+              onClick={() => toggle(category)}
+              aria-expanded={isExpanded}
+              aria-controls={panelId}
+              className="flex w-full items-center gap-2 border-b border-border-subtle pb-2 text-left hover:opacity-80"
+            >
+              <h3 className="font-bold text-text-primary">{category}</h3>
+              <span className="rounded-full bg-bg-page px-2 py-0.5 text-xs font-semibold text-text-secondary">
+                {groupRows.length}
+              </span>
+              <span className="ml-auto text-xs text-text-tertiary">{isExpanded ? "▲" : "▼"}</span>
+            </button>
+
+            {isExpanded && (
+              <div id={panelId} className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3">
+                {groupRows.map((row) => (
+                  <NarrativeCard key={row.id} narrative={row} />
+                ))}
+              </div>
+            )}
           </div>
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3">
-            {groupRows.map((row) => (
-              <NarrativeCard key={row.id} narrative={row} />
-            ))}
-          </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }

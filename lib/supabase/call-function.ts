@@ -9,7 +9,12 @@ import { BACKEND_ERROR_MESSAGE } from "@/lib/errors";
 // mensagem, com fallback pro texto padrão de falha de comunicação.
 export async function callFunction<T>(
   name: string,
-  body?: Record<string, unknown>,
+  // `object` em vez de `Record<string, unknown>` — aceita tanto um literal
+  // inline quanto uma variável de um tipo/interface nomeado (ex:
+  // CommunicationFormValues em communications/), que TS não trata como
+  // atribuível a um tipo com index signature explícito mesmo quando
+  // estruturalmente compatível.
+  body?: object,
 ): Promise<T> {
   const supabase = createClient();
   const { data, error } = await supabase.functions.invoke(name, { body: body ?? {} });

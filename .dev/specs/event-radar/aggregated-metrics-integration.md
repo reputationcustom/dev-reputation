@@ -3,7 +3,7 @@ tipo: feature-spec
 módulo: event-radar
 funcionalidade: aggregated-metrics-integration
 status: rascunho
-atualizado: 2026-07-22
+atualizado: 2026-07-25
 ---
 
 # Integração com `aggregated-metrics`
@@ -46,7 +46,7 @@ qualquer PR que altere o formato de saída de um dos dois módulos deve revisar.
 ## Ordem de implementação entre os dois módulos
 
 > Ver diagrama completo em
-> [`.dev/specs/_fluxo-event-radar-aggregated-metrics.md`](../_fluxo-event-radar-aggregated-metrics.md).
+> [fluxo-aggregated-metrics.md](fluxo-aggregated-metrics.md).
 
 1. `aggregated-metrics` pode ser implementado e entregue **completo** sem este módulo —
    `metrics`, `breakdowns`, `trends`, `authors`, `graph`, `term_signals` e a tabela `narratives`
@@ -70,6 +70,7 @@ qualquer PR que altere o formato de saída de um dos dois módulos deve revisar.
 ## Referências relacionadas
 
 - [overview.md](overview.md)
+- [data-model.md](data-model.md)
 - [agent-orchestrator.md](agent-orchestrator.md)
 - [severity.md](severity.md)
 - [volume-limits.md](volume-limits.md)

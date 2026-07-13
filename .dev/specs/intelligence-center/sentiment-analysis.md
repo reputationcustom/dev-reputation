@@ -3,11 +3,37 @@ tipo: feature-spec
 módulo: intelligence-center
 funcionalidade: sentiment-analysis
 status: implementado
-atualizado: 2026-07-17
+atualizado: 2026-07-25
 ---
 
 # Análise de Sentimento
 
+> ✅ **4 ajustes (2026-07-25)**, pedidos do usuário na mesma sessão:
+> 1. **Rótulos no gráfico "Sentimento por narrativa"**: a barra empilhada
+>    por Narrativa (`NarrativeSentimentList`, `breakdown-panel.tsx`) não
+>    tinha nenhum percentual visível, só a cor — agora mostra "pos X% neu
+>    Y% neg Z%" abaixo de cada barra, mesmo texto já usado no
+>    `NarrativeCard`.
+> 2. **Nome de colunas nas tabelas "Sentimento por plataforma"/"por
+>    pauta"/"por estado"**: as 3 usavam `ScoreList` (`breakdown-panel.tsx`),
+>    uma lista sem `<thead>` — viraram uma `<table>` real com 3 colunas
+>    (Plataforma/Pauta/Estado — o nome muda por tipo — Participação,
+>    Sentimento), mesmo padrão de cabeçalho (`font-bold text-text-primary`)
+>    de `NarrativesTable`/`XInsightsPanel`.
+> 3. **Mapa pra "Sentimento por estado"**: novo `BrazilSentimentMap`
+>    (`components/intelligence-center/charts/brazil-sentiment-map.tsx`) —
+>    SVG dos 27 estados coloridos pela mesma escala de 7 faixas de
+>    sentimento, rótulo (sigla UF) sobre cada estado, legenda de cores.
+>    Complementa a tabela do item 2 acima, não a substitui.
+> 4. **"Drivers positivos" não aparecia**: causa raiz real em
+>    `get_term_signals` — um único corte de `limit 50` ordenado por
+>    `trending` (crescimento) geral, antes da classificação por sentimento,
+>    podia esvaziar o bucket "positive" inteiro se os termos que mais
+>    cresceram no período fossem majoritariamente negativos/neutros (comum
+>    em cobertura política). Corrigido: ranking agora é feito **dentro de
+>    cada bucket de sentimento** (top 20 positive/neutral/negative cada),
+>    não mais um corte único global — ver "Drivers de sentimento" abaixo.
+>
 > ✅ **Implementado (2026-07-17)**: "Sentimento por Narrativa" (barras
 > empilhadas positivo/neutro/negativo, uma por Narrativa) fechado nesta
 > data — `get_narrative_sentiment_breakdown` (breakdown `type = 'narrative'`),
@@ -90,17 +116,30 @@ Mesmo público das demais páginas deste módulo.
   ativas), mesma granularidade da aba Narrativas.
 - **Drivers de sentimento**: termos/temas mais associados a cada polaridade
   — de `bw_query_topics` (`topic_type`, `label`,
-  `sentiment_positive`/`neutral`/`negative`), ordenado por
-  `sentiment_negative`/`sentiment_positive` desc conforme a lista
-  ("positivo"/"negativo"). Já disponível, sem gap — `bw_query_topics` já
-  carrega sentimento por tema. ✅ Apresentação em 2 caixas separadas
-  ("Drivers positivos"/"Drivers negativos") implementada 2026-07-17
-  (`SentimentDriversPanel`) — mesmo dado de `get_term_signals`, termos
-  neutros não aparecem em nenhuma das duas caixas. `get_term_signals`
+  `sentiment_positive`/`neutral`/`negative`), classificado em positive/
+  neutral/negative comparando os 3 contadores. Já disponível, sem gap —
+  `bw_query_topics` já carrega sentimento por tema. ✅ Apresentação em 2
+  caixas separadas ("Drivers positivos"/"Drivers negativos") implementada
+  2026-07-17 (`SentimentDriversPanel`) — mesmo dado de `get_term_signals`,
+  termos neutros não aparecem em nenhuma das duas caixas. `get_term_signals`
   mistura todo `topic_type` (`words`/`phrases`/`hashtags`/`entities`/
   `people`/`places`/`organisations`) num só ranking, sem filtrar
   especificamente por `phrases` — não é um gap (a spec nunca pediu só
   frases), mas fica registrado caso o produto queira restringir no futuro.
+  ✅ **Bug real corrigido (2026-07-25, migration `20260726030000`)**:
+  usuário reportou "Drivers positivos não aparecem". Causa raiz —
+  `get_term_signals` ordenava TODOS os termos (de qualquer sentimento) por
+  `trending` desc e cortava em `limit 50` **antes** de qualquer filtro por
+  sentimento rodar no frontend; se os termos que mais cresceram no período
+  fossem majoritariamente negativos/neutros (plausível em cobertura
+  política, onde notícia negativa tende a viralizar mais rápido), o corte
+  de 50 podia não sobrar nenhum termo "positive" — não porque não
+  existissem termos positivos, mas porque não estavam entre os 50 que mais
+  cresceram. Corrigido: o ranking agora usa `row_number() over (partition
+  by sentiment_associated order by growth_pct desc)`, mantendo os top 20
+  de **cada** bucket (positive/neutral/negative) em vez de um corte único
+  global — "Drivers positivos" deixa de competir por espaço com termos de
+  outro sentimento que cresceram mais rápido no mesmo período.
 - **Menções que mais influenciaram o sentimento**: lista de mentions
   individuais (não agregado) ordenada por `reach_estimate`/`impact`, mesmo
   padrão de "Menções relevantes" em `narratives-exploration.md`.
@@ -134,6 +173,22 @@ Mesmo público das demais páginas deste módulo.
   anterior, de baixo valor pra uma plataforma 100% de campanhas
   brasileiras). ⚠️ Mapeamento exato de `regions` → UF brasileira nunca
   confirmado contra um payload real, ver `foundation/data-model.md`.
+  ✅ **Mapa adicionado (2026-07-25)**, pedido do usuário: "Sentimento por
+  estado pode ser representado em um mapa com rótulos e cores." Novo
+  `BrazilSentimentMap` (`components/intelligence-center/charts/
+  brazil-sentiment-map.tsx`) — SVG com os 27 estados (geometria
+  simplificada, dataset público `codeforgermany/click_that_hood`,
+  reprojetada num viewBox fixo 640x640), cada estado colorido pela mesma
+  escala de 7 faixas de `net_sentiment` já usada em `SENTIMENT_META`
+  (`score-badges.tsx`), sigla UF como rótulo sobre cada estado (com um
+  fundo semi-transparente atrás do texto pra legibilidade em qualquer cor
+  de fundo), legenda de cores abaixo. Como o texto exato que a Brandwatch
+  devolve por estado nunca foi confirmado (ressalva acima), o componente
+  casa o `label` recebido por nome completo, sigla, ou substring
+  (`findState()`) — qualquer item que não case com nenhum dos 27 estados é
+  listado por extenso abaixo do mapa em vez de descartado silenciosamente.
+  O mapa complementa a tabela (item acima, com nome de colunas) — a leitura
+  geográfica de relance não substitui o número exato por estado.
 
 ## Dados envolvidos
 

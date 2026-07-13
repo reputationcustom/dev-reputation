@@ -3,7 +3,7 @@ tipo: feature-spec
 módulo: event-radar
 funcionalidade: agent-orchestrator
 status: rascunho
-atualizado: 2026-07-12
+atualizado: 2026-07-25
 ---
 
 # Orquestrador de Agent (única chamada à IA por evento)
@@ -82,6 +82,7 @@ Consumido indiretamente por qualquer usuário autenticado que visualize uma pág
 ## Referências relacionadas
 
 - [overview.md](overview.md)
+- [data-model.md](data-model.md)
 - [severity.md](severity.md)
 - [volume-limits.md](volume-limits.md)
 - [schema-integration.md](schema-integration.md)

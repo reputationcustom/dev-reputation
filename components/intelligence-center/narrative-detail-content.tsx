@@ -2,6 +2,9 @@
 
 import Link from "next/link";
 import { usePageEnvelope } from "@/hooks/use-page-envelope";
+import { useIntelligenceCenterHeader } from "@/components/intelligence-center/header-context";
+import { useUserProfile } from "@/hooks/use-user-profile";
+import { NarrativeCommunicationsSection } from "@/components/communications/narrative-communications-section";
 import { PageHeaderBar } from "@/components/intelligence-center/page-header-bar";
 import { WidgetCard } from "@/components/intelligence-center/widget-card";
 import { BreakdownPanel } from "@/components/intelligence-center/charts/breakdown-panel";
@@ -97,6 +100,8 @@ export function NarrativeDetailContent({
   isModal?: boolean;
 }) {
   const { status, envelope, retry } = usePageEnvelope("get-narrative-detail", { narrativeId });
+  const { organizationId } = useIntelligenceCenterHeader();
+  const { timezone } = useUserProfile();
 
   if (status === "loading") {
     return (
@@ -244,6 +249,21 @@ export function NarrativeDetailContent({
 
       <WidgetCard title="Ações e decisões" status={status} onRetry={retry}>
         <EmptyState message="Nenhuma ação registrada ainda." />
+      </WidgetCard>
+
+      {/* Módulo `communications` (Sprint 2.1) — não confundir com "Ações e
+          decisões" (cases) acima, ver communications/overview.md, "Relação
+          com cases". organizationId vem do mesmo header global que já
+          escopa o resto da página. */}
+      <WidgetCard title="Comunicações e Decisões" status={status} onRetry={retry}>
+        {organizationId && (
+          <NarrativeCommunicationsSection
+            organizationId={organizationId}
+            narrativeId={narrativeId}
+            narrativeTitle={summary.title}
+            timezone={timezone}
+          />
+        )}
       </WidgetCard>
       </div>
     </>

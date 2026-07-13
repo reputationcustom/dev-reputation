@@ -133,7 +133,12 @@ exatos em variáveis, componentes, tabelas e comentários.
 - **Definição**: Qualquer pessoa, veículo de imprensa, partido, instituição,
   empresa ou movimento que participa do debate público monitorado. Cadastro
   próprio (Supabase), **não** a Brandwatch — fonte da verdade da classificação
-  é sempre o Supabase.
+  é sempre o Supabase. ✅ **Especificado (2026-07-13)** — catálogo **global**,
+  compartilhado por toda a plataforma (sem `organization_id`), CRUD
+  restrito a `is_admin` — ver [entities/overview.md](entities/overview.md).
+  Cadastro **manual e curado**, distinto do ranking automático/exaustivo de
+  autores nativo da Brandwatch (`bw_query_top_authors`) — ver
+  [entities/author-linking.md](entities/author-linking.md).
 - **Sinônimos a evitar**: **nunca usar "ator"/"actor"** no código, nas specs ou
   na UI — o termo fixado é "Entity"/"Entidade", porque o grafo inclui veículos
   de imprensa, partidos e instituições, não só pessoas.
@@ -145,7 +150,8 @@ exatos em variáveis, componentes, tabelas e comentários.
   cada dimensão de classificação (partido, espectro político, cargo, estado,
   instituição/braço de poder etc.) é um par `tag_type`/`tag_value`. Uma **nova
   dimensão de classificação é um INSERT em `entity_tags`, nunca uma
-  migration**.
+  migration**. Vocabulário sugerido de `tag_type` (não enforçado) em
+  [entities/data-model.md](entities/data-model.md).
 - **Tabela no banco**: `entity_tags`
 - **Spec de dados**: [entities/data-model.md](entities/data-model.md)
 

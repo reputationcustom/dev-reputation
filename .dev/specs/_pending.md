@@ -1,6 +1,6 @@
 ---
 tipo: pending-tracker
-atualizado: 2026-07-25 (rev. 25)
+atualizado: 2026-07-25 (rev. 27)
 ---
 
 # Pendências — Digital Intelligent Communication
@@ -29,6 +29,101 @@ atualizado: 2026-07-25 (rev. 25)
 | # | Módulo | Decisão | Spec |
 |---|---|---|---|
 | 5 | `event-radar` | UI de aprovação (aceitar/rejeitar) de `cases` pendentes `high`/`critical` — ainda sem spec própria, bloqueia só esse passo específico de `schema-integration.md` | [event-radar/schema-integration.md](event-radar/schema-integration.md) |
+
+✅ **7 pedidos pontuais de UI/dado resolvidos (2026-07-25)**, mesma sessão,
+usuário: "1) renomeie Top 3 Narrativas para Top 3 Narrativas por Menções.
+2) inclua rótulos no gráfico Sentimento por narrativa. 3) coloque nome de
+colunas na tabela Sentimento por plataforma/pauta/estado. 4) Sentimento
+por estado pode ser representado em um mapa com rótulos e cores. 5)
+Verifique por que Drivers positivos não estão aparecendo. 6) mover Perfis
+relevantes/X Themes para Autores e Influenciadores. 7) Remover a tabela
+Narrativas da página Plataformas."
+- **1**: `TopThreeNarrativeCards` renomeado + critério trocado de `sov_pct`
+  para `total_mentions` (ver `executive-overview.md`).
+- **2**: `NarrativeSentimentList` ganhou rótulos "pos/neu/neg %" (ver
+  `sentiment-analysis.md`).
+- **3**: `ScoreList` virou uma `<table>` real com cabeçalho
+  (Plataforma/Pauta/Estado + Participação + Sentimento) — ver
+  `sentiment-analysis.md`.
+- **4**: `BrazilSentimentMap` novo (SVG 27 estados, dataset público
+  `click_that_hood`) — ver `sentiment-analysis.md`.
+- **5**: bug real em `get_term_signals` (migration `20260726030000`) —
+  corte único de `limit 50` por `trending` global esvaziava o bucket
+  "positive" quando termos negativos/neutros cresciam mais rápido no
+  período; agora rankeia top 20 dentro de cada bucket de sentimento — ver
+  `sentiment-analysis.md`.
+- **6**: nova página `/authors` (`get-page-authors`, primeira Edge
+  Function nova desde `get-page-themes`) — "Perfis relevantes"/"X Themes"
+  saíram de `/platforms` — ver
+  [intelligence-center/authors-and-influencers.md](intelligence-center/authors-and-influencers.md)
+  (spec nova) e `platform-analysis.md` (nota histórica). `_index.md`
+  atualizado (`/authors` deixa de estar 100% bloqueada por `entities`).
+- **7**: tabela "Narrativas" genérica removida do fim de `/platforms`
+  (conteúdo extra além do protótipo original, não fechava nenhum gap real
+  — "Narrativas dominantes por plataforma" continua um gap separado, ainda
+  aberto) — ver `platform-analysis.md`.
+`npx tsc --noEmit`/`npm run build` confirmados limpos. Migration
+`20260726030000` e a nova Edge Function (`get-page-authors`) revisadas
+manualmente, não rodadas contra um banco real — mesma limitação recorrente
+de toda sessão sem credenciais de deploy.
+
+✅ **Revisão de coerência de documentação — `event-radar` (2026-07-25)**,
+pedido do usuário: "revise a documentação do módulo event-radar e verifique
+se está coerente e conciso com tudo que já foi desenvolvido até agora. Se
+houver pendências vamos resolvê-las." Módulo continua `rascunho`
+(Sprint 3, não implementado) — nada de código mudou, só a documentação.
+Achados e resoluções:
+- **Contradição real entre specs, resolvida** — `aggregated-metrics/sql-aggregation.md`
+  (seção Risco, editada em 2026-07-25 pelo trabalho do `sentiment_dampener`)
+  dizia que `risk_score`/`severity_score` "não se fundem num só número",
+  contradizendo a fórmula explícita já registrada desde 2026-07-13 em
+  `event-radar/aggregated-metrics-integration.md`
+  (`risk_score = greatest(risk_score calculado, severity_score do evento
+  ativo)`). **Decisão do usuário: manter a fusão (`greatest`)** —
+  `sql-aggregation.md` corrigido para descrever a mesma fórmula, deixando
+  claro que ela ainda não está implementada (`event-radar` não existe) e
+  entra na mesma migration que ligar `get_active_highlights`.
+- **Gap de schema real, resolvido**: `event-radar` era o único módulo do
+  projeto sem `data-model.md` — as colunas de `radar_staging_events`
+  estavam espalhadas em 3 arquivos diferentes, e não havia coluna alguma
+  documentada para o `event_type` granular (`volume_spike`/`sentiment_change`/
+  etc.) que `standard-json-envelope.md` já espera em cada item de
+  `highlights` — `schema-integration.md` só dizia "tipo/tag de evento
+  'radar'", sem explicar onde esse dado granular ficaria guardado, dado
+  que `feed_events.type` é o enum fixo e grosso `feed_event_type`. **Criado
+  [event-radar/data-model.md](event-radar/data-model.md)**: consolida
+  `radar_staging_events` (schema completo + índice único parcial para a
+  chave de dedup), `feed_events` (nova coluna `event_type` text, separada
+  do enum `type`, que resolve a ambiguidade) e nomeia pela primeira vez a
+  tabela de feedback do analista (`feed_event_feedback`, mencionada em
+  `schema-integration.md` desde 2026-07-12 sem nome definido).
+  `schema-integration.md`/`detection-engine.md`/`severity.md`/
+  `deduplication-grouping.md`/`volume-limits.md`/`agent-orchestrator.md`/
+  `overview.md` todos ganharam referência cruzada para o arquivo novo.
+- **Duas defasagens de doc (decisão já tomada, texto desatualizado)
+  corrigidas**: `_index.md` ainda marcava o intervalo do `pg_cron` do
+  radar como "⚠️ DECISÃO PENDENTE" apesar de já ter sido resolvido em
+  2026-07-24 (15min, ver decisão #4 abaixo); o diagrama de sincronismo
+  ainda dizia "momentum_score liga em severity_score" e "roda a cada
+  15-30min", ambos desatualizados desde a redefinição de Momentum/Risco de
+  2026-07-13 e a decisão de cadência de 2026-07-24 respectivamente.
+- **Gap #32 (narrativas emergentes) resolvido no mesmo dia, fora de escopo em vez de
+  pendência**: o usuário pediu para retirar "narrativas emergentes" do objetivo do módulo — o
+  indicador `momentum_score` (`aggregated-metrics/sql-aggregation.md`) já representa esse sinal
+  bem o suficiente, sem precisar de uma regra de detecção própria em `event-radar`. Removido de
+  `overview.md` (Objetivo) e do gap registrado em `detection-engine.md`; não era uma regra
+  faltando, era um objetivo que não deveria estar listado.
+- **Movido, a pedido do usuário**: `.dev/specs/_fluxo-event-radar-aggregated-metrics.md`
+  → [event-radar/fluxo-aggregated-metrics.md](event-radar/fluxo-aggregated-metrics.md)
+  (era o único arquivo de fluxo cross-módulo solto na raiz de `.dev/specs/`
+  em vez de dentro do módulo a que pertence) — diagrama de dependências
+  (seção 1) redesenhado para mostrar a ordem de implementação 1.1→1.6
+  lado a lado com qual tabela cada etapa lê/escreve, agora referenciando
+  `data-model.md`. Todas as 4 referências a este arquivo (`_index.md`,
+  `_architecture.md`, `event-radar/overview.md`,
+  `event-radar/aggregated-metrics-integration.md`) atualizadas para o
+  caminho novo na mesma sessão.
+Nenhuma migration criada — módulo continua `rascunho`, sem código.
 
 ✅ **Resolvidas 2026-07-25** (decisões #28 e #30, `communications`, mesma
 sessão, dois pedidos do usuário): "1) Permissão de CRUD de communications
@@ -434,8 +529,7 @@ na época. Itens #2/#3 resolvidos na mesma data (ver acima).
 | 22 | `intelligence-center`/`aggregated-metrics` | Card "Share of Voice por Query Group" da Visão Geral nunca foi construído — `get_metrics_cards` só retorna os 5 KPIs de `bw_query_metrics_daily` (`total_mentions`/`sentiment_*`/`reach_estimate`/`engagement_score`/`unique_authors`), sem function SQL nem bloco de envelope para SOV agregado por Query Group. Achado ao revisar `executive-overview.md` contra o código em 2026-07-16 | [intelligence-center/executive-overview.md](intelligence-center/executive-overview.md), "Cards de topo" |
 | 23 | `foundation` | `bw_query_top_authors.sentiment_positive/neutral/negative` (e o mesmo em `bw_query_top_tweeters`) — mapeamento de `d.sentiment` da resposta de `data/volume/topauthors/queries` **nunca confirmado** contra a documentação real do endpoint (diferente de todo campo vizinho na mesma tabela, que tem nota de confirmação explícita). Risco real de ser sempre `0/0/0` em produção sem erro. Achado numa auditoria de sentimento por autor (2026-07-17) — `aggregated-metrics.get_authors_ranking` foi corrigida pra não ler mais estas colunas (usa `bw_query_author_topics` em vez disso), mas as colunas em si continuam sem confirmação/uso — revisar contra logs reais antes de reativar | [foundation/data-model.md](foundation/data-model.md), "bw_query_top_authors" |
 | 24 | `aggregated-metrics` | `get_term_signals` mistura todo `topic_type` (`words`/`phrases`/`hashtags`/`entities`/`people`/`places`/`organisations`) num só ranking de "drivers" — nenhuma spec pediu filtrar só `phrases` (não é um gap de verdade), mas registrado caso o produto queira restringir no futuro | [intelligence-center/sentiment-analysis.md](sentiment-analysis.md) |
-| 25 | `foundation`/`aggregated-metrics` | ✅ **Resolvida (2026-07-25)**: causa raiz real encontrada, diferente das duas hipóteses já descartadas em 2026-07-20/21 (fórmula de fallback diluída, chamadas de `netSentiment` starved pelo orçamento). Usuário reportou via screenshot que a borda do card de Narrativa e a coluna "Sentimento" da tabela mostravam um bucket (`sentiment_label`) que discordava do split pos/neu/neg mostrado na mesma linha/card. `get_narratives_table.sentiment_label`/`net_sentiment` vinham de `latest_day` — o snapshot de UM ÚNICO DIA (o mais recente do período) — enquanto `sentiment_positive_pct`/`neutral_pct`/`negative_pct` vinham de `period_agg`, somado sobre TODO o período pedido: duas janelas de tempo diferentes na mesma linha, podendo legitimamente discordar. Corrigido na migration `20260725000000`: `net_sentiment`/`sentiment_label` agora vêm de uma nova CTE `sentiment_final`/`sentiment_labeled`, calculada sobre a MESMA janela agregada de `period_agg` — média de `net_sentiment` ponderada por `total_mentions` no período, com o mesmo fallback local já usado pelas porcentagens. `risk_inputs.sentiment_risk` também passou a ler esse valor period-consistente | [aggregated-metrics/sql-aggregation.md](aggregated-metrics/sql-aggregation.md), "Sentimento (já um score, não precisa de cálculo aqui)" |
-| 31 | `aggregated-metrics`/`communications` | `get_narratives_table` precisa de um parâmetro opcional `p_reference_at` (default `now()`) pra Tendência poder ser calculada ancorada numa data histórica (não só "agora") — sem essa extensão, `communications`' acompanhamento de impacto não pode mostrar Tendência antes/depois, só Sentimento/Momentum/Risco (que já são period-dependentes hoje). Mudança aditiva, sem impacto nos consumidores atuais (nenhum passa esse parâmetro, herdam o default) | [communications/narrative-impact-tracking.md](communications/narrative-impact-tracking.md), "Dependências técnicas" |
+| 25 | `foundation`/`aggregated-metrics` | ✅ **Resolvida em duas partes (2026-07-25)**, mesmo dia. **Parte 1**: causa raiz real encontrada, diferente das duas hipóteses já descartadas em 2026-07-20/21 (fórmula de fallback diluída, chamadas de `netSentiment` starved pelo orçamento). `get_narratives_table.sentiment_label`/`net_sentiment` vinham de `latest_day` — snapshot de UM ÚNICO DIA — enquanto `sentiment_positive_pct`/etc. vinham de `period_agg`, somado sobre TODO o período: duas janelas de tempo diferentes na mesma linha. Corrigido na migration `20260725000000` (média ponderada de `net_sentiment` sobre a mesma janela de `period_agg`, com fallback local). **Parte 2**: usuário reportou de novo, screenshot diferente ("Economia": neg 42,5% predominante, borda/rótulo "Neutro") — a correção da Parte 1 ainda preferia o `net_sentiment` **oficial** da Brandwatch quando sincronizado, mas esse score vem de um endpoint diferente e independente (`data/netSentiment/...`) de `data/volume/sentiment/days` (origem de `sentiment_positive`/`neutral`/`negative`), sem garantia de reconciliar entre si. Corrigido definitivamente na migration `20260725060000`: `net_sentiment`/`sentiment_label` passam a vir **sempre** do cálculo local sobre as mesmas somas usadas por `sentiment_positive_pct`/etc. — nunca mais do score oficial da Brandwatch — garantindo por construção que rótulo/borda nunca discordem da barra pos/neu/neg do mesmo card | [aggregated-metrics/sql-aggregation.md](aggregated-metrics/sql-aggregation.md), "Sentimento (derivado localmente das proporções, não repassado direto de um score externo)" |
 | 26 | `aggregated-metrics`/`intelligence-center` | ✅ **Fechado (2026-07-24)**: o rename `velocity_score`/`velocity_label` → `trend_score`/`trend_label` que tinha ficado incompleto (envelope.ts e a migration editados, consumidores não) foi terminado nesta sessão como parte da troca Velocidade→Tendência pedida pelo usuário (ver decisão resolvida acima) — todos os consumidores (`narratives/page.tsx`, `score-badges.tsx`, `narratives-table.tsx`, `narrative-detail-content.tsx`, `aggregated-metrics-service.ts`, as 6 Edge Functions `get-page-*`/`get-narrative-detail`) atualizados em conjunto. `npm run build` deve passar agora — reconfirmar antes do próximo deploy | `packages/shared-types/src/envelope.ts`, `app/(intelligence-center)/(analytics)/narratives/page.tsx` |
 
 ✅ Item #6 (`auth` — UI + Edge Functions) removido desta tabela: já estava
@@ -443,6 +537,15 @@ na época. Itens #2/#3 resolvidos na mesma data (ver acima).
 2)") — o tracker só não tinha sido atualizado depois do trabalho ser
 concluído, mesmo tipo de defasagem já corrigida antes para itens de
 `foundation`.
+
+✅ **Item #31 resolvido (2026-07-25)**: `get_narratives_table` ganhou
+`p_reference_at timestamptz default now()` (migration `20260726010000`),
+consumido por `get_communication_impact`/`get_narrative_communication_timeline`
+(módulo `communications`, agora `implementado`) para ancorar Momentum/
+Tendência/Risco/Sentimento numa data histórica em vez de sempre "agora".
+Aditivo, sem efeito nos consumidores existentes. Ver
+`aggregated-metrics/sql-aggregation.md`, "Tendência", e
+`communications/narrative-impact-tracking.md`.
 
 ✅ **Item #12 resolvido parcialmente (2026-07-15)**: `/admin/users` e
 `/perfil` movidos para dentro do route group `(intelligence-center)`

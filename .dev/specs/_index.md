@@ -180,10 +180,10 @@ deve ser conferido contra esta lista antes de ser considerado pronto.
 |-------------------------|-------------------------------------------------------------------------------|--------------|--------|-------|
 | `foundation`            | Sync serial+rate-limited da Brandwatch → Supabase (`sync-brandwatch`, `narratives`) — **implementado**, ver `CLAUDE.md`. Só backend, nenhuma rota própria (ver "Executive Overview movida" em `foundation/overview.md`) | implementado | 1 | [foundation/overview.md](foundation/overview.md) |
 | `auth`                  | Login/recuperação de senha via Supabase Auth + administração de usuários restrita a admins (`user_profiles`) — **pré-requisito de todo o resto**, nenhuma página é acessível sem sessão | **implementado** (2026-07-13, `middleware.ts` + `/login` + `/forgot-password` + `/reset-password` + `/admin/users` + `/perfil` (fuso horário, ver `data-model.md` "timezone") + as 6 Edge Functions administrativas + `update-my-timezone` — ver `CLAUDE.md` "Módulo auth") | 2 | [auth/overview.md](auth/overview.md) |
-| `entities`              | Cadastro Nacional de Entidades (EAV via entity_tags) + enriquecimento de mentions | rascunho | 2      | — |
+| `entities`              | Cadastro Nacional de Entidades (EAV via entity_tags) + vínculo com o ranking de Autores e Influenciadores | **pronto** (especificado 2026-07-13, não implementado — ver `CLAUDE.md`) | 2      | [entities/overview.md](entities/overview.md) |
 | `intelligence-center`   | Todas as páginas do frontend (Sprint 2): Executive Overview (entrada pós-login) + Exploração de Narrativas + Sentimento + Plataformas + Pautas Eleitorais — inclui `cases` (ações/decisões por Narrativa, ex-`command-center`, ver "Módulo `command-center` removido" abaixo) | pronto — não implementado | 2 | [intelligence-center/overview.md](intelligence-center/overview.md) |
 | `aggregated-metrics`    | Camada de agregação/envelope JSON único, reaproveitada por todas as páginas do frontend (Sprints 2-4) e pela síntese de IA — ver "Fusão de módulos" abaixo | **implementado** (2026-07-14/15 — `get_active_highlights`/breakdown de região/`page_narrative_synthesis`/Camada 0 de `ai-synthesis` pendentes, ver `_pending.md`) | 2-4 | [aggregated-metrics/overview.md](aggregated-metrics/overview.md) |
-| `communications`       | Registro de Comunicações (post, e-mail, propaganda de TV etc.) ou Decisões (data/título/responsável/detalhamento) vinculadas a uma Narrativa, com CRUD completo pela UI, e acompanhamento de impacto (sentimento/menções/risco/momentum antes vs. depois) | rascunho | 2.1 | [communications/overview.md](communications/overview.md) |
+| `communications`       | Registro de Comunicações (post, e-mail, propaganda de TV etc.) ou Decisões (data/título/responsável/detalhamento) vinculadas a uma Narrativa, com CRUD completo pela UI, e acompanhamento de impacto (sentimento/menções/risco/momentum antes vs. depois) | **implementado** (2026-07-25, migrations `20260726000000`/`20260726010000` + 5 Edge Functions + frontend — ver `CLAUDE.md`, "Módulo communications (Sprint 2.1)") | 2.1 | [communications/overview.md](communications/overview.md) |
 | `event-radar`         | Detecção estatística (SQL) de picos/quedas/mudanças de sentimento + 1 card de IA por evento, publicado em `feed_events` — **substitui/absorve** `threshold-engine` e `intelligent-feed` abaixo, ver "Fusão de módulos" | rascunho     | 3      | [event-radar/overview.md](event-radar/overview.md) |
 | ~~`threshold-engine`~~  | Motor de risco próprio (volume/percentual/sentimento negativo) — **absorvido por `event-radar`** (motor de detecção + severidade fazem o mesmo papel, com mais rigor estatístico) | absorvido    | 3      | — |
 | ~~`intelligent-feed`~~  | Feed de eventos do sistema — **absorvido por `event-radar`** (grava em `feed_events`, mesma tabela já reservada em `_glossary.md`) | absorvido    | 3      | — |
@@ -252,18 +252,32 @@ deve ser conferido contra esta lista antes de ser considerado pronto.
 >   instituição). Renomeadas para `scope_type`/`scope_id` (o que mudou:
 >   narrativa, plataforma, Query — nunca uma Entity de fato) em
 >   `event-radar/detection-engine.md` e `deduplication-grouping.md`.
-> - Ver [_fluxo-event-radar-aggregated-metrics.md](_fluxo-event-radar-aggregated-metrics.md) para o
->   diagrama de dependência/sincronismo entre os dois módulos — continua
->   válido, só os nomes de tabela citados nele foram corrigidos junto.
+> - Ver [event-radar/fluxo-aggregated-metrics.md](event-radar/fluxo-aggregated-metrics.md) para o
+>   diagrama de dependência/sincronismo entre os dois módulos (movido para dentro do diretório do
+>   módulo em 2026-07-25, era `_fluxo-event-radar-aggregated-metrics.md` na raiz de `.dev/specs/`)
+>   — continua válido, só os nomes de tabela citados nele foram corrigidos junto.
 >
 > **Ordem de implementação recomendada** (de `_index_agente_inteligente.md`,
-> preservada): 1) `aggregated-metrics` Fase A — envelope, SQL base, Edge
-> Functions das páginas, exceto `highlights`/`narrative_text`/`momentum_score`
-> real (fallback estatístico); 2) `event-radar` completo, na ordem interna
-> já descrita em `event-radar/overview.md`; 3) `aggregated-metrics` Fase B
-> — liga `get_active_highlights`, `momentum_score` real e `ai-synthesis`.
+> preservada, com uma correção — ver nota ✅ logo abaixo): 1) `aggregated-metrics`
+> Fase A — envelope, SQL base, Edge Functions das páginas, exceto
+> `highlights`/`narrative_text` reais (fallback estatístico); 2) `event-radar`
+> completo, na ordem interna já descrita em `event-radar/overview.md`; 3)
+> `aggregated-metrics` Fase B — liga `get_active_highlights`, o boost de
+> `risk_score` via evento ativo, e `ai-synthesis`.
 > Ver detalhamento completo passo a passo na seção "Sequência de implantação
 > — Sprint 2" logo abaixo.
+>
+> ✅ **Correção (2026-07-25)**: a nota original (2026-07-12) listava
+> `momentum_score` como parte do que fica em fallback até `event-radar`
+> existir — desatualizado desde a redefinição de Momentum de 2026-07-13
+> (`aggregated-metrics/sql-aggregation.md`, "Momentum"), quando esse
+> indicador passou a ser um índice de crescimento 100% calculado a partir
+> de `foundation`, sem depender de evento detectado. Quem depende de
+> `event-radar` hoje é o boost de `risk_score` (`risk_score = greatest(...,
+> severity_score)`), não Momentum — corrigido acima. Achado na mesma
+> revisão de coerência que também corrigiu essa mesma confusão em
+> `event-radar/overview.md` e na seção "O que fica fora do Sprint 2" logo
+> abaixo.
 
 ## Sequência de implantação — Sprint 2
 
@@ -316,7 +330,7 @@ própria spec já recomenda isso em "Notas para implementação" —
 1. ✅ [aggregated-metrics/standard-json-envelope.md](aggregated-metrics/standard-json-envelope.md) — o contrato; todo o resto depende dele. **Implementado 2026-07-12/14**: `@reputation/shared-types` (`packages/shared-types`, workspace npm) — ver `CLAUDE.md`, "aggregated-metrics module (Sprint 2)".
 2. ✅ [aggregated-metrics/sql-aggregation.md](aggregated-metrics/sql-aggregation.md) — functions Postgres. 100% SQL determinístico (sem IA) — cadeia forte o bastante para ir numa sessão só, um commit por function (exceção controlada de granularidade da skill), lendo sempre dos agregados oficiais de `foundation` (nunca `mentions` cru). **Implementado 2026-07-14** (migration `20260714000000`) — 9 das 10 functions; `get_active_highlights` deferida (depende de `feed_events`/`event-radar`, ver `_pending.md` gap #8).
 3. ✅ [aggregated-metrics/service-layer-aggregation.md](aggregated-metrics/service-layer-aggregation.md) — camada TS que monta o envelope a partir das functions acima. **Implementado 2026-07-14** (`supabase/functions-shared-source/aggregated-metrics-service.ts`, código-fonte canônico a ser copiado pra dentro de cada Edge Function quando o passo 4 abaixo for feito — nunca importado em produção, Princípio técnico 5).
-4. ✅ [aggregated-metrics/edge-functions-per-page.md](aggregated-metrics/edge-functions-per-page.md) — só as **6 Edge Functions** que as 5 páginas do Sprint 2 precisam (`get-page-overview`, `get-page-narratives`, `get-narrative-detail`, `get-page-sentiment`, `get-page-platforms`, `get-page-themes`). `get-page-authors`/`get-page-alerts`/`get-page-reports` esperam `entities`/`event-radar`/`executive-reports` (Sprint 3-4) — não implementar antes das páginas que os consomem existirem. **Implementado 2026-07-15** — cache de página (TTL 5min) não implementado ainda, ver `_pending.md` gap #21.
+4. ✅ [aggregated-metrics/edge-functions-per-page.md](aggregated-metrics/edge-functions-per-page.md) — só as **6 Edge Functions** que as 5 páginas do Sprint 2 precisam (`get-page-overview`, `get-page-narratives`, `get-narrative-detail`, `get-page-sentiment`, `get-page-platforms`, `get-page-themes`). `get-page-alerts`/`get-page-reports` esperam `event-radar`/`executive-reports` (Sprint 3-4) — não implementar antes das páginas que os consomem existirem. **Implementado 2026-07-15** — cache de página (TTL 5min) não implementado ainda, ver `_pending.md` gap #21. ✅ **7ª Edge Function, `get-page-authors`, adicionada 2026-07-25** (fora da sequência original do Sprint 2, ver `intelligence-center/authors-and-influencers.md`) — não dependia de `entities`, só reusa `get_authors_ranking`/`get_x_insights`, já prontas.
 5. [aggregated-metrics/ai-synthesis.md](aggregated-metrics/ai-synthesis.md) — só a **Camada 0** (template determinístico, sem IA) é possível agora, já que `event-radar` (fonte dos `highlights`) ainda não existe. Camadas 1/2 ficam para depois de `event-radar` (Sprint 3, ver "Fusão de módulos" acima).
 
 `cases` (schema mínimo, ver
@@ -355,10 +369,11 @@ Consome o envelope pronto, sem lógica de negócio própria. Ordem recomendada:
 
 ### O que fica fora do Sprint 2 (não bloqueia as 5 páginas acima)
 
-- `entities` — ranking de autores já funciona sem ela (`bw_query_top_authors`/`bw_query_top_tweeters`, nativos da Brandwatch desde Sprint 1); só falta classificação partido/espectro (`entity_tags`) e a página dedicada `/authors`.
+- `entities` — ranking de autores já funciona sem ela (`bw_query_top_authors`/`bw_query_top_tweeters`, nativos da Brandwatch desde Sprint 1); só falta classificação partido/espectro (`entity_tags`), gap conhecido registrado em `intelligence-center/authors-and-influencers.md`. ✅ **Módulo especificado (2026-07-13)** — [entities/overview.md](entities/overview.md), CRUD admin-only + o desenho exato do vínculo aditivo com `get_authors_ranking`/`AuthorRow` que fecha esse gap ([entities/author-linking.md](entities/author-linking.md)) — ainda não implementado.
 - CRUD completo de `cases` pela UI (criar/editar, checklist/comentários/arquivos/histórico) — só o schema mínimo somente-leitura é útil agora, ver acima; sem spec própria ainda, sem módulo dedicado (ver "Módulo `command-center` removido" mais abaixo).
-- `event-radar` (Sprint 3) — sem ele, `highlights`/`narrative_text` real/`momentum_score` real ficam em fallback (não vazio: Camada 0 de `ai-synthesis` e o cálculo estatístico de `momentum_score` já cobrem isso) — nenhuma página quebra ou fica bloqueada por causa disso.
-- Páginas `/authors`, `/alerts`, `/reports` — dependem de `entities`/`event-radar`/`executive-reports` (Sprint 3-4) respectivamente; não fazem parte do pacote frontend do Sprint 2.
+- `event-radar` (Sprint 3) — sem ele, `highlights`/`narrative_text` real e o boost de `risk_score` via evento ativo ficam em fallback (não vazio: Camada 0 de `ai-synthesis` já cobre `narrative_text`, e `risk_score`/`momentum_score` já são 100% calculados a partir de `foundation` desde 2026-07-13, sem depender de `event-radar` — ver `aggregated-metrics/sql-aggregation.md`, "Risco"/"Momentum") — nenhuma página quebra ou fica bloqueada por causa disso.
+- Páginas `/alerts`, `/reports` — dependem de `event-radar`/`executive-reports` (Sprint 3-4) respectivamente; não fazem parte do pacote frontend do Sprint 2. ✅ **`/authors` implementada parcialmente (2026-07-25)** — ver
+  [intelligence-center/authors-and-influencers.md](intelligence-center/authors-and-influencers.md); só a classificação de espectro/`entities` continua pendente, o ranking de autores e X Themes já funcionam.
 
 > **Escopo de dados do `foundation` (sync), confirmado e ampliado em
 > 2026-07-10**: cobre **todo** o dado de leitura (pull) da Brandwatch que
@@ -464,7 +479,7 @@ Consome o envelope pronto, sem lógica de negócio própria. Ordem recomendada:
   [auth/data-model.md](auth/data-model.md).
 - `Mention`, `Query`, `Query Group`, `Category` (cache Brandwatch: `bw_projects`, `bw_queries`, `bw_query_groups`, `bw_categories`, `mentions`) → `foundation`.
 - `Narrativa` (entidade viva própria do produto: `narratives`, `narrative_signals`, `narrative_tags`, `narrative_metrics`; opcionalmente ligada a uma `Category` via `bw_category_id`) → `foundation`. Satélites `narrative_entities` (Sprint 2, depende de `Entity`) e `narrative_relationships` (Sprint 3, grafo) ficam para depois.
-- `Entity` / `entity_tags` (Cadastro Nacional de Entidades) → `entities`.
+- `Entity` / `entity_tags` (Cadastro Nacional de Entidades, catálogo global — não por organização, ver [entities/overview.md](entities/overview.md)) → `entities`.
 - `Caso` (`cases`, schema mínimo — título/status/`assignee_id`/`due_date`) → `intelligence-center` (ver [intelligence-center/data-model.md](intelligence-center/data-model.md)). Satélites (`case_checklist_items`, `case_comments`, `case_files`, `case_status_history`) ficam para quando forem pedidos, não fazem parte do schema mínimo atual — ver "Módulo `command-center` removido" acima.
 - `Communication` / `Decision` (`communications`, coluna `record_type`) → `communications` (Sprint 2.1, ver [communications/data-model.md](communications/data-model.md)) — uma Comunicação já realizada (post, e-mail, propaganda de TV etc., campos completos) ou uma Decisão (data/título/responsável/detalhamento, campos reduzidos), vinculada a uma Narrativa; **não confundir com `Caso`** (`cases`, acima) — ver [communications/overview.md](communications/overview.md), "Relação com `cases`".
 - `FeedEvent` (`feed_events`) → produzido por `event-radar` (absorve o papel antes reservado a `threshold-engine`/`intelligent-feed`, ver tabela de módulos acima).
@@ -621,7 +636,8 @@ Consome o envelope pronto, sem lógica de negócio própria. Ordem recomendada:
 > pedido explícito do usuário: "para que não haja necessidade de pesquisar novamente utilizando
 > a IA". Ver [aggregated-metrics/ai-synthesis.md](aggregated-metrics/ai-synthesis.md).
 
-> ⚠️ DECISÃO PENDENTE (`event-radar`): intervalo exato do `pg_cron` do
-> motor de detecção (15min vs. 30min) — depende do volume real de mentions
-> por organização, a definir em teste de carga. Ver
-> [event-radar/detection-engine.md](event-radar/detection-engine.md).
+> ✅ **Resolvido (2026-07-24)**: intervalo do `pg_cron` do motor de detecção
+> fixado em **15 minutos** (mesma cadência do heartbeat de `bw-sync`) —
+> decisão do usuário, ver `_pending.md` e
+> [event-radar/detection-engine.md](event-radar/detection-engine.md), "Fluxo
+> principal" item 1.

@@ -34,16 +34,17 @@ Eleitorais) plus the `aggregated-metrics` backend it depends on — see
 `_index.md` "Sequência de implantação — Sprint 2" for the exact build
 order. Sprints 3-4 (`event-radar`, `propagation-graph`, `decision-center`,
 `executive-reports`) are not started. **Sprint 2.1** (`communications` —
-logging communication actions per Narrativa + before/after impact
-tracking on Sentiment/Mentions/Risk/Momentum) got its full spec written
-2026-07-25 (`.dev/specs/communications/`) but has **no migration/code
-yet** — `status: rascunho` in every file of that module, with several
-`⚠️ DECISÃO PENDENTE` markers (final `communication_type` enum, CRUD
-permission scope, manual vs. automatic linking to `mentions`, default
-before/after window size) that need a user decision before implementation
-starts. It also depends on a small additive extension to
-`get_narratives_table` (`p_reference_at` param, for historical Tendência)
-that doesn't exist yet — see `_pending.md` gap #31.
+logging Comunicações/Decisões per Narrativa + before/after impact
+tracking on Sentiment/Mentions/Risk/Momentum) was spec'd and implemented
+in the same session, 2026-07-25 — `status: implementado` in every spec
+file (`.dev/specs/communications/`), migrations `20260726000000`/
+`20260726010000`, 5 Edge Functions, and the full frontend (menu item,
+`/communications`, `/communications/[narrativeId]`, the "Comunicações e
+Decisões" section on the Narrativa detail page). See "Módulo
+`communications` (Sprint 2.1)" below for the complete write-up, including
+a real RLS gap found during implementation (fixed with a new
+`list-organization-members` Edge Function) and 2 deliberate deviations
+from the original spec text.
 
 ### Close the loop: update docs at the end of every development session
 
@@ -3430,6 +3431,318 @@ narrativa."
   browser automation available — the grouped layout's actual rendering
   was not visually confirmed in a browser.
 
+**Follow-up, same day**: user asked for each category lane to be
+expandable/collapsible. `NarrativeCategoryLanes` gained a `"use client"`
+directive (needed `useState`) and a `Set<string>` of collapsed category
+labels; the category header is now a `<button>`
+(`aria-expanded`/`aria-controls`) that toggles membership in that set and
+shows the same ▲/▼ indicator `page-header-bar.tsx`'s "Filtros" toggle
+already uses — reused an existing visual convention rather than adding a
+new icon. All lanes start expanded; state isn't persisted across
+navigations, same as `filtrosOpen` in the header. `npx tsc --noEmit`
+passes clean.
+
+### Sentiment label/border still disagreeing with the card's own pos/neu/neg bar — second, different root cause (2026-07-25)
+
+Same day, same symptom class as the "Narrative card border / table
+Sentimento column" fix above, but a **different concrete bug** — the
+first fix (migration `20260725000000`) closed a time-window mismatch
+(`latest_day` snapshot vs. `period_agg` sum); this session's screenshot
+("Economia": pos 17.1% / neu 40.3% / neg 42.5% — negative is the plurality
+— with a neutral-looking border/label) proved that fix alone wasn't
+enough — a second, independent cause was still live.
+
+**Root cause**: even after the time-window fix, `sentiment_final` still
+preferred a `total_mentions`-weighted average of `narrative_metrics.net_sentiment`
+— **Brandwatch's own officially-synced score** — whenever it had synced
+for the period, falling back to the local proportion formula only when it
+hadn't. But `net_sentiment` is populated from a *different, independent*
+Brandwatch API call (`data/netSentiment/categories/days`) than
+`sentiment_positive`/`neutral`/`negative` (`data/volume/sentiment/days`)
+— two separately-computed official aggregates with no guarantee of
+reconciling with each other. That's exactly what happened for "Economia":
+the official `net_sentiment` landed in the neutral band while the actual
+proportion between classified mentions (the same 3 numbers the card's own
+bar renders) has negative as the plurality — so the label/border
+contradicted the numbers displayed right next to them on the same card.
+
+**Fix** (migration `20260725060000`, `create or replace` only — no output
+columns changed, so no `drop function` needed this time): `net_sentiment`/
+`sentiment_label` now come **exclusively** from the local proportion
+formula (`(positivo - negativo) * 100 / (positivo + negativo)`) over the
+same `period_agg` sums already used for `sentiment_positive_pct`/etc. —
+Brandwatch's officially-synced `net_sentiment` column is no longer read
+by this function at all, not even as a preferred source. This isn't a
+regression against Principle 2 ("never aggregate locally over sampled
+`mentions`") — `sentiment_positive`/`neutral`/`negative` in
+`narrative_metrics` are themselves an official, non-sampled Brandwatch
+aggregate; this only derives a score from them, the same formula already
+used as the fallback since `20260720000000`, now promoted to the only
+source. By construction, the label/border can no longer disagree with the
+bar on the same card — both are computed from the identical 3 numbers.
+`risk_inputs.sentiment_risk` inherits the fix automatically (reads
+`sentiment_labeled.net_sentiment`, no change of its own).
+
+**Deliberately out of scope**: `public.narratives_overview.sentiment_bucket`/
+`net_sentiment` (the per-day view, used only for `sov_percent`/
+`total_mentions` in `get_narratives_table`'s `latest_day`, and mirrored to
+`reporting.narratives_overview` for external BI) still prefers the
+official `net_sentiment` with the same theoretical two-source risk — left
+untouched because no UI in the product reads `sentiment_bucket` from that
+view directly (confirmed by grep), so there's no visible symptom to fix
+there today. Revisit if a BI consumer reports the same contradiction.
+
+**Verification**: `npx tsc --noEmit` passes clean (no TypeScript changed
+by this fix — SQL-only). No live Supabase access in this environment —
+migration reviewed manually, not run against a real database, same
+recurring limitation as every migration-only session in this file without
+deploy credentials.
+
+## Módulo `communications` (Sprint 2.1) — spec + implementação completa (2026-07-25)
+
+Spec escrita e implementada na mesma sessão (usuário pediu a spec, depois,
+em turnos seguintes da mesma conversa, refinou 2 decisões de produto e por
+fim pediu "implemente o módulo completo de comunicação, backend e
+frontend"). Ver `.dev/specs/communications/` para a spec completa
+(`overview.md`/`data-model.md`/`communication-registration.md`/
+`narrative-impact-tracking.md`, todos `status: implementado`).
+
+**O que é**: time de comunicação registra duas coisas por Narrativa —
+**Comunicações** (post/e-mail/propaganda de TV etc., campos completos) e
+**Decisões** (data/título/responsável/detalhamento, campos reduzidos) —
+mesma tabela (`communications.record_type`), mesmo formulário, mesma
+tela. A partir da data de cada registro (`occurred_at`), o produto compara
+uma janela antes/depois (default 7 dias, seletor 3/7/14) em Sentimento/
+Menções/Risco/Momentum, reaproveitando as fórmulas já fechadas de
+`aggregated-metrics` — nunca uma segunda implementação divergente delas.
+
+**Backend**:
+- `supabase/migrations/20260726000000_communications_schema.sql` —
+  `communication_types` (tabela de referência com seed de 8 tipos, não
+  enum — pedido explícito do usuário: "a lógica do módulo pega dela"),
+  enum `communication_record_type` (`communication`\|`decision`, esse sim
+  um enum — estrutural, só 2 valores, não se espera que cresça),
+  `communications` (CHECK constraint garantindo que os 4 campos exclusivos
+  de Comunicação — `communication_type_id`/`channel_detail`/
+  `external_url`/`bw_resource_id` — ficam `null` numa Decisão e
+  obrigatórios numa Comunicação), trigger `communications_set_organization`
+  (`security definer`, deriva `organization_id` de `narrative_id` no
+  servidor — nunca aceito do client), RLS sem restrição de papel/criador
+  (decisão do usuário, evolução futura por perfis já anunciada).
+- `supabase/migrations/20260726010000_communication_impact_functions.sql`
+  — `get_narratives_table` ganhou `p_reference_at timestamptz default
+  now()` (6→7 parâmetros, `drop function` explícito antes de recriar —
+  mesmo cuidado de aridade já documentado na entrada de 2026-07-21 sobre
+  esta mesma function), usado só pela Tendência (regressão de 14 dias
+  passa a ser ancorada em `p_reference_at`, não sempre `current_date`) —
+  aditivo, nenhum consumidor existente passa esse parâmetro.
+  `get_communication_impact(id, window_days)` calcula as janelas antes/
+  depois via CTEs + `left join lateral get_narratives_table(...)` (uma
+  chamada por janela, `p_reference_at` = `occurred_at` na janela antes,
+  `least(occurred_at + window_days, now())` na janela depois) +
+  `avg(total_mentions)` direto de `narrative_metrics` pra menções/dia (não
+  passa por `get_narratives_table`, que não expõe essa métrica
+  normalizada). `get_narrative_communication_timeline(narrative_id,
+  organization_id, window_days)` envolve a primeira numa linha do tempo
+  completa. As duas devolvem `risk_label`/`trend_label` além do score —
+  adição ao esqueleto original da spec, necessária pra `RiskBadge`/
+  `TrendIndicator` no frontend renderizarem o rótulo, não só o número.
+- 5 Edge Functions novas, todas autossuficientes (Princípio técnico 5):
+  `create-communication`/`update-communication`/`delete-communication`
+  (chave publicável + JWT encaminhado, RLS continua valendo — mesmo
+  padrão de exceção de `get-page-*`), `get-narrative-communication-timeline`
+  (mesmo padrão, chama a RPC acima), e uma **não prevista na spec
+  original**: `list-organization-members`.
+
+**Gap de RLS real, encontrado durante a implementação** (não na fase de
+spec): `user_profiles` (`user_profiles_select_own`) e
+`organization_members` (`organization_members_select_own`) só têm policy
+de SELECT pra própria linha — nenhum membro comum de uma organização
+consegue, via client direto, ver o nome de outro colega da mesma
+organização. Isso bloqueava duas coisas: popular o select "Responsável" no
+formulário, e resolver `assignee_id`/`created_by` → nome na tabela/timeline.
+Diferente de `admin-list-users` (que lista TODOS os usuários da
+plataforma, `is_admin`-only), a necessidade aqui é mais estreita — qualquer
+membro vendo só os membros da própria organização — então uma Edge
+Function nova e mais simples: `list-organization-members` (chave secreta,
+já que a informação está fora do alcance de RLS por design; valida
+manualmente que o chamador é membro da organização pedida antes de
+devolver os demais). `hooks/use-organization-members.ts` consome essa
+function; `communications-table.tsx`/`impact-timeline.tsx` recebem um
+`Map<id, nome>` já resolvido, nunca tentam ler `user_profiles` de outro
+usuário direto.
+
+**Frontend**:
+- Hooks (`hooks/`): `use-narratives-list.ts` (Narrativas-folha ativas,
+  leitura direta — RLS permite), `use-communication-types.ts` (leitura
+  direta, tabela global), `use-organization-members.ts` (via Edge
+  Function, ver gap acima), `use-communications.ts` (listagem com
+  filtros, leitura direta — `communications`/`narratives`/
+  `communication_types` são todas legíveis via RLS/global, só nomes de
+  responsável precisam da Edge Function), `use-narrative-communication-timeline.ts`
+  (via Edge Function, cálculo real).
+- Componentes (`components/communications/`): `narrative-combobox.tsx`
+  (primeiro campo com busca/filtro por texto do produto), `communication-form-modal.tsx`
+  (`CommunicationFormModal` — seletor "Tipo de registro" no topo, campos
+  mudam dinamicamente, `lockedNarrative` substitui o combobox por um
+  rótulo fixo quando aberto a partir de uma Narrativa já conhecida — nunca
+  um combobox desabilitado), `communications-table.tsx`, `impact-timeline.tsx`
+  (`ImpactTimeline`, `compact` prop reaproveitada tanto na página cheia
+  quanto no resumo do detalhe de Narrativa), `narrative-communications-section.tsx`
+  (a seção embutida no detalhe de Narrativa).
+- `components/ui/modal.tsx` ganhou `maxWidthClassName` (opcional, default
+  `max-w-md` — comportamento de todo modal existente inalterado); o
+  formulário de Comunicação/Decisão usa `max-w-2xl` (muito mais campo que
+  os modais existentes do produto).
+- `lib/supabase/call-function.ts` teve o tipo do parâmetro `body` alargado
+  de `Record<string, unknown>` pra `object` — um objeto vindo de uma
+  interface nomeada (`CommunicationFormValues`) não é atribuível a um tipo
+  com index signature explícito em TS mesmo quando estruturalmente
+  compatível; nenhuma chamada existente (todas usam literais inline) muda
+  de comportamento.
+- Páginas: `app/(intelligence-center)/(analytics)/communications/page.tsx`
+  (lista + CRUD) e `.../communications/[narrativeId]/page.tsx` (linha do
+  tempo de impacto, seletor de janela 3/7/14). **Desvio deliberado do
+  texto original da spec**: as duas vivem dentro de `(analytics)`, não
+  direto em `(intelligence-center)` como a spec propunha (mesmo nível de
+  `/admin/users`/`/perfil`) — `/communications` depende de organização
+  ativa (é dado escopado por organização, como as 5 páginas de análise),
+  então reaproveita o gate de organização que `(analytics)/layout.tsx` já
+  implementa, em vez de duplicá-lo.
+- **Segundo desvio deliberado**: `/communications` não filtra por período
+  (o "Fluxo principal" da spec previa um filtro de período) — aplicar o
+  período global (default "Semanal", 7 dias) esconderia a maior parte de
+  um registro histórico sem nenhum sinal do porquê; julgado pior pra UX do
+  que não ter o filtro. Narrativa/Tipo de registro/Tipo de comunicação
+  continuam filtros reais.
+- `components/intelligence-center/sidebar.tsx` ganhou o item "Comunicação"
+  em `ANALYSIS_ITEMS`, apontando pra `/communications` — pedido explícito
+  do usuário de nomear assim.
+- `components/intelligence-center/narrative-detail-content.tsx` ganhou a
+  seção "Comunicações e Decisões" logo abaixo de "Ações e decisões" —
+  botão "+ Registrar" sempre visível (regra transversal #2), Narrativa
+  pré-preenchida e travada no formulário. Mesmo componente
+  (`NarrativeCommunicationsSection`) é usado tanto na página cheia quanto
+  no modal rápido de Narrativa (`@modal/(.)narratives/[id]`), já que os
+  dois renderizam `NarrativeDetailContent` — pedido explícito do usuário:
+  "de dentro do modal e do detalhamento de uma narrativa, deve existir um
+  botão para registrar uma comunicação".
+
+**Verificação**: `npx tsc --noEmit` e `npm run build` passam limpos (21
+rotas, incluindo as 2 novas). **Não verificado** com `npm run dev`/
+navegador real nem contra um banco Supabase real — sem credenciais/deploy
+neste ambiente, mesma limitação recorrente de toda sessão sem acesso ao
+Dashboard já registrada em várias entradas deste arquivo. As duas
+migrations foram revisadas manualmente, linha por linha, mas não
+executadas — confirmar contra logs reais (e rodar o Security Advisor,
+regra global "Database security") antes/depois do próximo deploy.
+
+### 7 pedidos pontuais de UI/dado — Narrativas, Sentimento, Autores e Influenciadores (2026-07-25)
+
+User request, 7 items in one message: (1) rename "Top 3 Narrativas" →
+"Top 3 Narrativas por Menções"; (2) add labels to the "Sentimento por
+narrativa" chart; (3) add column headers to the "Sentimento por
+plataforma"/"por pauta"/"por estado" tables; (4) represent "Sentimento por
+estado" as a map with labels/colors; (5) investigate why "Drivers
+positivos" wasn't showing; (6) move "Perfis relevantes"/"X Themes" from
+`/platforms` to a new "Autores e Influenciadores" page; (7) remove the
+generic "Narrativas" table from `/platforms`.
+
+- **(1)** `TopThreeNarrativeCards` (`overview/page.tsx`) renamed, and its
+  sort criterion changed from `sov_pct` to `total_mentions` — the old
+  title was ambiguous about what "top" meant; "por Menções" only makes
+  sense if the actual ranking is by mention volume, not Query-relative
+  SOV (a small Narrativa in a small Query could outrank a Narrativa with
+  far more absolute mentions under SOV).
+- **(2)** `NarrativeSentimentList` (`breakdown-panel.tsx`, "Sentimento por
+  narrativa" on `/sentiment`) gained "pos X% neu Y% neg Z%" text under
+  each stacked bar — same wording already used on `NarrativeCard`'s own
+  sentiment bar, reused instead of inventing new copy.
+- **(3)** `ScoreList` (same file — backs "Sentimento por
+  plataforma"/"por pauta"/"por estado", confirmed via grep to be used
+  nowhere else) rewritten from a header-less `divide-y` list into a real
+  `<table>` with `<thead>` — first column label varies by breakdown type
+  (`NAME_COLUMN_LABEL`: Plataforma/Pauta/Estado), plus "Participação"/
+  "Sentimento" — same `font-bold text-text-primary` header convention as
+  `NarrativesTable`/`XInsightsPanel` (Cross-cutting rule 7).
+- **(4)** New `BrazilSentimentMap` (`components/intelligence-center/
+  charts/brazil-sentiment-map.tsx`) renders below the table for
+  "Sentimento por estado" (complements it, doesn't replace it — map for
+  glance, table for exact numbers). State borders in `lib/geo/
+  brazil-states.ts`: simplified geometry (Douglas-Peucker, epsilon 0.03°,
+  small islands under 0.5% of each state's main polygon area dropped)
+  derived from the public dataset `codeforgermany/click_that_hood`
+  (`brazil-states.geojson`), reprojected (simple equirectangular, no
+  curvature correction — acceptable for an internal dashboard widget, not
+  a precision cartography tool) onto a fixed 640×640 viewBox. Each state
+  fills with the same 7-band sentiment color scale already used elsewhere
+  (`sentimentFillFromScore()`, new export in `score-badges.tsx`, reuses
+  `SENTIMENT_META`/`sentimentBucketFromScore` — no new palette), labeled
+  with its UF code over a semi-transparent backing circle (legible
+  regardless of the fill color underneath) plus a native SVG `<title>`
+  hover tooltip with the full name/score/participation, plus a static
+  color legend below. Since the exact string Brandwatch returns for the
+  `regions` chart dimension was never confirmed against a real payload
+  (already flagged in `get_region_breakdown`'s own migration comment),
+  `findState()` matches by full name, by UF code, then by substring as a
+  last resort — anything that still doesn't match is listed by name below
+  the map instead of silently dropped.
+- **(5)** Real bug found in `get_term_signals` (migration
+  `20260726030000`): it ordered **every** term (regardless of sentiment)
+  by `trending` (growth) and cut to `limit 50` *before* the frontend's own
+  positive/negative split ever ran. If the fastest-growing terms in a
+  given period skewed negative/neutral (plausible in political coverage,
+  where negative stories often go viral faster), the cut could leave zero
+  "positive" terms in the pool — not because none existed, just because
+  none were among the top 50 by growth. The classification logic itself
+  (`sentiment_positive >= sentiment_neutral and >= sentiment_negative` →
+  `'positive'`, symmetric with `'negative'`) was already correct — the bug
+  was entirely in the pre-classification cut. Fixed: ranking now happens
+  **inside** each sentiment bucket
+  (`row_number() over (partition by sentiment_associated order by
+  growth_pct desc)`), keeping the top 20 of each of positive/neutral/
+  negative instead of one global top-50-by-trending — "Drivers positivos"
+  can no longer be crowded out by faster-growing terms of a different
+  sentiment in the same period.
+- **(6)** New page `/authors` ("Autores e Influenciadores") — moved into
+  `app/(intelligence-center)/(analytics)/authors/page.tsx` (previously a
+  `ComingSoonPage` placeholder outside the `(analytics)` group, per
+  `_index.md`'s original plan that the *whole* page depended on
+  `entities`/Sprint 3). Reality check: only the political-spectrum
+  classification depends on `entities` — the author ranking and X Themes
+  widgets were already fully functional on `/platforms` using data
+  synced since Sprint 1/2026-07-12/18 (`bw_query_top_authors`/
+  `bw_query_top_tweeters`/`bw_query_x_insights`). New Edge Function
+  `get-page-authors` (7th `get-page-*` function, first new one since
+  `get-page-themes`) — copied from the canonical
+  `aggregated-metrics-service.ts` + the standard handler, same Principle-5
+  pattern as the other 6. `PAGE_BLOCKS.authors` (already `['authors']` in
+  every copy, anticipating this page) gained `'x_insights'` — patched
+  across the canonical file and all 7 Edge Functions in one pass. New spec
+  `intelligence-center/authors-and-influencers.md`; `platform-analysis.md`
+  keeps the "Perfis relevantes"/"X Themes" sections as historical (data
+  source notes still valid, just not rendered on `/platforms` anymore).
+- **(7)** The generic "Narrativas" table at the bottom of `/platforms`
+  (the full, unfiltered list — never part of the original prototype,
+  added as bonus content in an earlier session) removed entirely.
+  Doesn't close the separate, still-open "Narrativas dominantes por
+  plataforma" gap (a per-platform breakdown that never existed).
+  `PAGE_BLOCKS.platforms` shrank back to `['breakdowns', 'trends',
+  'narrative_text']` (dropped `'narratives'`/`'authors'`/`'x_insights'`,
+  patched everywhere alongside the item-6 change) — no page on `/platforms`
+  reads those blocks anymore, so keeping them would mean an unused RPC
+  call on every load (same efficiency principle already applied
+  elsewhere in this file).
+
+**Verification**: `npx tsc --noEmit` and `npm run build` both pass clean.
+No live Supabase access in this environment — migration `20260726030000`
+and the new `get-page-authors` function reviewed manually, not run
+against a real database/deployed, same recurring limitation as every
+session without deploy credentials. No browser automation available —
+none of the 7 changes above (renamed widget, chart labels, table headers,
+the Brazil map's actual rendering/colors, the new `/authors` page) were
+visually confirmed in a real browser.
+
 ## Directory structure
 
 ```
@@ -3437,12 +3750,17 @@ app/(intelligence-center)/    Every authenticated page (overview, narratives,
                                sentiment, platforms, themes, admin/users, perfil)
                                — shares one shell (Sidebar/header/footer), see
                                layout.tsx; nested (analytics)/ route group adds
-                               the org-required gate for the 5 analytics pages only
+                               the org-required gate for the 5 analytics pages
+                               plus communications/ (Sprint 2.1 — also org-scoped)
 app/{login,forgot-password,reset-password}/   Public auth pages, outside the shell
 components/intelligence-center/   Shared UI for the 5 analytics pages (table,
                                badges, charts, widget states) — see CLAUDE.md,
                                "edge-functions-per-page.md + the 5
                                intelligence-center pages"
+components/communications/    Shared UI for the `communications` module (Sprint
+                               2.1) — form modal, narrative combobox, table,
+                               impact timeline — see CLAUDE.md, "Módulo
+                               communications (Sprint 2.1)"
 packages/shared-types/        @reputation/shared-types — npm workspace, the
                                canonical envelope contract types for anything
                                that can import a local package (Next.js/Node);

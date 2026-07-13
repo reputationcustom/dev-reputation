@@ -1,12 +1,22 @@
 ---
 tipo: data-model
 módulo: communications
-status: rascunho
+status: implementado
 atualizado: 2026-07-25
 ---
 
 # Modelo de Dados — Comunicações e Decisões
 
+> ✅ **Implementado (2026-07-25)**: migration `20260726000000_communications_schema.sql`
+> — `communication_types` (+ seed dos 8 tipos), enum `communication_record_type`,
+> `communications` (CHECK constraint, índices, trigger
+> `communications_set_organization`, RLS) exatamente como especificado
+> abaixo, sem desvio. Não executado contra um banco real nesta sessão (sem
+> credenciais/deploy — mesma limitação recorrente de toda sessão sem acesso
+> ao Supabase Dashboard já registrada em várias entradas de `CLAUDE.md`);
+> revisado manualmente e via `npx tsc --noEmit`/`npm run build` do lado
+> frontend, que já assume este schema.
+>
 > Módulo novo (Sprint 2.1), pedido do usuário em 2026-07-25: "permitir o
 > time de comunicação registrar as ações associadas a cada narrativa" para
 > depois medir se houve melhora ou piora do sentimento/percepção pública em
@@ -242,6 +252,17 @@ create trigger communications_set_organization
 > "Dependências técnicas") continuam existindo, mas por outro motivo:
 > centralizar a tradução de erro amigável (regra global "Edge Function
 > error handling" do `CLAUDE.md`), não a derivação de `organization_id`.
+>
+> ✅ **Implicação de design, confirmada na implementação (2026-07-25)**:
+> a trigger só existe `before insert`, nunca `before update` — logo
+> `narrative_id` é **imutável** depois de criado. Permitir trocar a
+> Narrativa de um registro existente via UPDATE não re-derivaria
+> `organization_id`, podendo deixar a linha com a organização errada se a
+> nova Narrativa pertencer a outra organização. `update-communication`
+> (Edge Function) não aceita `narrative_id` no corpo, e o frontend trava o
+> campo Narrativa durante a edição (`communication-registration.md`,
+> "Fluxo principal" item 6) — reatribuir a Narrativa de um registro exige
+> excluir e recriar.
 
 ## Relacionamentos
 
@@ -260,6 +281,12 @@ user_profiles ──< communications.created_by (nullable)
 - Reaproveita a trigger `set_updated_at` já definida na migration de `foundation` — não recriar (usada por `communication_types` e por `communications`).
 
 ## ⚠️ Pendências
+
+✅ Gap técnico #31 de `_pending.md` (extensão `p_reference_at` em
+`get_narratives_table`) também resolvido nesta rodada — migration
+`20260726010000_communication_impact_functions.sql`, ver
+[narrative-impact-tracking.md](narrative-impact-tracking.md), "Dependências
+técnicas".
 
 Nenhuma pendência de decisão de produto aberta neste arquivo — as 3 que
 existiam foram todas resolvidas em 2026-07-25: "Lista final de

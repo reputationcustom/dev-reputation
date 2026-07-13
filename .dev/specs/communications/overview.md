@@ -1,12 +1,27 @@
 ---
 tipo: module-overview
 módulo: communications
-status: rascunho
+status: implementado
 atualizado: 2026-07-25
 ---
 
 # Módulo: Comunicações e Decisões (Sprint 2.1)
 
+> ✅ **Implementado (2026-07-25)**: migrations `20260726000000`/
+> `20260726010000`, 5 Edge Functions (`create-communication`,
+> `update-communication`, `delete-communication`,
+> `get-narrative-communication-timeline`, `list-organization-members`),
+> `/communications` + `/communications/[narrativeId]`, item de menu
+> "Comunicação", seção "Comunicações e Decisões" no detalhe de Narrativa
+> (página cheia + modal). Ver `CLAUDE.md`, "Módulo communications (Sprint
+> 2.1)", para o detalhamento completo — inclusive um gap de RLS real
+> encontrado durante a implementação (`user_profiles`/`organization_members`
+> não deixam um membro comum ver nome de outro colega), resolvido com a
+> nova Edge Function `list-organization-members`, e 2 desvios deliberados
+> do texto original desta spec (`/communications` vive dentro de
+> `(analytics)`, não direto em `(intelligence-center)`; sem filtro de
+> período na lista, deliberadamente).
+>
 > Pedido do usuário (2026-07-25): "permitir que a equipe de comunicação
 > registre as ações associadas a cada narrativa e assim cria-se um
 > registro das comunicações realizadas ao longo do tempo para tentar
@@ -85,12 +100,17 @@ decisão a ser pedida explicitamente, não assumida aqui.
 | `/communications` | Lista de Comunicações e Decisões registradas (todas as Narrativas da organização) + formulário de cadastro/edição (modal, com seletor "Tipo de registro") |
 | `/communications/[narrativeId]` | Acompanhamento pós-comunicação/decisão de uma Narrativa específica — linha do tempo de todos os registros daquela Narrativa com os 4 indicadores antes/depois |
 
-Ambas vivem dentro do route group `(intelligence-center)` (não um shell
-próprio) — mesma convenção já aplicada a `/admin/users`/`/perfil` (módulo
-`auth`, ver `intelligence-center/overview.md`, "Premissas de shell/layout"
-e `_pending.md` item #12): o shell (Sidebar/header/footer fixos) é
-propriedade de `intelligence-center`, reaproveitado por qualquer página
-autenticada nova, não recriado por módulo.
+✅ **Desvio deliberado na implementação**: a proposta original desta spec
+era colocar as duas rotas direto em `(intelligence-center)`, mesmo nível de
+`/admin/users`/`/perfil`. Ao implementar, ficou claro que isso estava
+errado — `/admin/users`/`/perfil` não dependem de organização ativa,
+enquanto `/communications` depende (é dado escopado por organização, igual
+às 5 páginas de análise). As duas rotas vivem dentro de `(analytics)`
+(`app/(intelligence-center)/(analytics)/communications/`), reaproveitando
+o gate de organização (loading/erro/vazio) que aquele layout já implementa
+— construir esse mesmo gate de novo aqui seria duplicar lógica já
+resolvida. O shell (Sidebar/header/footer) continua propriedade de
+`intelligence-center`, só o nível exato dentro da árvore de rotas mudou.
 
 ## Integração com o menu e com `intelligence-center`
 

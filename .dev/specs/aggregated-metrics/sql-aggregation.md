@@ -72,7 +72,7 @@ observado — **sem `query_id`** (revertido 2026-07-13, ver nota abaixo).
 | `get_region_breakdown(...)`             | `breakdowns` (type `'region'`) | ✅ **Adicionado 2026-07-25** (migration `20260725010000`, gap #9, decisão do usuário na época: "país + net_sentiment"), **repivotado no mesmo dia para estado brasileiro** (migration `20260725060000`, pedido do usuário: "Precisamos de um breakdown por estado brasileiro") — `bw_query_demographics_daily` (`dimension_type = 'region'`, já sincronizada por `foundation`/`bw-sync` desde `20260711070000`, nenhuma mudança em `bw-sync` foi necessária), top 30 estados por volume, `value` = `net_sentiment` médio ponderado, `pct` = participação de menções. País deixou de ser exposto por este bloco — pra uma plataforma 100% de campanhas brasileiras, quebra por país é quase sempre "Brasil: 100%" (baixo valor). ⚠️ **Duas ressalvas não confirmadas contra payload real**: (1) o mapeamento exato da dimensão de chart `regions` da Brandwatch para UF brasileira — mesma ressalva já registrada em `foundation/data-model.md` desde que essa dimensão foi implementada; (2) esta tabela **nunca teve `category_id`** — só cobre o escopo "Query inteira"; com `filters.narratives` ativo (ex: `narrative_detail`), devolve vazio de propósito, nunca o dado da Query inteira mascarado como se fosse de uma Narrativa |
 | `get_volume_delta(...)`                 | nenhum (helper interno) | ✅ **Adicionado 2026-07-25** (migration `20260725020000`, gap #27) — não é um bloco do envelope, só usado por `fetchNarrativeText` (`service-layer-aggregation.md`) pra montar a Camada 0 de `ai-synthesis.md`. `total_mentions` do período atual vs. anterior, escopado por `filters.narratives` (mesmo padrão de `get_sentiment_breakdown`) |
 | `get_narratives_table(...)`             | `narratives`         | `reporting.narratives_overview`/`public.narratives_overview` (view já existente, ver `foundation/data-model.md`) pro dado bruto por dia (`sov_percent`, `net_sentiment`/`sentiment_bucket`, `total_mentions`, `reach_estimated`, `engagement_total`, `unique_authors`) — **mas** os 3 scores derivados (`momentum_score` período-dependente, `trend_score` sempre 14 dias fixos, `risk_score`) são calculados **nesta function**, não na view (a view não recebe `period_start`/`period_end`) — ver seção "Scores de Narrativa" abaixo |
-| `get_authors_ranking(...)`              | `authors`            | `bw_query_top_authors`/`bw_query_top_tweeters` (quando o escopo for X) — nativos da Brandwatch, não amostrados. `entity_id`/classificação por partido/espectro fica `null` até `entities` (Sprint 2) existir; quando existir, `LEFT JOIN entity_tags` via `entity_accounts.username = bw_query_top_authors.author` é enriquecimento aditivo, nunca pré-requisito do ranking. ✅ **Ganhou `sentiment_positive`/`neutral`/`negative` (2026-07-17)** — `LEFT JOIN` agregado sobre `bw_query_author_topics` (soma os 3 contadores entre todos os temas do autor na semana mais recente sincronizada para aquele autor), não sobre `bw_query_top_authors.sentiment_*`. ⚠️ **Achado na mesma auditoria**: `bw_query_top_authors.sentiment_positive/neutral/negative` (e o mesmo em `bw_query_top_tweeters`) é escrito por `bw-sync` desde a criação da tabela lendo `d.sentiment` da resposta de `data/volume/topauthors/queries`, mas — diferente de todo campo vizinho na mesma tabela (`tweets`/`retweets`/`account_type`/`country_code`, todos com nota "confirmado contra developers.brandwatch.com/docs/top-tweeters") — esse mapeamento **nunca foi confirmado** contra a documentação real do endpoint, que não cita um objeto `sentiment` no payload. Risco real de ser sempre `0/0/0` em produção sem nenhum erro (fallback `?? 0`). Decisão do usuário (2026-07-17): documentar o achado e usar `bw_query_author_topics` (fonte já confirmada, mesmo padrão do `impressions` por autor) em vez de gastar uma chamada nova pra confirmar/substituir o campo agora — ver `foundation/data-model.md`, "bw_query_top_authors". Limitação herdada: só os top 10 autores por volume da Query inteira têm `bw_query_author_topics` — os demais autores do ranking vêm com os 3 campos `null` (nunca `0/0/0`, que seria "sentimento neutro" inventado). ✅ **Ganhou `p_scope`/`narrative_labels` (2026-07-21)** — ver nota dedicada abaixo, "Regras de negócio" |
+| `get_authors_ranking(...)`              | `authors`            | `bw_query_top_authors`/`bw_query_top_tweeters` (quando o escopo for X) — nativos da Brandwatch, não amostrados. `entity_id`/classificação por partido/espectro fica `null` até `entities` (Sprint 2) existir; quando existir, `LEFT JOIN entity_tags` via `entity_accounts.username = bw_query_top_authors.author` é enriquecimento aditivo, nunca pré-requisito do ranking. ✅ **`entities` especificado (2026-07-13)** — ver [entities/author-linking.md](../entities/author-linking.md) para o desenho exato desse `LEFT JOIN` e para os 3 campos novos (`entity_type`/`entity_influence_level`/`entity_tags`) que `AuthorRow` ganha quando a migration for aplicada; ainda não implementado, este bloco de texto continua descrevendo o comportamento atual (sempre `null`). ✅ **Ganhou `sentiment_positive`/`neutral`/`negative` (2026-07-17)** — `LEFT JOIN` agregado sobre `bw_query_author_topics` (soma os 3 contadores entre todos os temas do autor na semana mais recente sincronizada para aquele autor), não sobre `bw_query_top_authors.sentiment_*`. ⚠️ **Achado na mesma auditoria**: `bw_query_top_authors.sentiment_positive/neutral/negative` (e o mesmo em `bw_query_top_tweeters`) é escrito por `bw-sync` desde a criação da tabela lendo `d.sentiment` da resposta de `data/volume/topauthors/queries`, mas — diferente de todo campo vizinho na mesma tabela (`tweets`/`retweets`/`account_type`/`country_code`, todos com nota "confirmado contra developers.brandwatch.com/docs/top-tweeters") — esse mapeamento **nunca foi confirmado** contra a documentação real do endpoint, que não cita um objeto `sentiment` no payload. Risco real de ser sempre `0/0/0` em produção sem nenhum erro (fallback `?? 0`). Decisão do usuário (2026-07-17): documentar o achado e usar `bw_query_author_topics` (fonte já confirmada, mesmo padrão do `impressions` por autor) em vez de gastar uma chamada nova pra confirmar/substituir o campo agora — ver `foundation/data-model.md`, "bw_query_top_authors". Limitação herdada: só os top 10 autores por volume da Query inteira têm `bw_query_author_topics` — os demais autores do ranking vêm com os 3 campos `null` (nunca `0/0/0`, que seria "sentimento neutro" inventado). ✅ **Ganhou `p_scope`/`narrative_labels` (2026-07-21)** — ver nota dedicada abaixo, "Regras de negócio" |
 | `get_dissemination_graph(narrative_id)` | `graph`              | `mentions` (`reply_to`/`retweet_of`/`insights_mentioned`), restrito às mentions retornadas por `narrative_matched_mentions(narrative_id)` — reusa a função canônica já definida em `foundation/data-model.md`, mesma abordagem já decidida em `intelligence-center/narratives-exploration.md` ("grafo de disseminação simplificado"), não uma tabela `grafo_arestas` nova |
 | `get_term_signals(...)`                 | `term_signals`       | `bw_query_topics` (`label`, `sentiment_positive/neutral/negative`, `trending`) — já carrega tema/sentimento/tendência, não precisa extrair termo de `mentions` |
 | `get_x_insights(...)`                   | `x_insights` (só `platforms`) | ✅ **Adicionado 2026-07-18** — `bw_query_x_insights` (`insight_type`: `hashtag`/`emoticon`/`url`/`mentioned_author`), até 10 itens por tipo, ordenados por `volume` desc, da semana mais recente sincronizada por tipo. Fecha um gap real: o dado já era capturado desde `foundation` (2026-07-11), mas nenhuma function/bloco o expunha — era só uma "oportunidade futura" registrada em `intelligence-center/platform-analysis.md` (2026-07-13), nunca implementada até esta auditoria. É o dado por trás de "Top Hashtags"/"Most Mentioned X Posters"/"Top Stories"/"Top Emojis" (dashboard nativo "X Themes" da Brandwatch) |
@@ -184,40 +184,70 @@ observado — **sem `query_id`** (revertido 2026-07-13, ver nota abaixo).
 > preservada logo abaixo, marcada como histórico, para quem precisar
 > entender a mudança.
 
-### Sentimento (já um score, não precisa de cálculo aqui)
+### Sentimento (derivado localmente das proporções, não repassado direto de um score externo)
 
-> ✅ **Correção (2026-07-25)**: o parágrafo original abaixo ("repassa o
-> valor do dia mais recente") era a causa raiz de um bug real reportado
-> pelo usuário via screenshot — o card de Narrativa (borda esquerda +
-> `sentiment_label`) e a coluna "Sentimento" da tabela liam
-> `net_sentiment`/`sentiment_label` de um único dia (o mais recente dentro
-> do período), enquanto a mesma linha/card também exibe
+> ✅ **Correção #1 (2026-07-25, migration `20260725000000`)**: o parágrafo
+> original ("repassa o valor do dia mais recente") era a causa raiz de um
+> bug real reportado pelo usuário via screenshot — o card de Narrativa
+> (borda esquerda + `sentiment_label`) e a coluna "Sentimento" da tabela
+> liam `net_sentiment`/`sentiment_label` de um único dia (o mais recente
+> dentro do período), enquanto a mesma linha/card também exibe
 > `sentiment_positive_pct`/`neutral_pct`/`negative_pct` **somados sobre
 > todo o período** — duas janelas de tempo diferentes na mesma linha,
-> podendo discordar (ex: dia mais recente "levemente negativo" com borda
-> vermelha, mas maioria do período "neutro"). Corrigido em
-> `get_narratives_table` (migration `20260725000000`): `net_sentiment`
-> agora é a média de `net_sentiment` **ponderada por `total_mentions` no
-> mesmo período** (`period_start`/`period_end`) usado por
-> `sentiment_positive_pct`/etc., com fallback pro cálculo local
-> (`positivo/(positivo+negativo)*100`, mesma base já usada por essas
-> porcentagens) só quando `net_sentiment` não sincronizou para nenhum dia
-> do período. `risk_score`'s `sentiment_risk` também passou a ler esse
-> valor period-consistente. O texto abaixo descreve o comportamento
-> **corrigido**, não mais o "dia mais recente" original.
+> podendo discordar. Corrigido: `net_sentiment` passou a agregar sobre a
+> mesma janela de `period_agg`.
+>
+> ✅ **Correção #2 (2026-07-25, migration `20260725060000`, mesmo dia)**:
+> mesmo depois da correção #1, o usuário reportou de novo via screenshot
+> (card "Economia": pos 17,1% / neu 40,3% / neg 42,5% — negativo é
+> predominante — com borda/rótulo "Neutro"). Causa raiz **diferente**
+> desta vez: a correção #1 ainda preferia a média ponderada do
+> `net_sentiment` **oficial** da Brandwatch
+> (`narrative_metrics.net_sentiment`, endpoint `data/netSentiment/
+> categories/days`) quando esse score estava sincronizado, caindo pro
+> cálculo local só como fallback. Só que `net_sentiment` vem de uma
+> chamada de API **diferente e independente** de `data/volume/sentiment/
+> days` (a origem de `sentiment_positive`/`neutral`/`negative`, os mesmos
+> 3 números da barra do card) — dois agregados oficiais da Brandwatch,
+> cada um calculado pelo motor deles, sem garantia de reconciliar entre
+> si. É exatamente o que aconteceu: `net_sentiment` oficial caiu na faixa
+> neutra enquanto a proporção real entre positivo/neutro/negativo (a
+> mesma que a barra do card mostra) tem negativo como maioria — o rótulo/
+> borda contradiziam visualmente os próprios números exibidos ao lado no
+> mesmo card. **Corrigido definitivamente**: `net_sentiment`/
+> `sentiment_label` passam a vir **sempre** do cálculo local — nunca mais
+> do `net_sentiment` oficial da Brandwatch, nem como média ponderada nem
+> como preferência sobre o fallback. Isso não reabre a regra de "nunca
+> calcular localmente sobre `mentions` amostrada" (Princípio técnico 2):
+> `sentiment_positive`/`neutral`/`negative` em `narrative_metrics` **já
+> são** um agregado oficial da Brandwatch (`data/volume/sentiment/days`),
+> a fórmula só deriva um score a partir deles — a mesma lógica que já era
+> usada como fallback desde `20260720000000`, agora promovida a única
+> fonte. Por construção, o rótulo/borda nunca mais podem discordar da
+> barra pos/neu/neg do mesmo card, já que vêm exatamente dos mesmos 3
+> números. `risk_score`'s `sentiment_risk` herda a correção automaticamente
+> (lê `sentiment_labeled.net_sentiment`, sem mudança própria).
+>
+> ⚠️ **Fora de escopo desta correção**: `public.narratives_overview.
+> sentiment_bucket`/`net_sentiment` (view usada só para `sov_percent`/
+> `total_mentions` em `get_narratives_table`'s `latest_day`, e espelhada em
+> `reporting.narratives_overview` para BI externo) continua preferindo o
+> `net_sentiment` oficial com fallback local, snapshot por dia — mesma
+> classe de risco teórica (duas fontes divergentes), mas nenhuma tela do
+> produto lê `sentiment_bucket` desta view diretamente hoje (confirmado
+> por busca no código), então não há sintoma visível pra corrigir aqui.
+> Revisitar se um consumidor de BI reportar a mesma contradição.
 
-Fonte primária: `narrative_metrics.net_sentiment` (score oficial da
-Brandwatch por dia, -100 a 100 — ver `foundation/data-model.md`).
-`get_narratives_table` agrega esse score **sobre o mesmo
-`period_start`/`period_end` pedido** que já agrega
-`sentiment_positive_pct`/`neutral_pct`/`negative_pct` — média ponderada por
-`total_mentions` nos dias em que `net_sentiment` já sincronizou, nunca o
-valor de um único dia isolado. Se nenhum dia do período tem `net_sentiment`
-sincronizado, cai no mesmo cálculo local usado pelo fallback de
-`sentiment_positive_pct`/etc. (`positivo/(positivo+negativo)*100` — nunca
-dilui pelo total de mentions). Banda (7 faixas) e cor ficam em
-`intelligence-center/executive-overview.md`/`_design-tokens.md` — este
-módulo não decide cor, só entrega o número.
+Fonte: **sempre** o cálculo local sobre
+`narrative_metrics.sentiment_positive/neutral/negative` somados no mesmo
+`period_start`/`period_end` pedido — a mesma base de
+`sentiment_positive_pct`/`neutral_pct`/`negative_pct` (`(positivo -
+negativo) * 100 / (positivo + negativo)`, nunca dividido pelo total de
+mentions). **Nunca** o `narrative_metrics.net_sentiment` oficial da
+Brandwatch (ver correção #2 acima — endpoint diferente, sem garantia de
+reconciliar com a barra pos/neu/neg do mesmo card). Banda (7 faixas) e cor
+ficam em `intelligence-center/executive-overview.md`/`_design-tokens.md`
+— este módulo não decide cor, só entrega o número.
 
 ### Função auxiliar `norm_growth` (usada por Momentum; mesma lógica de
 ### normalização reaplicada manualmente por Tendência, ver abaixo)
@@ -305,18 +335,20 @@ Exige pelo menos 4 dias de histórico na Narrativa (`n_points >= 4`) — sem
 isso, `trend_score`/`trend_label` ficam `null` ("sem histórico suficiente
 para uma tendência estatística", não um valor inventado).
 
-> ⚠️ **Gap técnico registrado 2026-07-25** (`_pending.md` #31): a janela de
-> 14 dias acima é sempre calculada a partir de `now()`, nunca de uma data
-> de referência histórica arbitrária — suficiente para as 5 páginas de
-> `intelligence-center` (sempre "hoje"), mas insuficiente para o módulo
-> novo `communications` (Sprint 2.1), que precisa de Tendência "como
-> estava" numa data passada (antes/depois de uma comunicação registrada).
-> Extensão proposta, ainda não implementada: parâmetro opcional
+> ✅ **Gap técnico #31 de `_pending.md` resolvido (2026-07-25, migration
+> `20260726010000`)**: `get_narratives_table` ganhou o parâmetro opcional
 > `p_reference_at timestamptz default now()`, substituindo a referência
-> interna a `now()` — aditivo, sem efeito em nenhum consumidor atual (todos
-> herdam o default). Ver
-> [../communications/narrative-impact-tracking.md](../communications/narrative-impact-tracking.md),
-> "Dependências técnicas".
+> interna a `now()` no cálculo de Tendência — aditivo, sem efeito em nenhum
+> consumidor atual (`executive-overview`/`narratives-exploration`/
+> `electoral-themes` herdam o default, comportamento inalterado). Mudou a
+> aridade da function (6→7 parâmetros), então a migration usa `drop
+> function` explícito pela assinatura antiga antes de recriar — mesmo
+> cuidado já documentado em `CLAUDE.md` para a mudança de aridade de
+> 2026-07-21. Consumido por
+> [../communications/narrative-impact-tracking.md](../communications/narrative-impact-tracking.md)
+> (`get_communication_impact`), que ancora Momentum/Tendência/Risco/
+> Sentimento numa data histórica (antes/depois de uma Comunicação/Decisão)
+> em vez de sempre "agora".
 
 | Faixa | Rótulo |
 |---|---|
@@ -435,10 +467,21 @@ Pedido do usuário: "Implementar termo de interação agora".
   existentes na view.
 - `event-radar` (quando existir, Sprint 3): `severity_score` de um evento
   ativo para a Narrativa é conceitualmente próximo de `risk_score` (pesos
-  parecidos — volume/sentimento/tendência/alcance/autores), mas **não**
-  os funde num só número — ver
+  parecidos — volume/sentimento/tendência/alcance/autores), mas é um score
+  irmão, calculado por uma fórmula diferente (por evento transiente, não
+  por Narrativa) — **`get_narratives_table` não recalcula nada a partir
+  dele**. O ponto de integração é aditivo: quando a Narrativa tem um
+  evento ativo publicado pelo radar, `risk_score = greatest(risk_score
+  calculado acima, severity_score do evento ativo)` — um evento detectado
+  só pode elevar o risco mostrado, nunca derrubá-lo. ✅ **Decisão
+  confirmada (2026-07-25)**, mesma fórmula já registrada em
+  [../event-radar/aggregated-metrics-integration.md](../event-radar/aggregated-metrics-integration.md)
+  desde 2026-07-13 — ver também
   [../event-radar/severity.md](../event-radar/severity.md), "Relação com
-  `risk_score`".
+  `risk_score`". Não implementado ainda (`event-radar` é `rascunho`, não
+  há `severity_score` real para ler) — a fórmula de `risk_score` acima
+  reflete o estado atual, sem o termo `greatest(...)`; ele entra na
+  mesma migration que ligar `get_active_highlights`.
 
 ### Campos do card de Narrativa (2026-07-21, migration `20260721010000`)
 
@@ -580,8 +623,9 @@ escopo deste pedido).
   `bw_query_topics`, `bw_query_top_authors` (ranking de autores e, via `is_influential`, o
   componente `author_influence` de `risk_score`), `bw_query_top_tweeters`, `narratives`,
   `narrative_metrics`, `bw_categories`, `feed_events`; `mentions` só por-linha, nunca agregada
-  (ver "Regra fundamental" acima); `entity_tags` (Sprint 2, quando existir) como enriquecimento
-  opcional de `authors`.
+  (ver "Regra fundamental" acima); `entity_accounts`/`entities`/`entity_tags` (`entities`,
+  especificado — [entities/data-model.md](../entities/data-model.md) — ainda não implementado)
+  como enriquecimento opcional de `authors`, ver [entities/author-linking.md](../entities/author-linking.md).
 - **Escreve**: nenhuma — todas as functions são somente leitura (`STABLE` no Postgres).
 
 ## Referências relacionadas

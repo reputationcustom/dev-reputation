@@ -63,14 +63,16 @@ prompt da IA. É um único contrato (`envelope`), reaproveitado nos dois consumo
   `narratives` popula `narratives`/`narrative_metrics`), `event-radar` (popula `feed_events`
   — fonte de `highlights` e base de `narrative_text`; ver
   [standard-json-envelope.md](standard-json-envelope.md), seção "Integração com event-radar").
-  `entities` (Sprint 2, ainda não spec'd) enriquece o bloco `authors` quando existir, mas não é
+  ✅ **`entities` especificado (2026-07-13)** — [../entities/overview.md](../entities/overview.md)
+  enriquece o bloco `authors` de forma aditiva (`get_authors_ranking`, ver
+  [../entities/author-linking.md](../entities/author-linking.md)) quando implementado, mas não é
   um bloqueador — o ranking em si já vem de `bw_query_top_authors`/`bw_query_top_tweeters`
   (nativos da Brandwatch, ver `sql-aggregation.md`).
 - **Módulos que dependem deste**: `intelligence-center` (todas as suas páginas, incl.
-  `executive-overview.md`, passam a ler o envelope em vez de montar a consulta inline — ver nota
-  de rotas abaixo), e os módulos ainda sem spec própria `entities` (página Autores), `event-radar`
-  (página Alertas — leitura, não escrita) e `executive-reports` (página Relatórios, Sprint 4,
-  reaproveita o mesmo envelope agregado por período maior).
+  `executive-overview.md`/`authors-and-influencers.md`, passam a ler o envelope em vez de montar a
+  consulta inline — ver nota de rotas abaixo), `event-radar` (página Alertas — leitura, não
+  escrita, ainda sem spec própria) e `executive-reports` (página Relatórios, Sprint 4, ainda sem
+  spec própria, reaproveita o mesmo envelope agregado por período maior).
 
 ## Rotas/Páginas
 
@@ -78,12 +80,16 @@ prompt da IA. É um único contrato (`envelope`), reaproveitado nos dois consumo
 > `intelligence-center/executive-overview.md`/`intelligence-center/overview.md` — a
 > primeira versão desta spec usava rotas em português (`/visao-geral`,
 > `/narrativas`, `/pautas-eleitorais`...), divergentes das já aprovadas.
-> Autores/Alertas/Relatórios são rotas novas (sem spec de página própria
-> ainda — pertencem a `entities`/`event-radar`/`executive-reports`), nomeadas
-> em inglês pelo mesmo padrão. **Correção (2026-07-12)**: `/overview` tinha
+> **Correção (2026-07-12)**: `/overview` tinha
 > `foundation` como "módulo dono da página" — inconsistente, já que
 > `foundation` é só backend (ver `foundation/overview.md`). Corrigido para
-> `intelligence-center`, mesmo dono de todas as outras páginas do frontend.
+> `intelligence-center`, mesmo dono de todas as outras páginas do frontend
+> (mesmo critério aplicado a `/authors` abaixo — a página em si é sempre
+> `intelligence-center`, mesmo quando o **dado** que ela mostra vem
+> enriquecido por outro módulo). ✅ **`/authors` implementada (2026-07-25)**
+> — ver `intelligence-center/authors-and-influencers.md`; `/alerts`/
+> `/reports` continuam sem spec de página própria (dependem de
+> `event-radar`/`executive-reports`, Sprint 3-4).
 
 | Rota                 | Edge Function            | Página                              | Módulo dono da página |
 |-----------------------|---------------------------|--------------------------------------|--------------------------|
@@ -93,7 +99,7 @@ prompt da IA. É um único contrato (`envelope`), reaproveitado nos dois consumo
 | `/sentiment`          | `get-page-sentiment`      | Análise de Sentimento                | `intelligence-center` |
 | `/platforms`          | `get-page-platforms`      | Análise por Plataforma               | `intelligence-center` |
 | `/themes`             | `get-page-themes`         | Pautas Eleitorais                    | `intelligence-center` |
-| `/authors`            | `get-page-authors`        | Autores e Influenciadores            | `entities` (sem spec própria ainda) |
+| `/authors`            | `get-page-authors`        | Autores e Influenciadores            | `intelligence-center` (implementada — ver `authors-and-influencers.md`; classificação por `entities` ainda não ligada, gap conhecido) |
 | `/alerts`             | `get-page-alerts`         | Alertas                              | `event-radar` |
 | `/reports`            | `get-page-reports`        | Relatórios                           | `executive-reports` (sem spec própria ainda) |
 

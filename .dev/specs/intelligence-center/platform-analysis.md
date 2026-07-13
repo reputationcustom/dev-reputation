@@ -8,6 +8,21 @@ atualizado: 2026-07-18
 
 # Análise por Plataforma
 
+> ✅ **Movidos para `/authors` (2026-07-25)**, pedido do usuário: "Perfis
+> relevantes" e "X Themes" (Top Hashtags/Most Mentioned X Posters/Top
+> Stories/Top Emojis) — conceitualmente são sobre autores, não sobre
+> plataformas, e agora vivem na página "Autores e Influenciadores" (ver
+> [authors-and-influencers.md](authors-and-influencers.md)), alimentados
+> por uma nova Edge Function (`get-page-authors`). As 2 seções
+> correspondentes abaixo ("Perfis relevantes"/"X Themes") ficam como
+> **histórico** — descrevem o dado/fonte, que continuam válidos, só não
+> mais renderizados nesta página. A tabela "Narrativas" (lista geral, sem
+> quebra por plataforma — nunca fez parte do documento de estrutura do
+> protótipo, era conteúdo extra desta implementação) também foi removida
+> do fim desta página pelo mesmo pedido; isso **não** fecha o gap
+> "Narrativas dominantes por plataforma" abaixo (uma feature diferente,
+> ainda não implementada).
+>
 > ✅ **Implementado (2026-07-18)**: "X Themes" (Top Hashtags/Top Emojis/Top
 > Stories/Most Mentioned X Posters) — o que a nota "💡 Oportunidade futura"
 > abaixo deixava como planejado, não desenhado. Achado numa auditoria
@@ -43,7 +58,6 @@ Mesmo público das demais páginas deste módulo.
    - Evolução do volume por plataforma.
    - Narrativas dominantes por plataforma.
    - Velocidade de propagação por plataforma (⚠️ gap, ver abaixo).
-   - Perfis relevantes (ranking de autores).
    - Conteúdos de destaque (cards de mentions específicas).
 3. Engajamento médio e Autores únicos por plataforma têm captura própria
    desde 2026-07-12 (ver "Regras de negócio" abaixo) — resolvidos.
@@ -70,7 +84,9 @@ Mesmo público das demais páginas deste módulo.
   `sync-brandwatch.md`). Sem gap, mas depende dessa fase já ter rodado para
   cada Narrativa (pode estar parcialmente populado logo após uma Narrativa
   ser criada).
-- **Perfis relevantes**: ranking de `bw_query_top_authors` por
+- **Perfis relevantes** (histórico — ver nota no topo do arquivo, movido
+  para [authors-and-influencers.md](authors-and-influencers.md)/`/authors`
+  em 2026-07-25): ranking de `bw_query_top_authors` por
   `reach_estimate`/`impact`/`volume` (⚠️ não quebrado por plataforma — o
   endpoint Top Authors não expõe breakdown por `page_type`; mostrar como
   "perfis mais relevantes da Query/Narrativa", não "por plataforma
@@ -86,7 +102,9 @@ Mesmo público das demais páginas deste módulo.
   distinto de "Top Sites" (de onde as mentions vêm); mede que domínios são
   mais linkados/compartilhados dentro do conteúdo. Útil como widget
   adicional desta página se o produto quiser.
-- ✅ **"X Themes" implementado (2026-07-18)** — 4 listas lado a lado (Top
+- ✅ **"X Themes"** (histórico — ver nota no topo do arquivo, movido para
+  [authors-and-influencers.md](authors-and-influencers.md)/`/authors` em
+  2026-07-25) — implementado 2026-07-18, 4 listas lado a lado (Top
   Hashtags/Most Mentioned X Posters/Top Stories/Top Emojis), espelhando o
   dashboard nativo da Brandwatch mesmo shape/colunas (`Posts`/`Reposts`/
   `All Posts`/`Impressions` = `tweets`/`retweets`/`volume`/`impressions`).

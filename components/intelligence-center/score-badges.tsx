@@ -131,6 +131,18 @@ export function NetSentimentDot({ value }: { value: number }) {
   return <span className={`inline-block h-2.5 w-2.5 rounded-full ${meta.text.replace("text-", "bg-")}`} title={meta.label} />;
 }
 
+// Cor de preenchimento (Tailwind `fill-*`, SVG) + rótulo em pt-BR pra um
+// `net_sentiment` bruto — usado pelo mapa de "Sentimento por estado"
+// (brazil-sentiment-map.tsx, pedido do usuário 2026-07-25). Mesmas 7
+// faixas/cores de `SENTIMENT_META` acima, só expostas como classe `fill-`
+// em vez de `text-`/`bg-` (Tailwind gera a paleta inteira `sentiment-*`
+// pra toda propriedade de cor, `fill` incluso, já que a cor foi declarada
+// em `theme.extend.colors`).
+export function sentimentFillFromScore(score: number): { fillClass: string; label: string } {
+  const meta = SENTIMENT_META[sentimentBucketFromScore(score)];
+  return { fillClass: meta.text.replace("text-", "fill-"), label: meta.label };
+}
+
 export function ScoreBar({ score }: { score: number | null }) {
   if (score === null) return <span className="text-sm text-text-tertiary">—</span>;
   const band = momentumBand(score);

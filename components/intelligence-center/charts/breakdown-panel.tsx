@@ -63,6 +63,12 @@ function SentimentBar({ breakdown }: { breakdown: Breakdown }) {
 // do usuário 2026-07-17, "Sentimento por narrativa" — dado já existia em
 // narrative_metrics, só faltava o bloco/function, ver
 // get_narrative_sentiment_breakdown em sql-aggregation.md).
+//
+// ✅ Rótulos adicionados (2026-07-25, pedido do usuário: "inclua rótulos no
+// gráfico") — antes a barra empilhada não tinha nenhum percentual visível,
+// só a cor; agora mostra "pos X% neu Y% neg Z%" abaixo de cada barra, mesmo
+// padrão textual já usado no NarrativeCard (narrative-card.tsx) pra manter
+// consistência entre os dois lugares que mostram esse mesmo split.
 function NarrativeSentimentList({ breakdown }: { breakdown: Breakdown }) {
   const items = breakdown.items.filter((item) => item.value > 0);
 
@@ -80,23 +86,49 @@ function NarrativeSentimentList({ breakdown }: { breakdown: Breakdown }) {
             <div className="bg-sentiment-neutral" style={{ width: `${item.neutral ?? 0}%` }} />
             <div className="bg-sentiment-negative" style={{ width: `${item.negative ?? 0}%` }} />
           </div>
+          <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs font-semibold text-text-secondary">
+            <span>
+              pos <b className="text-sentiment-positive">{item.positive ?? 0}%</b>
+            </span>
+            <span>
+              neu <b className="text-sentiment-neutral">{item.neutral ?? 0}%</b>
+            </span>
+            <span>
+              neg <b className="text-sentiment-negative">{item.negative ?? 0}%</b>
+            </span>
+          </div>
         </div>
       ))}
     </div>
   );
 }
 
-// Breakdowns de type='platform'/'theme' — o `value` aqui é net_sentiment
-// (score -100..100, não uma contagem/percentual), ver sql-aggregation.md
-// ("get_platform_breakdown"/"get_theme_breakdown"). Renderizado
-// deliberadamente distinto das barras de sentimento acima (CLAUDE.md:
-// "net_sentiment... precisa renderizar visualmente distinto") — aqui como
-// lista com o score e a participação (`pct`) lado a lado, não uma barra
-// proporcional (o score pode ser negativo, não faz sentido como largura de
-// barra 0-100%).
-// Esconde linhas com 0% das menções — uma plataforma/pauta sem nenhuma
-// menção no período não agrega informação e só polui a lista (pedido do
-// usuário 2026-07-12, "Sentimento por plataforma").
+// Nome da 1ª coluna por tipo de breakdown — "Sentimento por
+// plataforma"/"por pauta"/"por estado" usam o mesmo ScoreList, só o nome
+// do que está sendo listado muda.
+const NAME_COLUMN_LABEL: Partial<Record<Breakdown["type"], string>> = {
+  platform: "Plataforma",
+  theme: "Pauta",
+  region: "Estado",
+};
+
+// Breakdowns de type='platform'/'theme'/'region' — o `value` aqui é
+// net_sentiment (score -100..100, não uma contagem/percentual), ver
+// sql-aggregation.md ("get_platform_breakdown"/"get_theme_breakdown"/
+// "get_region_breakdown"). Renderizado deliberadamente distinto das barras
+// de sentimento acima (CLAUDE.md: "net_sentiment... precisa renderizar
+// visualmente distinto") — aqui como tabela com o score e a participação
+// (`pct`) em colunas próprias, não uma barra proporcional (o score pode
+// ser negativo, não faz sentido como largura de barra 0-100%).
+// Esconde linhas com 0% das menções — uma plataforma/pauta/estado sem
+// nenhuma menção no período não agrega informação e só polui a lista
+// (pedido do usuário 2026-07-12, "Sentimento por plataforma").
+// ✅ Nomes de coluna adicionados (2026-07-25, pedido do usuário: "coloque
+// nome de colunas na tabela Sentimento por plataforma, Sentimento por
+// pauta, Sentimento por estado") — antes era uma lista sem `<thead>`
+// nenhum; agora é uma `<table>` real, mesmo padrão de cabeçalho
+// (`font-bold text-text-primary`, Regra 7 transversal) já usado por
+// `NarrativesTable`/`XInsightsPanel`.
 function ScoreList({ breakdown }: { breakdown: Breakdown }) {
   const items = breakdown.items.filter((item) => item.pct > 0);
 
@@ -104,24 +136,35 @@ function ScoreList({ breakdown }: { breakdown: Breakdown }) {
     return <EmptyState message="Nenhuma menção no período selecionado." />;
   }
 
+  const nameLabel = NAME_COLUMN_LABEL[breakdown.type] ?? "Nome";
+
   return (
-    <div className="flex flex-col divide-y divide-border-subtle-2">
-      {items.map((item) => (
-        <div key={item.label} className="flex items-center justify-between py-2 text-sm">
-          <span className="text-text-primary">{item.label}</span>
-          <div className="flex items-center gap-3">
-            <span className="text-xs text-text-tertiary">{item.pct}% das menções</span>
-            <span
-              className={`font-semibold ${
-                item.value > 0 ? "text-sentiment-positive" : item.value < 0 ? "text-sentiment-negative" : "text-sentiment-neutral"
-              }`}
-            >
-              {item.value > 0 ? "+" : ""}
-              {item.value}
-            </span>
-          </div>
-        </div>
-      ))}
+    <div className="overflow-x-auto">
+      <table className="w-full text-left text-sm">
+        <thead>
+          <tr className="border-b border-border-subtle text-xs uppercase tracking-wide text-text-primary">
+            <th className="py-2 pr-4 font-bold">{nameLabel}</th>
+            <th className="px-4 py-2 text-right font-bold">Participação</th>
+            <th className="px-4 py-2 text-right font-bold">Sentimento</th>
+          </tr>
+        </thead>
+        <tbody>
+          {items.map((item) => (
+            <tr key={item.label} className="border-b border-border-subtle-2 last:border-0">
+              <td className="py-2 pr-4 text-text-primary">{item.label}</td>
+              <td className="px-4 py-2 text-right text-xs text-text-tertiary">{item.pct}% das menções</td>
+              <td
+                className={`px-4 py-2 text-right font-semibold ${
+                  item.value > 0 ? "text-sentiment-positive" : item.value < 0 ? "text-sentiment-negative" : "text-sentiment-neutral"
+                }`}
+              >
+                {item.value > 0 ? "+" : ""}
+                {item.value}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }

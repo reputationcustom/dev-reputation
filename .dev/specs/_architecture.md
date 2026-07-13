@@ -7,8 +7,8 @@ atualizado: 2026-07-25
 
 > Documento obrigatório do skill `spec-driven-dev` (regra adicionada em 2026-07-13, a pedido do
 > usuário — ver "Mapa de arquitetura geral" no `SKILL.md`). Existe pra dar, num único lugar, a
-> visão que só estava espalhada entre `_index.md` (tabela de módulos) e o `_fluxo-*.md` de
-> `event-radar`↔`aggregated-metrics` (o único par que tinha diagrama até aqui). **Atualizar
+> visão que só estava espalhada entre `_index.md` (tabela de módulos) e o
+> `event-radar/fluxo-aggregated-metrics.md` (o único par que tinha diagrama até aqui). **Atualizar
 > sempre que um módulo for criado, mudar de status, ou ganhar/perder uma dependência** — se este
 > arquivo e `_index.md` divergirem, é bug de documentação, não algo aceitável de conviver.
 >
@@ -68,8 +68,8 @@ graph TD
     style AUTH fill:#c3e6cb,stroke:#2e7d32
     style AGGMETRICS fill:#c3e6cb,stroke:#2e7d32
     style INTEL fill:#c3e6cb,stroke:#2e7d32
-    style ENTITIES fill:#e2e3e5,stroke:#6c757d
-    style COMMUNICATIONS fill:#e2e3e5,stroke:#6c757d
+    style ENTITIES fill:#fff3cd,stroke:#856404
+    style COMMUNICATIONS fill:#c3e6cb,stroke:#2e7d32
     style EVENTRADAR fill:#e2e3e5,stroke:#6c757d
     style PROPGRAPH fill:#e2e3e5,stroke:#6c757d
     style DECISIONCENTER fill:#e2e3e5,stroke:#6c757d
@@ -85,6 +85,22 @@ fallback), mas fica mais completo com ela.
 > `intelligence-center` (páginas novas vivem no mesmo route group). Ver
 > [_index.md](_index.md), "Sprint 2.1 — módulo `communications`", e
 > [communications/overview.md](communications/overview.md).
+>
+> ✅ **`communications` passou a verde no mesmo dia (2026-07-25)** — especificado e implementado
+> na mesma sessão (spec + migrations `20260726000000`/`20260726010000` + 5 Edge Functions +
+> frontend completo). Ver `CLAUDE.md`, "Módulo communications (Sprint 2.1)", pro detalhe
+> completo — inclusive um gap de RLS real encontrado durante a implementação (resolvido com a
+> Edge Function nova `list-organization-members`) e 2 desvios deliberados do texto original da
+> spec (rota dentro de `(analytics)`, sem filtro de período na lista).
+
+> ✅ **`entities` ganhou spec própria (2026-07-13)**, nó passou de cinza (rascunho) para amarelo
+> (pronto — spec aprovada, aguardando implementação). Ver [_index.md](_index.md), "O que fica fora
+> do Sprint 2", e [entities/overview.md](entities/overview.md) — catálogo global (sem
+> `organization_id`, decisão confirmada com o usuário), dependência fraca/opcional de
+> `aggregated-metrics` (`get_authors_ranking` ganha um enriquecimento aditivo por `entity_id`,
+> nunca um pré-requisito do ranking). Não bloqueia nem é bloqueado por `intelligence-center` —
+> `intelligence-center/authors-and-influencers.md` (`/authors`, já implementada) já documenta a
+> classificação de espectro/`entities` como gap conhecido, exatamente o que este módulo especifica.
 
 `threshold-engine` e `intelligent-feed` (módulos que existiam na tabela original de `_index.md`,
 Sprint 3) não aparecem como nós próprios — foram **absorvidos por `event-radar`** antes de
@@ -131,10 +147,10 @@ de `intelligence-center`, ver `_index.md`, "Módulo `command-center` removido".
 |---|---|---|---|
 | `foundation` | Sync Brandwatch → Supabase + Narrativas como entidade viva | implementado | [foundation/overview.md](foundation/overview.md) |
 | `auth` | Login/recuperação de senha (Supabase Auth) + administração de usuários (admin-only) + `/perfil` (fuso horário) | implementado | [auth/overview.md](auth/overview.md) |
-| `entities` | Cadastro Nacional de Entidades (partido/espectro/cargo) + enriquecimento de mentions | rascunho | — |
+| `entities` | Cadastro Nacional de Entidades (partido/espectro/cargo) + vínculo aditivo com o ranking de Autores e Influenciadores | pronto — não implementado | [entities/overview.md](entities/overview.md) |
 | `intelligence-center` | As 5 páginas do frontend (Executive Overview, Narrativas, Sentimento, Plataformas, Pautas Eleitorais) + `cases` (ações/decisões, ex-`command-center`) | implementado — `cases` (schema) ainda não | [intelligence-center/overview.md](intelligence-center/overview.md) |
 | `aggregated-metrics` | Envelope JSON único + SQL de agregação + Edge Functions por página, consumido pelo frontend e pela IA | implementado — `get_active_highlights`/região/`page_narrative_synthesis` pendentes, ver `_pending.md` | [aggregated-metrics/overview.md](aggregated-metrics/overview.md) |
-| `communications` | Registro de comunicações (post/e-mail/TV etc.) por Narrativa + acompanhamento de impacto (sentimento/menções/risco/momentum antes vs. depois) — Sprint 2.1 | rascunho | [communications/overview.md](communications/overview.md) |
+| `communications` | Registro de Comunicações/Decisões por Narrativa + acompanhamento de impacto (sentimento/menções/risco/momentum antes vs. depois) — Sprint 2.1 | implementado | [communications/overview.md](communications/overview.md) |
 | `event-radar` | Detecção estatística de picos/quedas/mudanças + 1 card de IA por evento — absorve `threshold-engine`/`intelligent-feed` | rascunho | [event-radar/overview.md](event-radar/overview.md) |
 | `propagation-graph` | Grafo de propagação com rollup materializado completo (versão simplificada já em `intelligence-center/narratives-exploration.md`) | rascunho | — |
 | `decision-center` | AI Advisors — perguntas livres/interativas do analista sobre mentions/narrativas | rascunho | — |
@@ -144,7 +160,8 @@ de `intelligence-center`, ver `_index.md`, "Módulo `command-center` removido".
 
 - [_index.md](_index.md) — mesma informação de módulos/dependências/sprints, em tabela + texto,
   incluindo a "Sequência de implantação — Sprint 2" detalhada passo a passo.
-- [_fluxo-event-radar-aggregated-metrics.md](_fluxo-event-radar-aggregated-metrics.md) — o único
+- [event-radar/fluxo-aggregated-metrics.md](event-radar/fluxo-aggregated-metrics.md) — o único
   par de módulos com sincronismo complexo o bastante pra merecer um diagrama próprio, incl.
-  `sequenceDiagram` de quando cada parte roda (este arquivo aqui não substitui aquele, é o mapa
-  geral; aquele é o detalhe de um par específico).
+  `sequenceDiagram` de quando cada parte roda e a ordem de implementação 1.1–1.6 (este arquivo
+  aqui não substitui aquele, é o mapa geral; aquele é o detalhe de um par específico — vive dentro
+  de `event-radar/` desde 2026-07-25 por ser específico dessa integração).
