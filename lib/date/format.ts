@@ -34,6 +34,17 @@ export function formatDateTime(date: Date | string, timezone: string = DEFAULT_T
   return formatInTimeZone(date, timezone, "dd/MM/yyyy HH:mm");
 }
 
+/**
+ * Só a hora: HH:mm — usado pela série horária do gráfico de volume/sentimento
+ * quando o período selecionado é "Diário" (`get_volume_trend`, grão `hour`,
+ * ver `aggregated-metrics/sql-aggregation.md`). Diferente de `formatDateOnly`,
+ * aqui a entrada é um instante real (timestamptz, com fuso) — a conversão pro
+ * fuso do usuário é a parte que importa, não um split de string.
+ */
+export function formatHourOnly(date: Date | string, timezone: string = DEFAULT_TIMEZONE): string {
+  return formatInTimeZone(date, timezone, "HH:mm");
+}
+
 /** Datas relativas: Hoje, Ontem, há N dias — usando o fuso do usuário como referência. */
 export function formatRelativeDate(
   date: Date | string,

@@ -1,9 +1,10 @@
 "use client";
 
-import { useRef, useState, type MouseEvent } from "react";
+import { useLayoutEffect, useRef, useState, type MouseEvent } from "react";
 import type { Trend, TrendPoint } from "@reputation/shared-types";
 import { EmptyState } from "@/components/ui/empty-state";
-import { formatDateOnly } from "@/lib/date/format";
+import { formatDateOnly, formatHourOnly } from "@/lib/date/format";
+import { useUserProfile } from "@/hooks/use-user-profile";
 
 const GROUP_COLORS: Record<string, string> = {
   total: "#2f6fed",
@@ -23,19 +24,29 @@ const GROUP_LABELS: Record<string, string> = {
   geral: "Volume geral",
 };
 
-const WIDTH = 640;
+// Largura usada só até o primeiro layout medir o container de verdade (ver
+// useLayoutEffect abaixo) — depois disso, `width` sempre reflete o
+// container real, nunca este valor.
+const DEFAULT_WIDTH = 640;
 const HEIGHT = 220;
-const PADDING_LEFT = 40;
+const PADDING_LEFT = 42;
 const PADDING_RIGHT = 12;
-const PADDING_TOP = 12;
-const PADDING_BOTTOM = 24;
-const PLOT_WIDTH = WIDTH - PADDING_LEFT - PADDING_RIGHT;
+const PADDING_TOP = 14;
+const PADDING_BOTTOM = 26;
 const PLOT_HEIGHT = HEIGHT - PADDING_TOP - PADDING_BOTTOM;
 const Y_TICK_COUNT = 4;
 const MAX_X_LABELS = 6;
+// Um pouco menor que o texto do resto da página (legenda/tooltip usam
+// text-xs, 12px) — eixo é informação de apoio, não deve competir com título/
+// legenda pela atenção do leitor (skill de dataviz: "texto recessivo").
+const AXIS_FONT_SIZE = 10;
 
-function xForIndex(index: number, length: number): number {
-  const stepX = length > 1 ? PLOT_WIDTH / (length - 1) : 0;
+function plotWidth(width: number): number {
+  return width - PADDING_LEFT - PADDING_RIGHT;
+}
+
+function xForIndex(index: number, length: number, width: number): number {
+  const stepX = length > 1 ? plotWidth(width) / (length - 1) : 0;
   return PADDING_LEFT + index * stepX;
 }
 
@@ -43,11 +54,11 @@ function yForValue(value: number, maxValue: number): number {
   return PADDING_TOP + PLOT_HEIGHT - (maxValue > 0 ? (value / maxValue) * PLOT_HEIGHT : 0);
 }
 
-function buildPath(series: TrendPoint[], maxValue: number): string {
+function buildPath(series: TrendPoint[], maxValue: number, width: number): string {
   if (series.length === 0) return "";
   return series
     .map((point, index) => {
-      const x = xForIndex(index, series.length);
+      const x = xForIndex(index, series.length, width);
       const y = yForValue(point.value, maxValue);
       return `${index === 0 ? "M" : "L"}${x.toFixed(1)},${y.toFixed(1)}`;
     })
@@ -60,8 +71,8 @@ function niceYTicks(maxValue: number): number[] {
 }
 
 // Índices do eixo X a rotular — primeiro, último e alguns intermediários,
-// sem lotar o eixo quando a série tem muitos pontos (ex: 30 dias no modo
-// "Mensal", ver header-context.tsx).
+// sem lotar o eixo quando a série tem muitos pontos (ex: 24h no modo
+// "Diário", 30 dias no modo "Mensal", ver header-context.tsx).
 function xLabelIndexes(pointCount: number): number[] {
   if (pointCount <= 1) return [0];
   const step = Math.max(1, Math.ceil((pointCount - 1) / (MAX_X_LABELS - 1)));
@@ -71,14 +82,49 @@ function xLabelIndexes(pointCount: number): number[] {
   return indexes;
 }
 
+// `get_volume_trend` devolve datas puras ("2026-07-19", 10 caracteres) nos
+// grãos day/week/month e instantes ISO completos ("2026-07-19T14:00:00Z")
+// no grão hour (modo "Diário" do header — ver sql-aggregation.md, migration
+// 20260719000000) — o comprimento da string já diferencia os dois casos
+// sem precisar de um campo de grão explícito no envelope.
+function isHourlyPoint(date: string): boolean {
+  return date.length > 10;
+}
+
+function formatAxisLabel(date: string, timezone: string): string {
+  return isHourlyPoint(date) ? formatHourOnly(date, timezone) : formatDateOnly(date).slice(0, 5);
+}
+
 // Gráfico de série temporal (SVG, sem dependência nova) — suporta múltiplas
 // linhas via `series_by_group` (ex: total/positivo/neutro/negativo do
 // volume+sentimento, ver aggregated-metrics/standard-json-envelope.md).
 // Eixos com rótulo + tooltip ao passar o mouse (intelligence-center/overview.md,
 // "Premissas de visualização de dados", regras 1 e 2).
+//
+// `viewBox` acompanha a largura real do container (medida via
+// ResizeObserver), não um valor fixo — antes, um viewBox de largura fixa
+// (640) sendo esticado por CSS (`w-full`) num card mais largo escalava
+// junto o texto dos eixos, fazendo os rótulos renderizarem maiores que a
+// legenda/título da página em telas largas (achado do usuário, 2026-07-19).
+// Com 1 unidade de viewBox = 1px real, `fontSize` sempre renderiza no
+// tamanho literal declarado, em qualquer largura de card.
 export function TrendLineChart({ trend, emptyMessage }: { trend: Trend | undefined; emptyMessage: string }) {
+  const { timezone } = useUserProfile();
+  const containerRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
+  const [width, setWidth] = useState(DEFAULT_WIDTH);
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
+
+  useLayoutEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver((entries) => {
+      const measured = entries[0]?.contentRect.width;
+      if (measured) setWidth(measured);
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
 
   const groups = trend?.series_by_group ?? (trend?.series ? [{ group: "total", series: trend.series }] : []);
   const hasData = groups.some((group) => group.series.length > 0);
@@ -97,17 +143,17 @@ export function TrendLineChart({ trend, emptyMessage }: { trend: Trend | undefin
     const svg = svgRef.current;
     if (!svg) return;
     const rect = svg.getBoundingClientRect();
-    const relativeX = ((event.clientX - rect.left) / rect.width) * WIDTH;
-    const stepX = pointCount > 1 ? PLOT_WIDTH / (pointCount - 1) : 0;
+    const relativeX = ((event.clientX - rect.left) / rect.width) * width;
+    const stepX = pointCount > 1 ? plotWidth(width) / (pointCount - 1) : 0;
     const rawIndex = stepX > 0 ? Math.round((relativeX - PADDING_LEFT) / stepX) : 0;
     setHoverIndex(Math.min(Math.max(rawIndex, 0), pointCount - 1));
   }
 
   return (
-    <div>
+    <div ref={containerRef}>
       <svg
         ref={svgRef}
-        viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
+        viewBox={`0 0 ${width} ${HEIGHT}`}
         className="w-full cursor-crosshair"
         role="img"
         aria-label={trend.label}
@@ -118,8 +164,8 @@ export function TrendLineChart({ trend, emptyMessage }: { trend: Trend | undefin
           const y = yForValue(tick, maxValue);
           return (
             <g key={tick}>
-              <line x1={PADDING_LEFT} x2={WIDTH - PADDING_RIGHT} y1={y} y2={y} stroke="#f3f4f6" strokeWidth={1} />
-              <text x={PADDING_LEFT - 6} y={y + 3} textAnchor="end" fontSize={8} fill="#9aa0ab">
+              <line x1={PADDING_LEFT} x2={width - PADDING_RIGHT} y1={y} y2={y} stroke="#f3f4f6" strokeWidth={1} />
+              <text x={PADDING_LEFT - 6} y={y + 3} textAnchor="end" fontSize={AXIS_FONT_SIZE} fill="#9aa0ab">
                 {new Intl.NumberFormat("pt-BR", { notation: "compact" }).format(tick)}
               </text>
             </g>
@@ -129,20 +175,20 @@ export function TrendLineChart({ trend, emptyMessage }: { trend: Trend | undefin
         {xLabelIndexes(pointCount).map((index) => (
           <text
             key={index}
-            x={xForIndex(index, pointCount)}
-            y={HEIGHT - 6}
+            x={xForIndex(index, pointCount, width)}
+            y={HEIGHT - 8}
             textAnchor="middle"
-            fontSize={8}
+            fontSize={AXIS_FONT_SIZE}
             fill="#9aa0ab"
           >
-            {formatDateOnly(dates[index]).slice(0, 5)}
+            {formatAxisLabel(dates[index], timezone)}
           </text>
         ))}
 
         {hoverIndex !== null && (
           <line
-            x1={xForIndex(hoverIndex, pointCount)}
-            x2={xForIndex(hoverIndex, pointCount)}
+            x1={xForIndex(hoverIndex, pointCount, width)}
+            x2={xForIndex(hoverIndex, pointCount, width)}
             y1={PADDING_TOP}
             y2={HEIGHT - PADDING_BOTTOM}
             stroke="#c9cdd3"
@@ -154,7 +200,7 @@ export function TrendLineChart({ trend, emptyMessage }: { trend: Trend | undefin
         {groups.map((group) => (
           <path
             key={group.group}
-            d={buildPath(group.series, maxValue)}
+            d={buildPath(group.series, maxValue, width)}
             fill="none"
             stroke={GROUP_COLORS[group.group] ?? "#9aa0ab"}
             strokeWidth={2}
@@ -168,50 +214,27 @@ export function TrendLineChart({ trend, emptyMessage }: { trend: Trend | undefin
             return (
               <circle
                 key={group.group}
-                cx={xForIndex(hoverIndex, pointCount)}
+                cx={xForIndex(hoverIndex, pointCount, width)}
                 cy={yForValue(point.value, maxValue)}
-                r={3.5}
-                fill={GROUP_COLORS[group.group] ?? "#9aa0ab"}
-                stroke="#ffffff"
-                strokeWidth={1.5}
-              />
-            );
-          })}
-
-        {/* Rótulo do valor direto na linha, junto ao ponto — pedido do
-            usuário 2026-07-12 (rótulos ao passar o mouse sobre a linha, não
-            só no painel abaixo do gráfico). Peso/tamanho reduzidos
-            (2026-07-12, harmonização): a versão anterior (10px/700/halo 3px)
-            destoava visualmente do resto da página, que usa texto pequeno e
-            leve para rótulos (ver eixos acima, 8px). */}
-        {hoverIndex !== null &&
-          groups.map((group) => {
-            const point = group.series[hoverIndex];
-            if (!point) return null;
-            const x = xForIndex(hoverIndex, pointCount);
-            const y = Math.max(yForValue(point.value, maxValue) - 8, PADDING_TOP + 8);
-            return (
-              <text
-                key={`label-${group.group}`}
-                x={x}
-                y={y}
-                textAnchor="middle"
-                fontSize={9}
-                fontWeight={600}
+                r={4}
                 fill={GROUP_COLORS[group.group] ?? "#9aa0ab"}
                 stroke="#ffffff"
                 strokeWidth={2}
-                paintOrder="stroke"
-              >
-                {new Intl.NumberFormat("pt-BR", { notation: "compact" }).format(point.value)}
-              </text>
+              />
             );
           })}
       </svg>
 
+      {/* Valores no hover ficam só aqui, nunca duplicados como texto solto
+          dentro do SVG (removido 2026-07-19) — o crosshair já aponta o X, e
+          "um tooltip com todas as séries" é o padrão pra esse caso (skill de
+          dataviz, "Interação"), em vez de repetir o mesmo número flutuando
+          perto de cada linha. */}
       {hoverIndex !== null ? (
         <div className="mt-1 flex flex-wrap items-center gap-3 rounded-md border border-border-default bg-bg-card px-3 py-2 text-xs">
-          <span className="font-semibold text-text-primary">{formatDateOnly(dates[hoverIndex])}</span>
+          <span className="font-semibold text-text-primary">
+            {isHourlyPoint(dates[hoverIndex]) ? formatHourOnly(dates[hoverIndex], timezone) : formatDateOnly(dates[hoverIndex])}
+          </span>
           {groups.map((group) => {
             const point = group.series[hoverIndex];
             if (!point) return null;

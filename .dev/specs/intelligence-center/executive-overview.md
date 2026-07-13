@@ -286,7 +286,14 @@ Qualquer usuário autenticado, membro de ao menos uma organização (ver
   Voice (se alguma Query da organização pertencer a um Query Group) —
   `<EmptyState />` textual se não houver Query Group, não esconder o card.
 - **Gráfico**: série temporal de volume por sentimento (linhas/área
-  empilhada), timezone fixo `America/Sao_Paulo`.
+  empilhada), timezone fixo `America/Sao_Paulo`. ✅ **Grão horário no modo
+  "Diário" (2026-07-19)** — `get_volume_trend` (ver
+  `aggregated-metrics/sql-aggregation.md`) muda automaticamente pra
+  `bw_query_metrics_hourly` quando o período selecionado é exatamente 1
+  dia; sem isso, o modo "Diário" caía no mesmo grão `day` das janelas
+  curtas e devolvia um único ponto (o dia inteiro), inútil como série
+  temporal. Nenhuma mudança de parâmetro no frontend — é automático a
+  partir da duração do período já enviado.
 - **Tabela interativa de Narrativas** (ver imagem de referência do usuário):
   uma linha por Narrativa ativa **de qualquer Query da organização** —
   lista única, sem agrupar/expor de qual Query cada uma vem (ver "Fluxo

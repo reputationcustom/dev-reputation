@@ -110,6 +110,15 @@ $$;
 -- "sem sentimento" como "sentimento neutro").
 -- =========================================================================
 
+-- Postgres não permite `create or replace function` mudar as colunas de
+-- retorno de uma function existente (RETURNS TABLE é açúcar sintático
+-- sobre parâmetros OUT, e o erro "cannot change return type of existing
+-- function" trava exatamente nisso) — a function original (migration
+-- 20260714000000) não tinha as 3 colunas de sentimento abaixo, então o
+-- `create or replace` sozinho falha (SQLSTATE 42P13). Precisa dropar
+-- primeiro.
+drop function if exists get_authors_ranking(uuid, date, date, jsonb);
+
 create or replace function get_authors_ranking(
   p_organization_id uuid,
   p_period_start date,

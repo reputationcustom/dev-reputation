@@ -1650,7 +1650,10 @@ first, since every later piece (`sql-aggregation`, `service-layer-aggregation`,
   the >31-day branch is untested by any page today. Adopted ≤31d → daily,
   32–186d → weekly, >186d → monthly; revisit if a future spec makes the
   exact rule explicit (matters once `executive-reports`, Sprint 4, needs
-  longer ranges).
+  longer ranges). ✅ **Gained an `hour` tier (2026-07-19)** — see "Volume/
+  sentiment trend chart" entry near the end of this file for the fix (the
+  1-day "Diário" period was falling into the `day` tier and returning a
+  single point, useless as a time series).
 - **`get_dissemination_graph` returns `jsonb`, not `setof`** — the only way
   for one Postgres function to hand back both `nodes[]` and `edges[]` as a
   single RPC result matching `DisseminationGraph` directly, no reshaping
@@ -2159,6 +2162,75 @@ was specified, not by inventing a new design:
 Full spec updates in `intelligence-center/executive-overview.md` and
 `aggregated-metrics/sql-aggregation.md` (implementation notes dated
 2026-07-13 in both).
+
+### Volume/sentiment trend chart — hourly grain for "Diário" + label-scaling bug fixed (2026-07-19)
+
+User request, still on `/overview`: (1) the "Volume e sentimento ao longo
+do tempo" chart needed to switch to hourly buckets when the header's
+"Diário" period is selected; (2) general polish — the chart's axis/value
+labels were rendering visibly larger than the page's own legends and
+titles, "muito feio."
+
+**Hourly grain.** `get_volume_trend`'s existing automatic-granularity rule
+(≤31d → `day`, 32–186d → `week`, >186d → `month`, see the entry above)
+never had a branch for the "Diário" period specifically (1 day,
+`period.start === period.end` — `header-context.tsx`,
+`PERIOD_MODE_DAYS.daily = 1`): it fell into the same `day` tier as any
+other short window and returned exactly one bucket — the whole day summed
+into a single point, which isn't a time series at all. Fixed in migration
+`20260719000000`: a new `hour` tier, triggered when the period spans
+exactly 1 day, sources `bw_query_metrics_hourly` (already existed and
+already synced every invocation for `event-radar`/Velocidade, see
+"foundation gap closure" above — no new Brandwatch call, no new sync
+phase). Required dropping and recreating the function because its return
+type changed: `bucket_date` is now `text`, not `date` — the `hour` tier
+needs to carry a real instant (`to_char(metric_hour at time zone 'utc',
+'YYYY-MM-DD"T"HH24:MI:SS"Z"')`, a full ISO 8601 UTC string), while
+day/week/month keep returning a plain `YYYY-MM-DD` date (10 characters).
+The frontend (`TrendLineChart`) tells the two apart by string length
+rather than a new explicit grain field on `Trend`/`TrendPoint` — both stay
+`{ date: string, value: number }`, no envelope contract change. This
+applies to every page that renders this chart from the shared header
+period (`overview`, `narrative_detail`, `sentiment` all use
+`TrendLineChart` off the same `get_volume_trend` call), not just
+`/overview` — same fix, no extra work.
+
+**Label-scaling bug — root cause.** The chart is a hand-rolled SVG with a
+*fixed* `viewBox="0 0 640 220"` stretched to the container's actual width
+via CSS (`w-full`). On a widget spanning 2 of 3 grid columns, the
+container can render considerably wider than 640px — and because SVG
+scales every unit inside the `viewBox` (including `font-size`) by the same
+ratio as the container-to-viewBox width, a `fontSize={8}`/`{9}` that looks
+right at 640px CSS-px could render 30–40%+ larger on a wide desktop
+monitor, while the surrounding HTML legend/tooltip text (Tailwind
+`text-xs`, a fixed 12px regardless of container width) stayed put — hence
+axis/value labels visibly outgrowing the legend and title, exactly what
+the user flagged. This had been masked, not fixed, by two prior
+size-reduction passes (2026-07-12, "chart harmonization" — see "UI polish
+pass" above) that shrank the declared `fontSize` without addressing why it
+was scaling in the first place.
+
+**Fix.** `TrendLineChart` now measures its container's real pixel width
+via `ResizeObserver` (`useLayoutEffect`, to measure before paint and
+minimize an initial-render jump) and sets the SVG's `viewBox` width to
+that exact measurement instead of a fixed constant — 1 `viewBox` unit now
+always equals 1 real CSS pixel, in any card width, on any screen, so a
+declared `fontSize={10}` always renders as literal 10px. Axis label size
+was raised slightly (8/9px → 10px, still below the legend's 12px, so it
+reads as intentionally recessive rather than illegibly cramped) now that
+it's no longer at risk of silently ballooning.
+
+Also removed, per a pass through the `dataviz` skill (loaded before this
+edit — its interaction guidance calls for exactly one shared tooltip
+carrying every series' value at the hovered X, not the value repeated a
+second time as floating text next to each line): the inline per-point SVG
+value labels added 2026-07-12 ("rótulos ao passar o mouse sobre a linha")
+are gone. They were the single largest contributor to the "too big" read
+(bold text with a 2–3px white halo, the loudest element on the chart) and
+were genuinely redundant — the HTML tooltip panel directly below the
+chart already lists every series' value at the same X on hover, in
+properly-sized, non-scaling text. The crosshair line + point markers on
+hover are unchanged; only the floating numbers were removed.
 
 ## Directory structure
 
