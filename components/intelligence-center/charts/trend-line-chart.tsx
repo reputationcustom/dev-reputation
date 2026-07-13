@@ -119,7 +119,7 @@ export function TrendLineChart({ trend, emptyMessage }: { trend: Trend | undefin
           return (
             <g key={tick}>
               <line x1={PADDING_LEFT} x2={WIDTH - PADDING_RIGHT} y1={y} y2={y} stroke="#f3f4f6" strokeWidth={1} />
-              <text x={PADDING_LEFT - 6} y={y + 3} textAnchor="end" fontSize={9} fill="#9aa0ab">
+              <text x={PADDING_LEFT - 6} y={y + 3} textAnchor="end" fontSize={8} fill="#9aa0ab">
                 {new Intl.NumberFormat("pt-BR", { notation: "compact" }).format(tick)}
               </text>
             </g>
@@ -132,7 +132,7 @@ export function TrendLineChart({ trend, emptyMessage }: { trend: Trend | undefin
             x={xForIndex(index, pointCount)}
             y={HEIGHT - 6}
             textAnchor="middle"
-            fontSize={9}
+            fontSize={8}
             fill="#9aa0ab"
           >
             {formatDateOnly(dates[index]).slice(0, 5)}
@@ -180,7 +180,10 @@ export function TrendLineChart({ trend, emptyMessage }: { trend: Trend | undefin
 
         {/* Rótulo do valor direto na linha, junto ao ponto — pedido do
             usuário 2026-07-12 (rótulos ao passar o mouse sobre a linha, não
-            só no painel abaixo do gráfico). */}
+            só no painel abaixo do gráfico). Peso/tamanho reduzidos
+            (2026-07-12, harmonização): a versão anterior (10px/700/halo 3px)
+            destoava visualmente do resto da página, que usa texto pequeno e
+            leve para rótulos (ver eixos acima, 8px). */}
         {hoverIndex !== null &&
           groups.map((group) => {
             const point = group.series[hoverIndex];
@@ -193,11 +196,11 @@ export function TrendLineChart({ trend, emptyMessage }: { trend: Trend | undefin
                 x={x}
                 y={y}
                 textAnchor="middle"
-                fontSize={10}
-                fontWeight={700}
+                fontSize={9}
+                fontWeight={600}
                 fill={GROUP_COLORS[group.group] ?? "#9aa0ab"}
                 stroke="#ffffff"
-                strokeWidth={3}
+                strokeWidth={2}
                 paintOrder="stroke"
               >
                 {new Intl.NumberFormat("pt-BR", { notation: "compact" }).format(point.value)}

@@ -39,8 +39,14 @@ function NavLink({ href, label, collapsed, onNavigate }: { href: string; label: 
       href={href}
       onClick={onNavigate}
       className={`block truncate rounded-md px-3 py-2 text-sm font-medium transition-colors ${
+        // Item ativo usa accent-blue — mesma cor da seleção dos botões de
+        // período no header (page-header-bar.tsx), pedido do usuário
+        // 2026-07-12 ("deixar o destaque em azul claro, mesma cor da
+        // seleção dos botões de período"). Antes usava bg-sidebar-active
+        // (navy escuro), quase invisível contra o fundo navy da própria
+        // sidebar.
         active
-          ? "bg-bg-sidebar-active text-white"
+          ? "bg-accent-blue text-white"
           : "text-text-sidebar-inactive hover:bg-bg-sidebar-active hover:text-white"
       }`}
     >
@@ -73,20 +79,40 @@ export function Sidebar({
         collapsed ? "w-16" : "w-60"
       }`}
     >
-      <div className="flex items-center justify-between px-1">
-        {!collapsed && (
-          <span className="truncate text-sm font-bold text-white">Digital Intelligent Communication</span>
-        )}
-        <button
-          type="button"
-          onClick={onToggleCollapse}
-          aria-label={collapsed ? "Expandir menu" : "Ocultar menu"}
-          title={collapsed ? "Expandir menu" : "Ocultar menu"}
-          className="flex-shrink-0 rounded-md p-2 text-text-sidebar-inactive hover:bg-bg-sidebar-active hover:text-white"
-        >
-          {collapsed ? "»" : "«"}
-        </button>
-      </div>
+      {/* Logo placeholder (public/logo.svg, ver CLAUDE.md sobre tamanho
+          recomendado) — visível tanto expandido quanto no rail colapsado,
+          pedido do usuário 2026-07-12 ("imagem que eu possa substituir pela
+          logo"). */}
+      {collapsed ? (
+        <div className="flex flex-col items-center gap-2 px-1">
+          <img src="/logo.svg" alt="Comunicação Inteligente" className="h-7 w-7 rounded-md" />
+          <button
+            type="button"
+            onClick={onToggleCollapse}
+            aria-label="Expandir menu"
+            title="Expandir menu"
+            className="rounded-md p-2 text-text-sidebar-inactive hover:bg-bg-sidebar-active hover:text-white"
+          >
+            »
+          </button>
+        </div>
+      ) : (
+        <div className="flex items-center justify-between px-1">
+          <div className="flex min-w-0 items-center gap-2">
+            <img src="/logo.svg" alt="Comunicação Inteligente" className="h-8 w-8 flex-shrink-0 rounded-md" />
+            <span className="truncate text-sm font-bold text-white">Comunicação Inteligente</span>
+          </div>
+          <button
+            type="button"
+            onClick={onToggleCollapse}
+            aria-label="Ocultar menu"
+            title="Ocultar menu"
+            className="flex-shrink-0 rounded-md p-2 text-text-sidebar-inactive hover:bg-bg-sidebar-active hover:text-white"
+          >
+            «
+          </button>
+        </div>
+      )}
 
       <nav className="mt-8 flex flex-col gap-1">
         {NAV_ITEMS.map((item) => (

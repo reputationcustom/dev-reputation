@@ -1059,6 +1059,32 @@ acelera consultas de "só os influentes".
 > chamadas extras: impressões + temas, ver `bw_query_author_topics`
 > abaixo). Ampliar pra Narrativas específicas fica como ampliação futura.
 
+> ⚠️ **`sentiment_positive`/`neutral`/`negative` — achado real numa
+> auditoria (2026-07-17, pedido do usuário: "verifique como estão vindo os
+> dados da brandwatch sobre sentimento... por autores")**: essas 3 colunas
+> existem desde a criação da tabela (`20260710010000`) e `bw-sync` escreve
+> nelas lendo `d.sentiment ?? {}` da resposta de
+> `data/volume/topauthors/queries` (`syncTopAuthors()`) — mas, diferente de
+> **todo** campo vizinho nesta mesma tabela (`tweets`/`retweets`/
+> `account_type`/`country_code`/`country_name`, todos com nota explícita
+> "confirmado contra developers.brandwatch.com/docs/top-tweeters"), este
+> mapeamento **nunca foi confirmado** contra a documentação real do
+> endpoint — o payload documentado (`authorVolume`/`reachEstimate`/
+> `impact`/`twitterFollowers`/`twitterTweets`/`twitterRetweets`/
+> `authorAccountType`/`countryCode`/`countryName`) não cita nenhum objeto
+> `sentiment`. Risco real: `d.sentiment` provavelmente é sempre
+> `undefined`, e as 3 colunas ficam sempre `0/0/0` em produção, sem nenhum
+> erro (`?? 0` absorve silenciosamente). **Decisão do usuário**: não gastar
+> uma chamada nova pra confirmar/substituir agora — `aggregated-metrics.
+> get_authors_ranking` (ver `sql-aggregation.md`) foi corrigida pra NUNCA
+> ler estas 3 colunas, usando `bw_query_author_topics` (fonte já
+> confirmada, abaixo) como origem de "sentimento por autor" em vez disso.
+> Estas colunas continuam existindo/sendo escritas (não removidas), só não
+> têm mais nenhum consumidor downstream — revisar contra logs reais de
+> produção antes de reativar seu uso. Mesma ressalva vale para
+> `bw_query_top_tweeters.sentiment_positive/neutral/negative` (estrutura
+> idêntica, ver abaixo).
+
 > ✅ **Ampliação (2026-07-10, migration `20260710040000`)**: pedido do
 > usuário — "influência do autor" também precisa ser por Narrativa, não
 > amostrada. `bw-sync` passa `category=<id>` como filtro em

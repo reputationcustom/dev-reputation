@@ -26,7 +26,13 @@ const FILTRO_CHIPS = [
   "Nível de risco",
 ];
 
-export function PageHeaderBar({ title, subtitle }: { title: string; subtitle?: string }) {
+// `title` é opcional: a página de detalhe de Narrativa
+// (narratives/[id]/page.tsx) já renderiza seu próprio <h1> + badges no
+// corpo quando carregada, então nesse caso ela não passa `title` aqui, pra
+// não duplicar o mesmo texto duas vezes empilhado (só os 3 estados
+// loading/erro/não-encontrado, que não têm h1 próprio, passam um título
+// genérico).
+export function PageHeaderBar({ title, subtitle }: { title?: string; subtitle?: string }) {
   const {
     organizations,
     organizationsStatus,
@@ -41,52 +47,55 @@ export function PageHeaderBar({ title, subtitle }: { title: string; subtitle?: s
   const [filtrosOpen, setFiltrosOpen] = useState(false);
 
   return (
-    <div className="flex flex-col gap-4 border-b border-border-default bg-bg-card px-8 py-5">
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <h1 className="text-xl font-bold text-text-primary">{title}</h1>
-          {subtitle && <p className="mt-1 text-sm text-text-secondary">{subtitle}</p>}
-        </div>
+    <div>
+      {/* Barra de controles (organização/período/filtros) — fundo branco,
+          separada do título por design (ver protótipo real: o título da
+          página não fica dentro dessa barra, fica solto no corpo da
+          página, ver bloco abaixo). Revisão de paridade 2026-07-12: a
+          versão anterior colocava o <h1> dentro desta mesma barra branca,
+          divergindo do protótipo. */}
+      <div className="flex flex-col gap-4 border-b border-border-default bg-bg-card px-8 py-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-3">
+            {organizationsStatus === "error" && (
+              <ErrorMessage message="Não foi possível carregar suas organizações." onRetry={retryOrganizations} />
+            )}
 
-        <div className="flex flex-wrap items-center gap-3">
-          {organizationsStatus === "error" && (
-            <ErrorMessage message="Não foi possível carregar suas organizações." onRetry={retryOrganizations} />
-          )}
-
-          {organizationsStatus === "loaded" && organizations.length > 1 && (
-            <select
-              value={organizationId ?? ""}
-              onChange={(event) => setOrganizationId(event.target.value)}
-              className="rounded-md border border-border-default px-3 py-2 text-sm text-text-primary outline-none focus:border-accent-blue"
-            >
-              {organizations.map((org) => (
-                <option key={org.id} value={org.id}>
-                  {org.name}
-                </option>
-              ))}
-            </select>
-          )}
-
-          <div className="flex rounded-md border border-border-default p-0.5">
-            {PERIOD_MODE_OPTIONS.map((option) => (
-              <button
-                key={option.mode}
-                type="button"
-                onClick={() => setPeriodMode(option.mode)}
-                className={`rounded px-3 py-1.5 text-sm font-medium transition-colors ${
-                  periodMode === option.mode
-                    ? "bg-accent-blue text-white"
-                    : "text-text-secondary hover:bg-bg-page"
-                }`}
+            {organizationsStatus === "loaded" && organizations.length > 1 && (
+              <select
+                value={organizationId ?? ""}
+                onChange={(event) => setOrganizationId(event.target.value)}
+                className="rounded-md border border-border-default px-3 py-2 text-sm text-text-primary outline-none focus:border-accent-blue"
               >
-                {option.label}
-              </button>
-            ))}
-          </div>
+                {organizations.map((org) => (
+                  <option key={org.id} value={org.id}>
+                    {org.name}
+                  </option>
+                ))}
+              </select>
+            )}
 
-          {periodMode === "custom" && (
-            <CustomRangePicker range={customRange} onChange={setCustomRange} />
-          )}
+            <div className="flex rounded-md border border-border-default p-0.5">
+              {PERIOD_MODE_OPTIONS.map((option) => (
+                <button
+                  key={option.mode}
+                  type="button"
+                  onClick={() => setPeriodMode(option.mode)}
+                  className={`rounded px-3 py-1.5 text-sm font-medium transition-colors ${
+                    periodMode === option.mode
+                      ? "bg-accent-blue text-white"
+                      : "text-text-secondary hover:bg-bg-page"
+                  }`}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+
+            {periodMode === "custom" && (
+              <CustomRangePicker range={customRange} onChange={setCustomRange} />
+            )}
+          </div>
 
           <button
             type="button"
@@ -96,21 +105,30 @@ export function PageHeaderBar({ title, subtitle }: { title: string; subtitle?: s
             Filtros {filtrosOpen ? "▲" : "▼"}
           </button>
         </div>
+
+        {filtrosOpen && (
+          <div className="flex flex-col gap-2 rounded-md border border-border-default bg-bg-page p-4">
+            <p className="text-xs font-semibold text-text-secondary">FILTROS AVANÇADOS</p>
+            <div className="flex flex-wrap gap-2">
+              {FILTRO_CHIPS.map((label) => (
+                <span
+                  key={label}
+                  className="rounded-full bg-bg-card px-3 py-1.5 text-xs font-medium text-text-secondary"
+                >
+                  {label}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
-      {filtrosOpen && (
-        <div className="flex flex-col gap-2 rounded-md border border-border-default bg-bg-page p-4">
-          <p className="text-xs font-semibold text-text-secondary">FILTROS AVANÇADOS</p>
-          <div className="flex flex-wrap gap-2">
-            {FILTRO_CHIPS.map((label) => (
-              <span
-                key={label}
-                className="rounded-full bg-bg-card px-3 py-1.5 text-xs font-medium text-text-secondary"
-              >
-                {label}
-              </span>
-            ))}
-          </div>
+      {/* Título da página — solto no canvas cinza, não dentro da barra
+          branca acima (ver comentário no bloco anterior). */}
+      {title && (
+        <div className="px-8 pt-6">
+          <h1 className="text-2xl font-bold text-text-primary md:text-3xl">{title}</h1>
+          {subtitle && <p className="mt-1 text-sm text-text-secondary">{subtitle}</p>}
         </div>
       )}
     </div>

@@ -46,14 +46,14 @@ export default function IntelligenceCenterLayout({ children }: { children: React
               <span className="block h-[2.5px] w-[22px] rounded-full bg-text-primary" />
               <span className="block h-[2.5px] w-[22px] rounded-full bg-text-primary" />
             </button>
-            <div className="h-[26px] w-[26px] flex-shrink-0 rounded-[7px] rounded-bl-sm bg-accent-blue" />
-            <span className="text-sm font-bold text-text-primary">Digital Intelligent Communication</span>
+            <img src="/logo.svg" alt="Comunicação Inteligente" className="h-[26px] w-[26px] flex-shrink-0 rounded-[7px]" />
+            <span className="text-sm font-bold text-text-primary">Comunicação Inteligente</span>
           </div>
 
           <main className="flex min-w-0 flex-1 flex-col">{children}</main>
 
           <footer className="border-t border-border-default bg-bg-card px-8 py-3 text-xs text-text-tertiary">
-            Digital Intelligent Communication
+            Comunicação Inteligente
           </footer>
         </div>
       </div>

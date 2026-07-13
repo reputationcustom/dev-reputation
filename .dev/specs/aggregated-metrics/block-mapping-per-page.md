@@ -3,7 +3,7 @@ tipo: feature-spec
 módulo: aggregated-metrics
 funcionalidade: block-mapping-per-page
 status: pronto
-atualizado: 2026-07-12
+atualizado: 2026-07-17
 ---
 
 # Mapeamento de Blocos por Página
@@ -23,7 +23,7 @@ de preencher os marcados como obrigatórios.
 | Bloco \ Página        | Visão Geral (`overview`) | Narrativas — lista (`narratives`) | Narrativa — detalhe (`narrative_detail`) | Sentimento (`sentiment`) | Plataformas (`platforms`) | Pautas Eleitorais (`themes`) | Autores (`authors`) | Alertas (`alerts`) | Relatórios (`reports`) |
 |------------------------|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
 | `metrics`               | ●   | —   | —   | —   | —   | —   | —   | —   | ●   |
-| `breakdowns`             | ● (sentimento) | — | ● (sentimento/plataforma/localização da narrativa) | ● (geral/plataforma/pauta/região) | ● (sentimento por plataforma) | ● (sentimento por pauta) | — | — | ● |
+| `breakdowns`             | ● (sentimento) | — | ● (sentimento/plataforma/localização da narrativa) | ● (geral/plataforma/pauta/**narrativa**/região) | ● (sentimento por plataforma) | ● (sentimento por pauta) | — | — | ● |
 | `trends`                 | ● (volume+sentimento) | — | ● (evolução da narrativa vs. volume geral) | ● (evolução do sentimento) | ● (volume por plataforma) | ● (SOV por pauta ao longo do tempo) | — | — | ● |
 | `narratives`             | ● (top narrativas) | ● (tabela completa) | — | — | ● (narrativas dominantes por plataforma) | ● (narrativas dentro da pauta) | — | — | ● |
 | `authors`                | — | — | ● (principais disseminadores) | — | ● (perfis relevantes por plataforma) | ● (autores/comunidades por pauta) | ● (ranking completo) | — | — |

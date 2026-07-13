@@ -3,10 +3,38 @@ tipo: feature-spec
 módulo: intelligence-center
 funcionalidade: executive-overview
 status: implementado
-atualizado: 2026-07-16
+atualizado: 2026-07-12
 ---
 
 # Executive Overview
+
+> ✅ **Ajustes de UI (2026-07-12, sessão de polish pedida pelo usuário)**:
+> 4 mudanças nesta página, nenhuma de backend além de um fix pontual em
+> `get_metrics_cards` — ver `CLAUDE.md`, "UI polish pass" pra detalhamento
+> completo:
+> 1. **Tooltips nos 5 cards de KPI** (`metric-card.tsx`) — ícone "?" com
+>    definição simplificada por hover, traduzida a partir da documentação
+>    oficial da Brandwatch (`chart-dimensions-and-aggregates`,
+>    `mention-metadata-field-definitions`).
+> 2. **"Sentimento geral" agora usa `net_sentiment` como %** — o card já lia
+>    `net_sentiment` (média ponderada por `total_mentions`, migration
+>    `20260714000000`), só a apresentação mudou: valor formatado com `%`
+>    (`unit: 'net_sentiment_pct'`) e a variação vs. período anterior deixa
+>    de ser % relativa (sem sentido pra um score que cruza zero) e passa a
+>    ser diferença absoluta em pontos percentuais ("X p.p."). Fix em
+>    `get_metrics_cards`, migration `20260717010000`.
+> 3. **Rótulos do gráfico de linha harmonizados** (`trend-line-chart.tsx`)
+>    — eixos e rótulo de valor no hover reduzidos (8-9px, peso 600 em vez
+>    de 700, halo mais fino), destoavam do resto da página.
+> 4. **Tabela de Narrativas movida acima do painel de Insights** — prioriza
+>    a tabela acionável; Insights ainda renderiza vazio na maior parte do
+>    tempo (depende de `event-radar`/`ai-synthesis`, não implementados).
+>
+> Mesma sessão também mudou `PageHeaderBar` (compartilhado pelas 6
+> páginas, não só esta) — título/subtítulo da página saíram de dentro da
+> barra branca de controles (organização/período/filtros) e passaram a
+> ficar soltos no canvas cinza abaixo dela, maiores (`text-2xl`/`text-3xl`),
+> igual ao protótipo real — ver `overview.md` e `CLAUDE.md`.
 
 > ✅ **Implementado (2026-07-15, ajustes 2026-07-12)**: `/overview`
 > (`app/(intelligence-center)/(analytics)/overview/page.tsx`) consome o

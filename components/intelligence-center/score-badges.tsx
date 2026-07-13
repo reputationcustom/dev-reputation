@@ -101,3 +101,52 @@ export function MomentumLabel({ score }: { score: number | null }) {
   if (score === null) return <span className="text-sm text-text-tertiary">—</span>;
   return <span className="text-sm text-text-secondary">{momentumBand(score).label}</span>;
 }
+
+const RISK_LEGEND: { label: string; text: string; bg: string }[] = [
+  RISK_META.low,
+  RISK_META.medium,
+  RISK_META.high,
+  RISK_META.critical,
+].map((meta) => meta);
+
+const MOMENTUM_LEGEND = [
+  { label: "Muito baixo", color: "bg-intensity-1" },
+  { label: "Baixo", color: "bg-intensity-2" },
+  { label: "Moderado", color: "bg-intensity-3" },
+  { label: "Alto", color: "bg-intensity-4" },
+  { label: "Explosivo", color: "bg-intensity-5" },
+];
+
+// Legenda das faixas de Risco/Momentum (pedido do usuário, fim da Visão
+// Geral) — mesmos thresholds/cores/rótulos de RiskBadge/ScoreBar acima,
+// nenhum valor novo inventado aqui.
+export function ScoreLegend() {
+  return (
+    <div className="flex flex-col gap-4 sm:flex-row sm:gap-10">
+      <div className="flex flex-col gap-2">
+        <span className="text-xs font-medium uppercase text-text-tertiary">Risco</span>
+        <div className="flex flex-wrap gap-2">
+          {RISK_LEGEND.map((meta) => (
+            <span
+              key={meta.label}
+              className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold ${meta.bg} ${meta.text}`}
+            >
+              {meta.label}
+            </span>
+          ))}
+        </div>
+      </div>
+      <div className="flex flex-col gap-2">
+        <span className="text-xs font-medium uppercase text-text-tertiary">Momentum</span>
+        <div className="flex flex-wrap gap-3">
+          {MOMENTUM_LEGEND.map((band) => (
+            <span key={band.label} className="inline-flex items-center gap-1.5 text-xs text-text-secondary">
+              <span className={`h-2 w-2 rounded-full ${band.color}`} aria-hidden />
+              {band.label}
+            </span>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}

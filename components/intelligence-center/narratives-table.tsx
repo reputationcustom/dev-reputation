@@ -92,7 +92,15 @@ export function NarrativesTable({
                 onRowClick ? "cursor-pointer hover:bg-bg-page" : ""
               } ${selectedId === row.id ? "bg-accent-blue-bg" : ""}`}
             >
-              <td className="px-4 py-3 font-medium text-text-primary">{row.title}</td>
+              <td className="px-4 py-3 font-medium text-text-primary">
+                <Link
+                  href={`/narratives/${row.id}`}
+                  onClick={(e) => e.stopPropagation()}
+                  className="hover:text-accent-blue hover:underline"
+                >
+                  {row.title}
+                </Link>
+              </td>
               {/* 0 tratado como "—", igual a null (overview.md, "Premissas de visualização de dados", regra 5) */}
               <td className="px-4 py-3 text-text-secondary">
                 {row.sov_pct === null || row.sov_pct === 0 ? "—" : `${row.sov_pct}%`}

@@ -8,6 +8,7 @@ import { BreakdownPanel } from "@/components/intelligence-center/charts/breakdow
 import { TrendLineChart } from "@/components/intelligence-center/charts/trend-line-chart";
 import { NarrativesTable } from "@/components/intelligence-center/narratives-table";
 import { HighlightsPanel, NarrativeTextPanel } from "@/components/intelligence-center/insights-panel";
+import { ScoreLegend } from "@/components/intelligence-center/score-badges";
 
 // Visão Geral (`/overview`, intelligence-center/executive-overview.md) —
 // página de entrada pós-login. Consome o envelope de get-page-overview
@@ -48,6 +49,14 @@ export default function OverviewPage() {
           </WidgetCard>
         </div>
 
+        {/* Narrativas acima de Insights (pedido do usuário 2026-07-12) —
+            prioriza a tabela acionável antes do painel de insights, que
+            hoje sempre renderiza vazio (event-radar/ai-synthesis ainda não
+            implementados, ver _pending.md). */}
+        <WidgetCard title="Narrativas" status={status} onRetry={retry}>
+          <NarrativesTable rows={(envelope?.narratives ?? []).slice(0, 10)} />
+        </WidgetCard>
+
         <WidgetCard title="Insights" status={status} onRetry={retry}>
           <div className="flex flex-col gap-4">
             <NarrativeTextPanel text={envelope?.narrative_text ?? null} />
@@ -55,9 +64,7 @@ export default function OverviewPage() {
           </div>
         </WidgetCard>
 
-        <WidgetCard title="Narrativas" status={status} onRetry={retry}>
-          <NarrativesTable rows={(envelope?.narratives ?? []).slice(0, 10)} />
-        </WidgetCard>
+        <ScoreLegend />
       </div>
     </>
   );

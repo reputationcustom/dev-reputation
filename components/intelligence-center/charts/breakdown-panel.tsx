@@ -57,6 +57,35 @@ function SentimentBar({ breakdown }: { breakdown: Breakdown }) {
   );
 }
 
+// Breakdown type='narrative' — split completo (positive/neutral/negative),
+// diferente de platform/theme (net_sentiment único). Uma barra empilhada por
+// Narrativa, mesmo visual de SentimentBar só que repetido por linha (pedido
+// do usuário 2026-07-17, "Sentimento por narrativa" — dado já existia em
+// narrative_metrics, só faltava o bloco/function, ver
+// get_narrative_sentiment_breakdown em sql-aggregation.md).
+function NarrativeSentimentList({ breakdown }: { breakdown: Breakdown }) {
+  const items = breakdown.items.filter((item) => item.value > 0);
+
+  if (items.length === 0) {
+    return <EmptyState message="Nenhuma Narrativa com menções no período selecionado." />;
+  }
+
+  return (
+    <div className="flex flex-col gap-4">
+      {items.map((item) => (
+        <div key={item.label} className="flex flex-col gap-1.5">
+          <span className="text-sm font-medium text-text-primary">{item.label}</span>
+          <div className="flex h-2 overflow-hidden rounded-full">
+            <div className="bg-sentiment-positive" style={{ width: `${item.positive ?? 0}%` }} />
+            <div className="bg-sentiment-neutral" style={{ width: `${item.neutral ?? 0}%` }} />
+            <div className="bg-sentiment-negative" style={{ width: `${item.negative ?? 0}%` }} />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // Breakdowns de type='platform'/'theme' — o `value` aqui é net_sentiment
 // (score -100..100, não uma contagem/percentual), ver sql-aggregation.md
 // ("get_platform_breakdown"/"get_theme_breakdown"). Renderizado
@@ -104,6 +133,10 @@ export function BreakdownPanel({ breakdown, emptyMessage }: { breakdown: Breakdo
 
   if (breakdown.type === "sentiment") {
     return <SentimentBar breakdown={breakdown} />;
+  }
+
+  if (breakdown.type === "narrative") {
+    return <NarrativeSentimentList breakdown={breakdown} />;
   }
 
   return <ScoreList breakdown={breakdown} />;

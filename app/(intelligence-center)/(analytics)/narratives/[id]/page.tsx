@@ -87,7 +87,9 @@ export default function NarrativeDetailPage() {
 
   return (
     <>
-      <PageHeaderBar title={summary.title} />
+      {/* Sem `title` aqui — a página já renderiza seu próprio <h1> +
+          badges logo abaixo, ver comentário em page-header-bar.tsx. */}
+      <PageHeaderBar />
       <div className="flex flex-col gap-6 p-8">
       <div>
         <Link href="/narratives" className="text-sm font-medium text-accent-blue hover:underline">

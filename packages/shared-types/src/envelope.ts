@@ -43,7 +43,7 @@ export type VelocityLabel = 'shrinking_fast' | 'declining' | 'stable' | 'growing
 // Reaproveitado tanto por narratives[].risk_label quanto por authors[].risk_level/highlights[].severity.
 export type RiskLevel = 'low' | 'medium' | 'high' | 'critical';
 
-export type BreakdownType = 'sentiment' | 'platform' | 'theme' | 'region';
+export type BreakdownType = 'sentiment' | 'platform' | 'theme' | 'narrative' | 'region';
 
 export type GraphEdgeType = 'reply' | 'retweet' | 'mention';
 
@@ -78,6 +78,12 @@ export interface BreakdownItem {
   label: string;
   value: number;
   pct: number;
+  // Só presentes quando type === 'narrative' — split completo (não um score
+  // único como platform/theme), ver get_narrative_sentiment_breakdown em
+  // sql-aggregation.md.
+  positive?: number;
+  neutral?: number;
+  negative?: number;
 }
 
 export interface Breakdown {
@@ -128,6 +134,15 @@ export interface AuthorRow {
   // "Scores de Narrativa" formula), no spec defines a risk formula for an
   // individual author — see sql-aggregation.md, get_authors_ranking.
   risk_level: RiskLevel | null;
+  // Null para a maioria dos autores: só os top 10 por volume da Query
+  // inteira são enriquecidos com temas por autor (bw_query_author_topics),
+  // única fonte confiável de sentimento por autor — ver
+  // sql-aggregation.md, get_authors_ranking, e data-model.md,
+  // "bw_query_top_authors" (campo sentiment_* dessa tabela nunca confirmado
+  // contra o payload real do endpoint, não usado aqui).
+  sentiment_positive: number | null;
+  sentiment_neutral: number | null;
+  sentiment_negative: number | null;
   is_influential: boolean;
 }
 

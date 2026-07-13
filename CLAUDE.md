@@ -1210,6 +1210,85 @@ used to apply to `bw-sync`.)
   `sql-aggregation.md`/`service-layer-aggregation.md` to document this as
   a settled decision, not an open question.
 
+### Sentimento por narrativa/autores — auditoria e correções (2026-07-17)
+
+User request: auditar de onde vêm os dados de sentimento por
+plataforma/narrativa/autores/termos ("phrases" ligadas a sentimento
+positivo/negativo) em toda a cadeia (`foundation`/`bw-sync` → SQL/Edge
+Functions → frontend), já que essas informações apareciam ausentes na UI.
+Achados e correções:
+
+- **Sentimento por plataforma/pauta**: confirmado como já implementado
+  corretamente em toda a cadeia (`get_platform_breakdown`/
+  `get_theme_breakdown`, renderizado em `/sentiment` e `/platforms`) — não
+  estava faltando. A limitação real (score único `net_sentiment`, sem
+  split positivo/neutro/negativo — API da Brandwatch não documenta essa
+  combinação de 3 dimensões) já estava corretamente sinalizada desde
+  2026-07-12, não é um bug.
+- **Sentimento por narrativa — gap real, fechado nesta sessão**: o dado
+  (`narrative_metrics.sentiment_positive/neutral/negative`) já existia,
+  não amostrado, desde a implementação original de `foundation` — mas
+  nenhuma function/bloco do envelope o expunha como lista por Narrativa
+  (`BreakdownType` só tinha `'sentiment'|'platform'|'theme'|'region'`,
+  `block-mapping-per-page.md` nunca marcou esse breakdown pra `/sentiment`,
+  e o próprio `sentiment/page.tsx` já documentava esse gap inline desde
+  2026-07-15/16). Fechado: nova function `get_narrative_sentiment_breakdown`
+  (migration `20260717000000`, breakdown `type = 'narrative'`, split
+  completo — diferente de platform/theme que só têm `net_sentiment`),
+  escopada a Narrativas-folha (`bw_categories.parent_id is not null`,
+  `status = 'active'`, mesma granularidade da aba Narrativas). Wiring:
+  `BreakdownItem` ganhou `positive?/neutral?/negative?` opcionais
+  (`packages/shared-types/src/envelope.ts` + cópia inline em
+  `supabase/functions-shared-source/aggregated-metrics-service.ts`,
+  recopiada nas 6 Edge Functions `get-page-*`/`get-narrative-detail` por
+  Princípio 5); `PAGE_BREAKDOWN_TYPES.sentiment` ganhou `'narrative'`;
+  novo widget "Sentimento por narrativa" em `/sentiment`
+  (`NarrativeSentimentList` em `breakdown-panel.tsx`, barra empilhada por
+  Narrativa, reaproveitando as mesmas classes `bg-sentiment-*` já
+  existentes).
+- **Sentimento por autor — achado de integridade de dado + gap real,
+  ambos fechados**: `bw_query_top_authors.sentiment_positive/neutral/
+  negative` (e o espelho em `bw_query_top_tweeters`) é escrito desde
+  `20260710010000` lendo `d.sentiment ?? {}` da resposta de
+  `data/volume/topauthors/queries` — mas, diferente de **todo** campo
+  vizinho na mesma tabela (`tweets`/`retweets`/`account_type`/
+  `country_code`, todos com nota "confirmado contra
+  developers.brandwatch.com/docs/top-tweeters"), esse mapeamento nunca foi
+  confirmado, e o payload documentado desse endpoint não cita nenhum
+  objeto `sentiment` — risco real de ser sempre `0/0/0` em produção sem
+  erro nenhum (fallback silencioso `?? 0`). Decisão do usuário: não gastar
+  chamada nova pra confirmar/substituir agora, documentar o achado (ver
+  `foundation/data-model.md`, `_pending.md` #23) e usar em vez disso
+  `bw_query_author_topics` (fonte já confirmada — `data/topics?author=
+  <handle>`, mesmo padrão do `impressions` por autor) como origem real de
+  "sentimento por autor". `get_authors_ranking` (migration `20260717000000`)
+  ganhou `LEFT JOIN` agregado sobre `bw_query_author_topics` (soma os 3
+  contadores entre os temas do autor, semana mais recente por autor) —
+  **nunca** lê as colunas não confirmadas. `AuthorRow` ganhou
+  `sentiment_positive/neutral/negative` (nullable — `null` pra qualquer
+  autor fora do top 10 enriquecido, nunca `0/0/0` inventado);
+  `AuthorsList` (`components/intelligence-center/authors-list.tsx`) mostra
+  um badge de sentimento dominante só quando os 3 campos vêm preenchidos.
+- **Drivers de sentimento (termos/phrases)**: já implementado
+  corretamente (`get_term_signals`, fonte `bw_query_topics`, inclui
+  `phrases` como um dos `topic_type`) — só a apresentação não batia com o
+  design (nuvem única de chips em vez de 2 caixas separadas). Adicionado
+  `SentimentDriversPanel` (`term-signals-list.tsx`) — mesmo dado, split em
+  "Drivers positivos"/"Drivers negativos" (termos neutros omitidos, como
+  no design). `TermSignalsList` original mantida intacta para o uso em
+  `/themes` ("termos emergentes", que não quer esse split).
+- **Ainda em aberto** (não fechado nesta sessão, ver `_pending.md` #19):
+  "Menções que mais influenciaram o sentimento" — sem bloco no envelope
+  para lista de mentions individuais em destaque.
+- **Verificação**: `npx tsc --noEmit` e `npm run build` passam limpos (14
+  rotas). `npm run lint` reporta só o erro pré-existente e não relacionado
+  em `types/database.types.ts` (regra `@typescript-eslint/no-explicit-any`
+  não encontrada — config do ESLint, não código deste trabalho). Sem
+  ambiente de banco real disponível nesta sessão — a migration
+  `20260717000000` não foi executada contra um Postgres real, só revisada
+  manualmente (mesmo padrão de sessões anteriores sem acesso a
+  `supabase db push`).
+
 ### Reporting/BI split
 
 `reporting.narratives_overview` and `reporting.mentions_daily` exist for
@@ -1808,6 +1887,95 @@ fixed as follows:
   today is `get-narrative-detail`'s own `ui_meta.narrative.description`,
   fetched per-ID, not available in the list envelope), so the cards omit
   it rather than inventing filler text.
+
+### UI polish pass — branding, page titles, KPI tooltips, sentiment %, chart harmonization (2026-07-12)
+
+Same-day follow-up round, user request covering both the shared shell and
+the Executive Overview page specifically. All presentation-layer, no new
+envelope/backend fields except one SQL fix (net_sentiment delta, below).
+
+- **Sidebar active-item highlight now reuses `accent-blue`** (`#2f6fed`,
+  `components/intelligence-center/sidebar.tsx`) — same color already used
+  for the selected period button in `PageHeaderBar` and for the collapsed
+  rail's active dot. Previously the expanded nav item used
+  `bg-sidebar-active` (`#1a2c52`, dark navy), which barely showed up
+  against the sidebar's own dark navy background.
+- **Brand renamed in-app to "Comunicação Inteligente"**, replacing the
+  leftover "Digital Intelligent Communication" string that was still in
+  `Sidebar`'s header and `(intelligence-center)/layout.tsx`'s mobile
+  topbar/footer (`app/layout.tsx`'s `<title>` already used the new name —
+  only the in-app chrome hadn't caught up). Note this is only the
+  user-facing product brand; `CLAUDE.md`'s own opening line ("Digital
+  Intelligent Communication (renamed from 'Reputation OS')") documents the
+  project's internal/legal name history and is a separate, deliberately
+  unchanged fact.
+- **Placeholder logo added** (`public/logo.svg` — first file in a `public/`
+  directory in this repo) — a simple square monogram (accent-blue
+  background, "CI" mark), referenced from `Sidebar` (both expanded and
+  collapsed/rail states) and the mobile topbar (replacing a hardcoded
+  `bg-accent-blue` div placeholder). **Recommended replacement size**:
+  source as SVG (scales cleanly at every size this logo renders at, 26–32px
+  in-app today, tiny file size) — if only a raster asset is available, use
+  a square, transparent-background PNG at minimum 512×512px so it stays
+  sharp on retina displays and is reusable later for the app icon/favicon
+  (see "Deploy (Hostinger)" rule 4 above for that separate, stricter
+  filename convention — this in-app logo is unrelated to that). Plain
+  `<img>`, not `next/image` (build emits an advisory `no-img-element`
+  lint warning, not an error — not worth `next/image`'s SVG-domain config
+  for a single small static icon with no remote source).
+- **Page titles separated from the header controls bar** — the prototype
+  (see the user's reference screenshot) never puts the page `<h1>` inside
+  the same white bar as the organization/period/Filtros controls; the
+  title sits loose on the gray page canvas below it, larger
+  (`text-2xl`/`md:text-3xl` vs. the previous `text-xl`) and bold.
+  `PageHeaderBar` (`components/intelligence-center/page-header-bar.tsx`,
+  shared by all 6 pages) restructured accordingly: the white
+  `bg-card`/`border-b` block now only holds org selector + period toggle +
+  custom range picker + Filtros (and its expand panel); the title/subtitle
+  block renders separately below it, transparent background. `title`
+  became optional (`title?: string`) so `/narratives/[id]`'s loaded state
+  — which already renders its own `<h1>` + score badges inline — can omit
+  it and avoid showing the same title twice stacked; its
+  loading/error/not-found states still pass a generic
+  `title="Detalhe da Narrativa"` since they have no other heading.
+- **KPI tooltips** (`components/intelligence-center/metric-card.tsx`) — a
+  small "?" affordance next to each of the 5 Executive Overview KPI labels
+  (`Tooltip`, new `components/ui/tooltip.tsx`, plain CSS `group-hover`, no
+  new dependency) shows a plain-language definition on hover, adapted from
+  Brandwatch's own documentation (`chart-dimensions-and-aggregates` for
+  `reachEstimate`/`engagementScore`/`authors`/`netSentiment`,
+  `mention-metadata-field-definitions` for the mention-level concepts) —
+  same source material already cited elsewhere in this file confirming
+  these are official non-sampled aggregates, just rephrased for an
+  end-user reading a dashboard rather than integrating an API.
+- **"Sentimento geral" (`net_sentiment` KPI card) now reads as a
+  percentage, with its delta in percentage points, not relative %** — the
+  card already sourced `net_sentiment` (`get_metrics_cards`, weighted
+  average, migration `20260714000000`); the generic delta formula shared
+  by every other KPI (`(current - previous) / previous * 100`) doesn't
+  mean anything for a signed score that can cross zero — dividing by a
+  near-zero previous value produces a huge, meaningless "% change," and
+  the sign can flip in ways a relative percent misrepresents. Fixed in
+  `get_metrics_cards` (migration `20260717010000`): for
+  `metric_key = 'net_sentiment'` specifically, `delta_pct` now holds
+  `round(current_value - previous_value, 1)` — an absolute point
+  difference — instead of the relative-percent formula. `METRIC_META`'s
+  `net_sentiment` entry changed `unit` from `'score'` to
+  `'net_sentiment_pct'` (updated in `aggregated-metrics-service.ts` and,
+  per Principle 5, in all 6 deployed `get-page-*`/`get-narrative-detail`
+  copies) so `MetricCard` knows to render the value with a trailing `%`
+  and the delta suffixed `"p.p."` instead of `"%"`.
+- **Trend line chart labels harmonized** (`charts/trend-line-chart.tsx`) —
+  axis tick labels (Y and X) reduced 9px→8px; the hover value label drawn
+  directly on the line (added 2026-07-12, same-day earlier fix) reduced
+  from 10px/weight 700/3px white halo to 9px/weight 600/2px halo — the
+  bold, heavily-outlined hover label read as visually oversized next to
+  the rest of the page's consistently small, light-weight label text.
+- **Narratives table moved above the Insights panel** on `/overview` — the
+  Insights panel (`HighlightsPanel`/`NarrativeTextPanel`) renders empty
+  today regardless of data (`event-radar`/`ai-synthesis` not implemented,
+  `_pending.md` gaps #7/#8), so the actionable Narrativas table now comes
+  first.
 
 ## Directory structure
 

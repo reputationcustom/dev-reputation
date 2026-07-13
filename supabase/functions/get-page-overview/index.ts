@@ -79,11 +79,17 @@ export interface BreakdownItem {
   label: string
   value: number
   pct: number
+  // Só presentes quando type === 'narrative' — split completo (não um score
+  // único como platform/theme), ver get_narrative_sentiment_breakdown em
+  // sql-aggregation.md.
+  positive?: number
+  neutral?: number
+  negative?: number
 }
 
 export interface Breakdown {
   key: string
-  type: 'sentiment' | 'platform' | 'theme' | 'region'
+  type: 'sentiment' | 'platform' | 'theme' | 'narrative' | 'region'
   items: BreakdownItem[]
 }
 
@@ -125,6 +131,15 @@ export interface AuthorRow {
   reach: number
   engagement: number
   risk_level: RiskLevel | null
+  // Null pra maioria dos autores — só os top 10 por volume da Query inteira
+  // são enriquecidos com temas por autor (bw_query_author_topics), única
+  // fonte confiável de sentimento por autor. NUNCA vem de
+  // bw_query_top_authors.sentiment_* (campo nunca confirmado contra o
+  // payload real do endpoint Top Authors) — ver sql-aggregation.md,
+  // get_authors_ranking, e data-model.md, "bw_query_top_authors".
+  sentiment_positive: number | null
+  sentiment_neutral: number | null
+  sentiment_negative: number | null
   is_influential: boolean
 }
 
@@ -212,7 +227,7 @@ export const PAGE_BLOCKS: Record<PageKey, BlockKey[]> = {
 const PAGE_BREAKDOWN_TYPES: Partial<Record<PageKey, Breakdown['type'][]>> = {
   overview: ['sentiment'],
   narrative_detail: ['sentiment', 'platform', 'region'],
-  sentiment: ['sentiment', 'platform', 'theme', 'region'],
+  sentiment: ['sentiment', 'platform', 'theme', 'narrative', 'region'],
   platforms: ['platform'],
   themes: ['theme'],
   reports: ['sentiment'],
@@ -310,6 +325,18 @@ interface AuthorRankingRow {
   engagement: number | null
   risk_level: RiskLevel | null
   is_influential: boolean
+  sentiment_positive: number | null
+  sentiment_neutral: number | null
+  sentiment_negative: number | null
+}
+
+interface NarrativeSentimentBreakdownRow {
+  label: string
+  positive: number | null
+  neutral: number | null
+  negative: number | null
+  total_mentions: number | null
+  pct: number | null
 }
 
 interface TermSignalRow {
@@ -330,7 +357,7 @@ const METRIC_META: Record<string, { label: string; unit?: string }> = {
   reach_estimate: { label: 'Alcance estimado' },
   engagement_score: { label: 'Engajamento total' },
   unique_authors: { label: 'Autores únicos' },
-  net_sentiment: { label: 'Sentimento geral', unit: 'score' },
+  net_sentiment: { label: 'Sentimento geral', unit: 'net_sentiment_pct' },
 }
 
 async function fetchMetrics(supabase: SupabaseClient, ctx: PageContext): Promise<MetricCard[]> {
@@ -387,6 +414,26 @@ async function fetchOneBreakdown(
       })
       if (error) throw error
       rows = (data ?? []) as BreakdownRow[]
+    } else if (type === 'narrative') {
+      // Split completo (positive/neutral/negative), não um net_sentiment
+      // único como platform/theme — narrative_metrics já tem o dado, só
+      // faltava a function/o wiring (ver sql-aggregation.md,
+      // get_narrative_sentiment_breakdown, e _pending.md #19).
+      const { data, error } = await supabase.rpc('get_narrative_sentiment_breakdown', baseArgs)
+      if (error) throw error
+      const narrativeRows = (data ?? []) as NarrativeSentimentBreakdownRow[]
+      return {
+        key: type,
+        type,
+        items: narrativeRows.map((r) => ({
+          label: r.label,
+          value: r.total_mentions ?? 0,
+          pct: r.pct ?? 0,
+          positive: r.positive ?? 0,
+          neutral: r.neutral ?? 0,
+          negative: r.negative ?? 0,
+        })),
+      }
     } else {
       // 'region' — sem function SQL ainda (bw_query_demographics_daily sem
       // get_region_breakdown correspondente). Gap documentado, não inventado.
@@ -508,6 +555,9 @@ async function fetchAuthors(supabase: SupabaseClient, ctx: PageContext): Promise
       reach: row.reach ?? 0,
       engagement: row.engagement ?? 0,
       risk_level: row.risk_level,
+      sentiment_positive: row.sentiment_positive,
+      sentiment_neutral: row.sentiment_neutral,
+      sentiment_negative: row.sentiment_negative,
       is_influential: row.is_influential,
     }))
   } catch (err) {

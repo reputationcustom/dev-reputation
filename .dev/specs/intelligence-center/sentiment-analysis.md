@@ -2,11 +2,29 @@
 tipo: feature-spec
 módulo: intelligence-center
 funcionalidade: sentiment-analysis
-status: pronto
-atualizado: 2026-07-12
+status: implementado
+atualizado: 2026-07-17
 ---
 
 # Análise de Sentimento
+
+> ✅ **Implementado (2026-07-17)**: "Sentimento por Narrativa" (barras
+> empilhadas positivo/neutro/negativo, uma por Narrativa) fechado nesta
+> data — `get_narrative_sentiment_breakdown` (breakdown `type = 'narrative'`),
+> ver `aggregated-metrics/sql-aggregation.md`. Achado numa auditoria pedida
+> pelo usuário sobre a origem dos dados de sentimento por
+> plataforma/narrativa/autores/termos: o dado (`narrative_metrics.sentiment_*`)
+> já existia desde sempre, mas nenhuma function/bloco do envelope o expunha
+> como lista — `block-mapping-per-page.md` nunca marcou esse breakdown pra
+> esta página, e o próprio código de `/sentiment` já documentava o gap
+> inline. "Drivers de sentimento" também ganhou separação visual em 2
+> caixas (Drivers positivos/negativos, `SentimentDriversPanel`), espelhando
+> o mockup original — mesmo dado de `get_term_signals`, sem mudança de
+> function. "Sentimento por plataforma"/"por pauta" e "Menções que mais
+> influenciaram" **não mudaram** nesta rodada — o primeiro continua
+> corretamente limitado a `net_sentiment` (score único, limitação real da
+> API Brandwatch, ver "Regras de negócio" abaixo), o segundo continua sem
+> bloco no envelope (`_pending.md` #19, ainda aberto).
 
 > Cobre "Página 3 — Análise de Sentimento" / item "9. Visualizações
 > recomendadas" do documento de estrutura do protótipo
@@ -66,14 +84,23 @@ Mesmo público das demais páginas deste módulo.
   de `bw_query_metrics_daily`, granularidade automática por período (regra
   já especificada em `foundation/overview.md`).
 - **Sentimento por Narrativa**: barras horizontais empilhadas, uma por
-  Narrativa, de `narrative_metrics.sentiment_positive/neutral/negative`
-  (já existe, sem gap).
+  Narrativa, de `narrative_metrics.sentiment_positive/neutral/negative` via
+  `get_narrative_sentiment_breakdown` (breakdown `type = 'narrative'`) — ✅
+  implementado 2026-07-17, escopado a Narrativas-folha (Subcategorias
+  ativas), mesma granularidade da aba Narrativas.
 - **Drivers de sentimento**: termos/temas mais associados a cada polaridade
   — de `bw_query_topics` (`topic_type`, `label`,
   `sentiment_positive`/`neutral`/`negative`), ordenado por
   `sentiment_negative`/`sentiment_positive` desc conforme a lista
   ("positivo"/"negativo"). Já disponível, sem gap — `bw_query_topics` já
-  carrega sentimento por tema.
+  carrega sentimento por tema. ✅ Apresentação em 2 caixas separadas
+  ("Drivers positivos"/"Drivers negativos") implementada 2026-07-17
+  (`SentimentDriversPanel`) — mesmo dado de `get_term_signals`, termos
+  neutros não aparecem em nenhuma das duas caixas. `get_term_signals`
+  mistura todo `topic_type` (`words`/`phrases`/`hashtags`/`entities`/
+  `people`/`places`/`organisations`) num só ranking, sem filtrar
+  especificamente por `phrases` — não é um gap (a spec nunca pediu só
+  frases), mas fica registrado caso o produto queira restringir no futuro.
 - **Menções que mais influenciaram o sentimento**: lista de mentions
   individuais (não agregado) ordenada por `reach_estimate`/`impact`, mesmo
   padrão de "Menções relevantes" em `narratives-exploration.md`.

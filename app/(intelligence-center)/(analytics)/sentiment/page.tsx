@@ -5,17 +5,17 @@ import { PageHeaderBar } from "@/components/intelligence-center/page-header-bar"
 import { WidgetCard } from "@/components/intelligence-center/widget-card";
 import { BreakdownPanel } from "@/components/intelligence-center/charts/breakdown-panel";
 import { TrendLineChart } from "@/components/intelligence-center/charts/trend-line-chart";
-import { TermSignalsList } from "@/components/intelligence-center/term-signals-list";
+import { SentimentDriversPanel } from "@/components/intelligence-center/term-signals-list";
 import { HighlightsPanel, NarrativeTextPanel } from "@/components/intelligence-center/insights-panel";
 import { EmptyState } from "@/components/ui/empty-state";
 
 // Análise de Sentimento (`/sentiment`, intelligence-center/sentiment-analysis.md).
-// ⚠️ "Sentimento por Narrativa" (barras por Narrativa) e "Menções que mais
-// influenciaram o sentimento" ficam fora desta versão — nenhum bloco do
-// envelope cobre esses dois pedaços especificamente (block-mapping-per-page.md
-// não marca `narratives` para esta página, e não existe bloco de "mentions
-// em destaque" no contrato — ver _pending.md, novo gap registrado ao
-// implementar).
+// ✅ "Sentimento por Narrativa" resolvido em 2026-07-17 — breakdown type
+// 'narrative' (get_narrative_sentiment_breakdown), split completo
+// positivo/neutro/negativo por Narrativa-folha, ver sql-aggregation.md.
+// ⚠️ "Menções que mais influenciaram o sentimento" continua fora desta
+// versão — não existe bloco de "mentions em destaque" no contrato do
+// envelope ainda (ver _pending.md #19).
 export default function SentimentPage() {
   const { status, envelope, retry } = usePageEnvelope("get-page-sentiment");
 
@@ -53,12 +53,19 @@ export default function SentimentPage() {
           </WidgetCard>
         </div>
 
+        <WidgetCard title="Sentimento por narrativa" status={status} onRetry={retry}>
+          <BreakdownPanel
+            breakdown={envelope?.breakdowns.find((b) => b.type === "narrative")}
+            emptyMessage="Nenhuma Narrativa em monitoramento ainda."
+          />
+        </WidgetCard>
+
         <WidgetCard title="Sentimento por localização" status={status} onRetry={retry}>
           <EmptyState message="Ainda não implementado — sem function de agregação por região (ver _pending.md)." />
         </WidgetCard>
 
         <WidgetCard title="Drivers de sentimento" status={status} onRetry={retry}>
-          <TermSignalsList signals={envelope?.term_signals ?? []} />
+          <SentimentDriversPanel signals={envelope?.term_signals ?? []} />
         </WidgetCard>
 
         <WidgetCard title="Menções que mais influenciaram o sentimento" status={status} onRetry={retry}>

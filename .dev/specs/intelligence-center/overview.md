@@ -57,7 +57,12 @@ Nenhuma tem lógica de negócio no frontend (Princípio técnico 2).
 ✅ **Header global (2026-07-13, corrigido)**: as cinco páginas compartilham
 os mesmos 2 seletores — organização ativa e período — especificados uma
 única vez em [executive-overview.md](executive-overview.md), "Header",
-não redescritos em cada página. **Sem seletor de Query** — Queries são
+não redescritos em cada página. ✅ **Título da página separado da barra de
+controles (2026-07-12)**: `PageHeaderBar` (usado pelas 6 páginas, incl.
+`/narratives/[id]`) passou a renderizar o `<h1>`/subtítulo da página fora
+da barra branca de organização/período/filtros, soltos no canvas cinza
+abaixo — igual ao protótipo real, ver `executive-overview.md` e
+`CLAUDE.md`, "UI polish pass". **Sem seletor de Query** — Queries são
 detalhe técnico, transparente ao usuário (pedido explícito, ver
 "Fluxo principal" de `executive-overview.md`); quando uma organização tem
 mais de uma Query, os dados de todas são combinados automaticamente.
