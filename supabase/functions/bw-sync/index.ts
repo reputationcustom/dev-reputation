@@ -647,24 +647,18 @@ async function refreshMetadata(
 // Category tem `parent_id is null`, Narrativa-filha = Category com
 // `parent_id` apontando pra ela).
 // ✅ Alteração 2026-07-20 (pedido do usuário: "O nome da narrativa será
-// composto por 'categoria - subcategoria'"). Motivo: desde a mesma sessão,
-// Overview e a aba Narrativas passaram a listar Category (Pauta) e
-// Subcategory juntas na mesma tabela plana (ver
-// narrativesScopeForPage() em aggregated-metrics-service.ts, p_scope
-// agora null pras duas páginas) — um título de Subcategory sozinho (ex.
-// "Vacinação") fica ambíguo sem saber a qual Pauta ele pertence quando
-// visto ao lado de outras Pautas/Subcategories na mesma lista. Category de
-// topo continua só com o próprio nome (não tem pai pra compor).
-function buildNarrativeTitle(
-  category: Record<string, unknown>,
-  categoryRows: Record<string, unknown>[],
-): string {
-  const parentId = category.parent_id as number | null;
-  const name = category.name as string;
-  if (parentId === null) return name;
-  const parent = categoryRows.find((c) => (c.id as number) === parentId);
-  const parentName = (parent?.name as string | undefined) ?? null;
-  return parentName ? `${parentName} - ${name}` : name;
+// composto por 'categoria - subcategoria'"), ✅ **revertida 2026-07-21**
+// (pedido do usuário: "vamos considerar apenas as subcategorias em todas
+// as narrativas. Retire a regra de 'categoria - subcategoria'"). O motivo
+// de 2026-07-20 deixou de existir: toda página agora lista só Narrativas-
+// folha (Subcategory, ver narrativesScopeForPage() em
+// aggregated-metrics-service.ts — 'leaves'/'pautas', nunca mais null),
+// nunca a Category raiz junto na mesma lista, então não há mais ambiguidade
+// a desfazer com o nome da Category-pai. Título volta a ser só o nome da
+// própria Category/Subcategory (mesmo comportamento anterior a
+// 20260720000000).
+function buildNarrativeTitle(category: Record<string, unknown>): string {
+  return category.name as string;
 }
 
 async function ensureNarrativesFromCategories(
@@ -690,7 +684,7 @@ async function ensureNarrativesFromCategories(
     missing.map((c) => ({
       organization_id: organizationId,
       bw_category_id: c.id,
-      title: buildNarrativeTitle(c, categoryRows),
+      title: buildNarrativeTitle(c),
     })),
   );
   if (insertError) throw new Error(`Erro criando narratives a partir de bw_categories: ${insertError.message}`);
@@ -1284,120 +1278,103 @@ async function syncPlatformMetrics(
 }
 
 // =========================================================================
-// Autores únicos/engajamento/sentimento líquido por plataforma (2026-07-12,
-// pedido do usuário: "já estamos trazendo da brandwatch, se não tiver,
-// reveja as especificações... garantir que tenhamos essa informação no
-// supabase via api da brandwatch"). Mesmo endpoint de chart, mesma
-// dimensão `pageTypes` já usada por syncPlatformMetrics — só troca o
-// aggregate (`volume` → `authors`/`engagementScore`/`netSentiment`).
-// `netSentiment` devolve um score único por plataforma/dia, não o split
-// positivo/neutro/negativo (não há combinação de 3 dimensões
-// sentiment+pageTypes+days documentada) — ver nota em data-model.md.
-// Roda toda invocação (fase daily_metrics, sem throttle) só para
-// category_id is null: cardinalidade de `pageTypes` é pequena (dezenas),
-// mesmo porte já aceito pras 2 chamadas de `categories` (reach/engagement)
-// que também rodam toda invocação — diferente do incidente de CPU
-// corrigido em 20260711030000, que veio de milhares de linhas.
+// Correção 2026-07-22 (pedido do usuário: "verifique se há algo a
+// otimizar" — 429 recorrente mesmo com o gate proativo de 2026-07-21).
+// `reachEstimate`/`engagementScore`/`authors`/`impressions`/`netSentiment`
+// eram 5 chamadas SEPARADAS por dimensão (categories/queries/pageTypes) —
+// 14 chamadas fixas por invocação de `daily_metrics`, sozinhas já perto do
+// teto de 30/10min. A Brandwatch documenta um endpoint próprio pra isso —
+// "Multiple Aggregate Charts" (developers.brandwatch.com/docs/
+// multi-aggregate-charts, conteúdo confirmado ao vivo nesta sessão, não
+// inferido): `GET /data/multiAggregate/{dimension1}/{dimension2}
+// ?aggregate=a,b,c&queryId=X&startDate=...&endDate=...` — `aggregate`
+// aceita lista separada por vírgula, e cada ponto da série volta como um
+// OBJETO com uma chave por aggregate pedido (`values[].value = {volume:
+// 12, reachEstimate: 12}` no exemplo oficial da doc), não mais um número
+// solto. Isso permite pedir reachEstimate+engagementScore+authors+
+// impressions+netSentiment (ou volume+authors+engagementScore+
+// netSentiment, no caso de plataforma) numa ÚNICA chamada por dimensão —
+// mesma cobertura de dado, 1 chamada em vez de 5 (ou 4, pra plataforma).
+// O split positivo/neutro/negativo de sentimento (syncSentimentMetrics)
+// continua fora disso: não é um "aggregate" combinável, é o próprio eixo
+// dimension1=sentiment, e a Brandwatch só aceita 2 dimensões por chamada
+// (sentiment × days já ocupa as duas) — daí continuar 1 chamada por
+// Narrativa (ver o throttle de burst em runDailyMetricsStep()).
 // =========================================================================
 
-async function syncPlatformAggregate(
-  supabase: SupabaseClient,
-  token: string,
-  projectId: number,
-  queryId: number,
-  aggregate: "authors" | "engagementScore" | "netSentiment",
-  column: "unique_authors" | "engagement_score" | "net_sentiment",
-  startDate: Date,
-  endDate: Date,
-): Promise<void> {
-  const params = new URLSearchParams({
-    queryId: String(queryId),
-    startDate: formatBrandwatchDate(startDate),
-    endDate: formatBrandwatchDate(endDate),
-    timezone: TIMEZONE,
-  });
-
-  const json = await callBrandwatch(`/projects/${projectId}/data/${aggregate}/pageTypes/days?${params.toString()}`, token);
-  const results = (json.results ?? []) as { id: string; values?: { id: string; value: number }[] }[];
-
-  const rows: Record<string, unknown>[] = [];
-  for (const series of results) {
-    for (const point of series.values ?? []) {
-      rows.push({
-        project_id: projectId,
-        query_id: queryId,
-        category_id: null,
-        page_type: String(series.id),
-        metric_date: toDateOnly(point.id),
-        [column]: point.value,
-        synced_at: new Date().toISOString(),
-      });
-    }
-  }
-
-  if (rows.length === 0) {
-    log("syncPlatformAggregate:empty", { projectId, queryId, aggregate });
-    return;
-  }
-
-  const uniqueRows = dedupeByKey(rows, (r) => `${String(r.page_type)}::${String(r.metric_date)}`);
-
-  // Upsert parcial (só a coluna do aggregate corrente) — mesmo raciocínio
-  // de syncCategoryDailyAggregate(), nunca zera total_mentions/outras
-  // colunas já sincronizadas por outra chamada pra mesma linha.
-  const { error } = await supabase
-    .from("bw_query_metrics_daily_by_platform")
-    .upsert(uniqueRows, { onConflict: "project_id,query_id,category_id_key,page_type,metric_date" });
-  if (error) throw new Error(`Erro upsertando bw_query_metrics_daily_by_platform (${column}): ${error.message}`);
-
-  log("syncPlatformAggregate:done", { projectId, queryId, aggregate, rows: uniqueRows.length });
+interface MultiAggregateSpec {
+  aggregate: "volume" | "reachEstimate" | "engagementScore" | "authors" | "impressions" | "netSentiment";
+  column: "total_mentions" | "reach_estimate" | "engagement_score" | "unique_authors" | "impressions" | "net_sentiment";
 }
 
-// =========================================================================
-// Correção 2026-07-10 (pedido do usuário: "as menções trazidas na
-// integração são apenas amostras... reach/engajamento/influência do autor
-// precisam ser buscados diferentemente"): reach_estimate/engagement_score
-// por Narrativa deixam de ser soma local sobre `mentions` (amostrada em
-// Queries de alto volume) e passam a vir de `data/{aggregate}/categories/
-// {grain}` — a dimensão `categories` (confirmada em
-// chart-dimensions-and-aggregates) devolve o breakdown de TODAS as
-// Categories numa única chamada, mesmo mecanismo não-amostrado que já
-// alimenta `bw_query_metrics_daily.total_mentions`/sentimento. ⚠️ Não
-// confirmado um payload de exemplo específico com aggregate=reachEstimate/
-// engagementScore + dimension=categories (só a validade genérica da
-// combinação aggregate×dimension) — mesmo tratamento de risco já dado a
-// `syncPlatformMetrics` acima. Roda toda invocação (mesmo throttle
-// "diário sempre"), 1 chamada por aggregate — 2 chamadas totais cobrindo
-// todas as Narrativas, não 1 por Narrativa.
-// =========================================================================
+interface MultiAggregatePoint {
+  seriesId: string;
+  date: string;
+  values: Record<string, number>;
+}
 
-async function syncCategoryDailyAggregate(
-  supabase: SupabaseClient,
+async function fetchMultiAggregate(
   token: string,
   projectId: number,
   queryId: number,
-  aggregate: "reachEstimate" | "engagementScore" | "authors" | "impressions" | "netSentiment",
-  column: "reach_estimate" | "engagement_score" | "unique_authors" | "impressions" | "net_sentiment",
+  dimension1: "categories" | "queries" | "pageTypes",
+  specs: MultiAggregateSpec[],
   startDate: Date,
   endDate: Date,
-): Promise<void> {
+): Promise<MultiAggregatePoint[]> {
   const params = new URLSearchParams({
+    aggregate: specs.map((s) => s.aggregate).join(","),
     queryId: String(queryId),
     startDate: formatBrandwatchDate(startDate),
     endDate: formatBrandwatchDate(endDate),
     timezone: TIMEZONE,
   });
 
-  const json = await callBrandwatch(`/projects/${projectId}/data/${aggregate}/categories/days?${params.toString()}`, token);
-  const results = (json.results ?? []) as { id: string | number; values?: { id: string; value: number }[] }[];
+  const json = await callBrandwatch(`/projects/${projectId}/data/multiAggregate/${dimension1}/days?${params.toString()}`, token);
+  const results = (json.results ?? []) as {
+    id: string | number;
+    values?: { id: string; value?: Record<string, number> }[];
+  }[];
+
+  const points: MultiAggregatePoint[] = [];
+  for (const series of results) {
+    for (const point of series.values ?? []) {
+      points.push({ seriesId: String(series.id), date: point.id, values: point.value ?? {} });
+    }
+  }
+  return points;
+}
+
+const CATEGORY_QUERY_AGGREGATE_SPECS: MultiAggregateSpec[] = [
+  { aggregate: "reachEstimate", column: "reach_estimate" },
+  { aggregate: "engagementScore", column: "engagement_score" },
+  { aggregate: "authors", column: "unique_authors" },
+  { aggregate: "impressions", column: "impressions" },
+  { aggregate: "netSentiment", column: "net_sentiment" },
+];
+
+// Substitui as antigas syncCategoryDailyAggregate() × 5 chamadas — mesma
+// dimensão `categories` (todas as Narrativas numa resposta só), mesma
+// validação de FK (bw_categories pode ter IDs fora do que já está
+// cacheado — ver nota histórica abaixo), agora numa única chamada HTTP
+// cobrindo os 5 aggregates de uma vez.
+async function syncCategoryDailyMultiAggregate(
+  supabase: SupabaseClient,
+  token: string,
+  projectId: number,
+  queryId: number,
+  startDate: Date,
+  endDate: Date,
+): Promise<void> {
+  const points = await fetchMultiAggregate(
+    token, projectId, queryId, "categories", CATEGORY_QUERY_AGGREGATE_SPECS, startDate, endDate,
+  );
 
   // A dimensão `categories` pode incluir IDs fora do universo já cacheado
   // em bw_categories (ex: Categories fora do escopo de `rulecategories`,
   // ou dessincronizadas desde o último refresh de metadata) — sem esse
   // filtro, o upsert quebra com violação de FK
-  // (bw_query_metrics_daily.category_id → bw_categories.id). Buscar os IDs
-  // conhecidos e descartar (com log) qualquer categoria fora desse
-  // conjunto, em vez de derrubar a invocação inteira.
+  // (bw_query_metrics_daily.category_id → bw_categories.id).
   const { data: knownCategories, error: knownCategoriesError } = await supabase
     .from("bw_categories")
     .select("id")
@@ -1407,145 +1384,166 @@ async function syncCategoryDailyAggregate(
   }
   const knownCategoryIds = new Set((knownCategories ?? []).map((c: any) => c.id as number));
 
-  const rows: Record<string, unknown>[] = [];
+  const rowsByKey = new Map<string, Record<string, unknown>>();
   const skippedCategoryIds = new Set<number>();
-  for (const series of results) {
-    const categoryId = Number(series.id);
-    if (!Number.isFinite(categoryId)) {
-      // Pode incluir um item pra mentions sem nenhuma Category — não temos
-      // onde guardar isso em bw_query_metrics_daily (category_id sempre se
-      // refere a uma Category real), então pula em vez de quebrar.
-      continue;
-    }
+  for (const point of points) {
+    const categoryId = Number(point.seriesId);
+    if (!Number.isFinite(categoryId)) continue; // item sem Category (mentions não-categorizadas)
     if (!knownCategoryIds.has(categoryId)) {
       skippedCategoryIds.add(categoryId);
       continue;
     }
-    for (const point of series.values ?? []) {
-      rows.push({
-        project_id: projectId,
-        query_id: queryId,
-        category_id: categoryId,
-        metric_date: toDateOnly(point.id),
-        [column]: point.value,
-        synced_at: new Date().toISOString(),
-      });
+    const metricDate = toDateOnly(point.date);
+    const key = `${categoryId}::${metricDate}`;
+    const row = rowsByKey.get(key) ?? {
+      project_id: projectId, query_id: queryId, category_id: categoryId,
+      metric_date: metricDate, synced_at: new Date().toISOString(),
+    };
+    for (const spec of CATEGORY_QUERY_AGGREGATE_SPECS) {
+      if (point.values[spec.aggregate] !== undefined) row[spec.column] = point.values[spec.aggregate];
     }
+    rowsByKey.set(key, row);
   }
 
   if (skippedCategoryIds.size > 0) {
-    log("syncCategoryDailyAggregate:unknown_categories_skipped", {
-      projectId, queryId, aggregate, categoryIds: Array.from(skippedCategoryIds),
+    log("syncCategoryDailyMultiAggregate:unknown_categories_skipped", {
+      projectId, queryId, categoryIds: Array.from(skippedCategoryIds),
     });
   }
 
+  const rows = Array.from(rowsByKey.values());
   if (rows.length === 0) {
-    log("syncCategoryDailyAggregate:empty", { projectId, queryId, aggregate });
+    log("syncCategoryDailyMultiAggregate:empty", { projectId, queryId });
     return;
   }
 
-  // Upsert parcial — só as colunas presentes no payload são atualizadas em
-  // caso de conflito (PostgREST gera "on conflict ... do update set" só
-  // pras colunas enviadas), então isso nunca zera total_mentions/sentiment
-  // já sincronizados por syncSentimentMetrics pro mesmo
-  // (project_id, query_id, category_id, metric_date).
-  //
-  // Corrigido 2026-07-11 (parte da correção de "CPU Time exceeded" em
-  // produção): a dimensão `categories` cobre todas as Categories × todo o
-  // histórico numa resposta só (~4825 linhas observadas em produção) — um
-  // único `.upsert()` com todas as linhas de uma vez serializa um corpo de
-  // requisição gigante numa só passada síncrona. Chunka em lotes de 1000
-  // (mesmo tamanho de página já usado pra mentions) — mesmo total de
-  // trabalho, mas espalhado em várias chamadas menores em vez de um pico
-  // só de CPU.
+  // Upsert parcial (só as colunas com valor presente) — mesmo raciocínio
+  // já usado nas funções que esta substitui: nunca zera total_mentions/
+  // sentiment já sincronizados por syncSentimentMetrics pra mesma linha.
+  // Chunка em lotes de 1000 (mesma razão de CPU já documentada —
+  // migration 20260711030000).
   for (const chunk of chunkArray(rows, 1000)) {
     const { error } = await supabase
       .from("bw_query_metrics_daily")
       .upsert(chunk, { onConflict: "project_id,query_id,category_id_key,metric_date" });
-    if (error) throw new Error(`Erro upsertando bw_query_metrics_daily (${column}): ${error.message}`);
+    if (error) throw new Error(`Erro upsertando bw_query_metrics_daily (multiAggregate): ${error.message}`);
   }
 
-  log("syncCategoryDailyAggregate:done", { projectId, queryId, aggregate, rows: rows.length });
+  log("syncCategoryDailyMultiAggregate:done", { projectId, queryId, rows: rows.length });
 }
 
-// =========================================================================
-// Corrige bug encontrado 2026-07-12 (revisão de spec, ao adicionar
-// unique_authors): syncCategoryDailyAggregate() acima só cobre a dimensão
-// `categories`, que por natureza nunca inclui uma linha "Query inteira" —
-// ou seja, bw_query_metrics_daily.reach_estimate/engagement_score nunca
-// foram populados para category_id is null desde que essas colunas
-// existem (20260710040000). total_mentions/sentimento não sofrem disso
-// porque syncSentimentMetrics() já trata category=null omitindo o filtro
-// `category` da chamada. Usa a dimensão `queries` (mesmo padrão já
-// confirmado em syncQueryGroupSov(), data/volume/queries/weeks?
-// queryGroupId=X) em vez de um chart de 1 dimensão só
-// (data/{aggregate}/days), cujo formato de resposta não está documentado/
-// confirmado neste projeto — com um único queryId, `results` tem no
-// máximo 1 série, mas soma por segurança caso a Brandwatch devolva mais de
-// uma. Mesma função cobre reachEstimate/engagementScore (correção do gap)
-// e authors (unique_authors, captura nova).
-// =========================================================================
-
-async function syncQueryDailyAggregate(
+// Substitui as antigas syncQueryDailyAggregate() × 5 chamadas — dimensão
+// `queries` (linha "Query inteira", category_id is null). netSentiment
+// continua tratado como score (média, não soma) caso a Brandwatch devolva
+// mais de uma série pro mesmo queryId — mesma cautela da função que esta
+// substitui, apesar de na prática só haver 1 série esperada.
+async function syncQueryDailyMultiAggregate(
   supabase: SupabaseClient,
   token: string,
   projectId: number,
   queryId: number,
-  aggregate: "reachEstimate" | "engagementScore" | "authors" | "impressions" | "netSentiment",
-  column: "reach_estimate" | "engagement_score" | "unique_authors" | "impressions" | "net_sentiment",
   startDate: Date,
   endDate: Date,
 ): Promise<void> {
-  const params = new URLSearchParams({
-    queryId: String(queryId),
-    startDate: formatBrandwatchDate(startDate),
-    endDate: formatBrandwatchDate(endDate),
-    timezone: TIMEZONE,
-  });
+  const points = await fetchMultiAggregate(
+    token, projectId, queryId, "queries", CATEGORY_QUERY_AGGREGATE_SPECS, startDate, endDate,
+  );
 
-  const json = await callBrandwatch(`/projects/${projectId}/data/${aggregate}/queries/days?${params.toString()}`, token);
-  const results = (json.results ?? []) as { id: string | number; values?: { id: string; value: number }[] }[];
-
-  // netSentiment é um score já normalizado (-100..100), não uma contagem —
-  // diferente de reach/engagement/authors/impressions, somar séries
-  // duplicadas do mesmo dia distorceria o valor. Na prática há no máximo 1
-  // série (um queryId só), mas usa média em vez de soma por segurança, sem
-  // mudar o comportamento das demais métricas (que continuam somando).
-  const isScoreAggregate = aggregate === "netSentiment";
-  const sums = new Map<string, number>();
-  const counts = new Map<string, number>();
-  for (const series of results) {
-    for (const point of series.values ?? []) {
-      const date = toDateOnly(point.id);
-      sums.set(date, (sums.get(date) ?? 0) + point.value);
-      counts.set(date, (counts.get(date) ?? 0) + 1);
+  const sums = new Map<string, Record<string, number>>();
+  const counts = new Map<string, Record<string, number>>();
+  for (const point of points) {
+    const metricDate = toDateOnly(point.date);
+    const sumRow = sums.get(metricDate) ?? {};
+    const countRow = counts.get(metricDate) ?? {};
+    for (const spec of CATEGORY_QUERY_AGGREGATE_SPECS) {
+      const v = point.values[spec.aggregate];
+      if (v === undefined) continue;
+      sumRow[spec.column] = (sumRow[spec.column] ?? 0) + v;
+      countRow[spec.column] = (countRow[spec.column] ?? 0) + 1;
     }
-  }
-  const byDate = new Map<string, number>();
-  for (const [date, sum] of sums.entries()) {
-    byDate.set(date, isScoreAggregate ? sum / (counts.get(date) ?? 1) : sum);
+    sums.set(metricDate, sumRow);
+    counts.set(metricDate, countRow);
   }
 
-  if (byDate.size === 0) {
-    log("syncQueryDailyAggregate:empty", { projectId, queryId, aggregate });
+  const rows: Record<string, unknown>[] = [];
+  for (const [metricDate, sumRow] of sums.entries()) {
+    const countRow = counts.get(metricDate) ?? {};
+    const row: Record<string, unknown> = {
+      project_id: projectId, query_id: queryId, category_id: null,
+      metric_date: metricDate, synced_at: new Date().toISOString(),
+    };
+    for (const spec of CATEGORY_QUERY_AGGREGATE_SPECS) {
+      const count = countRow[spec.column];
+      if (count === undefined) continue;
+      row[spec.column] = spec.aggregate === "netSentiment" ? sumRow[spec.column] / count : sumRow[spec.column];
+    }
+    rows.push(row);
+  }
+
+  if (rows.length === 0) {
+    log("syncQueryDailyMultiAggregate:empty", { projectId, queryId });
     return;
   }
-
-  const rows = Array.from(byDate.entries()).map(([metric_date, value]) => ({
-    project_id: projectId,
-    query_id: queryId,
-    category_id: null,
-    metric_date,
-    [column]: value,
-    synced_at: new Date().toISOString(),
-  }));
 
   const { error } = await supabase
     .from("bw_query_metrics_daily")
     .upsert(rows, { onConflict: "project_id,query_id,category_id_key,metric_date" });
-  if (error) throw new Error(`Erro upsertando bw_query_metrics_daily (${column}, query inteira): ${error.message}`);
+  if (error) throw new Error(`Erro upsertando bw_query_metrics_daily (multiAggregate, query inteira): ${error.message}`);
 
-  log("syncQueryDailyAggregate:done", { projectId, queryId, aggregate, rows: rows.length });
+  log("syncQueryDailyMultiAggregate:done", { projectId, queryId, rows: rows.length });
+}
+
+// Substitui syncPlatformMetrics(null) + syncPlatformAggregate() × 3 —
+// dimensão `pageTypes`, volume+authors+engagementScore+netSentiment numa
+// única chamada (4→1). Só cobre category_id is null (breakdown de
+// plataforma por Narrativa continua em runPlatformByNarrativeStep(), fase
+// própria e throttled semanalmente — não precisa do mesmo tratamento,
+// nunca fez mais de 1 chamada por invocação).
+const PLATFORM_AGGREGATE_SPECS: MultiAggregateSpec[] = [
+  { aggregate: "volume", column: "total_mentions" },
+  { aggregate: "authors", column: "unique_authors" },
+  { aggregate: "engagementScore", column: "engagement_score" },
+  { aggregate: "netSentiment", column: "net_sentiment" },
+];
+
+async function syncPlatformMultiAggregate(
+  supabase: SupabaseClient,
+  token: string,
+  projectId: number,
+  queryId: number,
+  startDate: Date,
+  endDate: Date,
+): Promise<void> {
+  const points = await fetchMultiAggregate(
+    token, projectId, queryId, "pageTypes", PLATFORM_AGGREGATE_SPECS, startDate, endDate,
+  );
+
+  const rowsByKey = new Map<string, Record<string, unknown>>();
+  for (const point of points) {
+    const metricDate = toDateOnly(point.date);
+    const key = `${point.seriesId}::${metricDate}`;
+    const row = rowsByKey.get(key) ?? {
+      project_id: projectId, query_id: queryId, category_id: null,
+      page_type: point.seriesId, metric_date: metricDate, synced_at: new Date().toISOString(),
+    };
+    for (const spec of PLATFORM_AGGREGATE_SPECS) {
+      if (point.values[spec.aggregate] !== undefined) row[spec.column] = point.values[spec.aggregate];
+    }
+    rowsByKey.set(key, row);
+  }
+
+  const rows = Array.from(rowsByKey.values());
+  if (rows.length === 0) {
+    log("syncPlatformMultiAggregate:empty", { projectId, queryId });
+    return;
+  }
+
+  const { error } = await supabase
+    .from("bw_query_metrics_daily_by_platform")
+    .upsert(rows, { onConflict: "project_id,query_id,category_id_key,page_type,metric_date" });
+  if (error) throw new Error(`Erro upsertando bw_query_metrics_daily_by_platform (multiAggregate): ${error.message}`);
+
+  log("syncPlatformMultiAggregate:done", { projectId, queryId, rows: rows.length });
 }
 
 // Corrige "ON CONFLICT DO UPDATE command cannot affect row a second time"
@@ -2812,6 +2810,16 @@ interface StepResult {
   mentionsCount?: number;
   lastAddedCursor?: string | null;
   backfillCompletedAt?: string | null;
+  // ✅ 2026-07-22: quando true, o dispatcher NÃO avança `next_step` mesmo
+  // com `didWork: true` — a mesma fase é retentada no próximo heartbeat em
+  // vez de passar pra próxima. Usado por `runDailyMetricsStep()` pra
+  // espalhar o loop de sentimento por Narrativa (O(N), 1 chamada por
+  // categoryTarget) em vários heartbeats de 15min em vez de um burst só,
+  // reduzindo o pico de chamadas dentro da janela real de 10min da
+  // Brandwatch — mesmo racional de "Phased execution per pair" já usado
+  // por weekly_monthly/topics/top_authors, só que aplicado dentro da
+  // própria fase em vez de entre fases.
+  stayOnStep?: boolean;
 }
 
 async function runMetadataStep(
@@ -2900,6 +2908,69 @@ async function runMentionsStep(
   };
 }
 
+// Correção 2026-07-22 (pedido do usuário: "verifique se há algo a
+// otimizar" — 429 recorrente mesmo com o gate proativo de 2026-07-21).
+// O split positivo/neutro/negativo de sentimento é a ÚNICA parte desta
+// fase que ainda escala com o número de Narrativas (1 chamada por
+// categoryTarget — ver a nota grande em fetchMultiAggregate() acima sobre
+// por que isso não pode virar um multiAggregate; tudo o mais nesta fase
+// já é O(1), 1 chamada cobrindo todas as Narrativas de uma vez). Antes,
+// esse loop rodava até esgotar TODOS os categoryTargets numa invocação só
+// — com Narrativas suficientes, isso sozinho já perto ou acima do teto
+// de 30/10min. Agora capa quantas chamadas reais de sentimento uma
+// invocação faz (`MAX_SENTIMENT_TARGETS_PER_INVOCATION`) e pula (sem
+// gastar chamada) qualquer Narrativa cujo `bw_query_metrics_daily` mais
+// recente já foi sincronizado há pouco (`DAILY_SENTIMENT_FRESH_WINDOW_MS`,
+// maior que o heartbeat de 15min pra nunca reprocessar a mesma Narrativa
+// no heartbeat seguinte). Se sobrar trabalho, a fase retorna
+// `stayOnStep: true` (ver StepResult) — o dispatcher NÃO avança
+// `next_step`, e o próximo heartbeat continua exatamente daqui, cobrindo
+// o restante das Narrativas em passes sucessivos em vez de um burst só.
+// Mesmo racional de "Phased execution per pair" (weekly_monthly/topics/
+// top_authors) já aceito neste projeto, só aplicado dentro da própria
+// fase em vez de entre fases — pra N Narrativas moderado (dezenas), ainda
+// cobre o ciclo completo bem dentro do BW_SYNC_INTERVAL_HOURS padrão (3h).
+const MAX_SENTIMENT_TARGETS_PER_INVOCATION = 8;
+const DAILY_SENTIMENT_FRESH_WINDOW_MS = 25 * 60 * 1000;
+
+// Busca o synced_at mais recente por Narrativa numa única query — evita N
+// idas ao Postgres (1 por categoryTarget) só pra decidir quem já foi
+// coberto por um pass recente. `bw_query_metrics_daily` é upsertado com o
+// mesmo synced_at=now() em toda linha de uma chamada bem-sucedida de
+// syncSentimentMetrics(), então o MAX(synced_at) por categoria já reflete
+// "a última vez que o sentimento dessa Narrativa foi buscado", não
+// precisa filtrar por data.
+async function fetchDailySentimentFreshness(
+  supabase: SupabaseClient,
+  projectId: number,
+  queryId: number,
+  categoryIds: number[],
+  maxAgeMs: number,
+): Promise<Set<number>> {
+  if (categoryIds.length === 0) return new Set();
+  const { data, error } = await supabase
+    .from("bw_query_metrics_daily")
+    .select("category_id, synced_at")
+    .eq("project_id", projectId)
+    .eq("query_id", queryId)
+    .in("category_id", categoryIds);
+  if (error) throw new Error(`Erro checando frescor de bw_query_metrics_daily (sentimento): ${error.message}`);
+
+  const latestByCategory = new Map<number, number>();
+  for (const row of (data ?? []) as { category_id: number; synced_at: string }[]) {
+    const ts = new Date(row.synced_at).getTime();
+    const prev = latestByCategory.get(row.category_id);
+    if (prev === undefined || ts > prev) latestByCategory.set(row.category_id, ts);
+  }
+
+  const fresh = new Set<number>();
+  const nowMs = Date.now();
+  for (const [categoryId, ts] of latestByCategory) {
+    if (nowMs - ts < maxAgeMs) fresh.add(categoryId);
+  }
+  return fresh;
+}
+
 async function runDailyMetricsStep(
   supabase: SupabaseClient,
   token: string,
@@ -2909,119 +2980,47 @@ async function runDailyMetricsStep(
   metricsStartDate: Date,
   now: Date,
 ): Promise<StepResult> {
-  // ⚠️ Correção 2026-07-13 (bug de produção real: "callBrandwatch:429" em
-  // netSentiment/queries/days, 3 tentativas esgotadas, invocação inteira
-  // falhando) — esta fase nunca teve nenhum `hasBrandwatchCallBudget()`,
-  // diferente de toda outra fase (weekly_monthly/topics/top_authors/etc.).
-  // Ela sempre fez 1 chamada de sentimento POR categoryTarget (query
-  // inteira + cada Narrativa) mais 10 chamadas fixas de agregado
-  // (reachEstimate/engagementScore/authors/impressions/netSentiment ×
-  // categories+queries) mais 4 de plataforma — com Narrativas suficientes
-  // (ou mesmo sem nenhuma, já são 14 chamadas fixas em toda invocação),
-  // essa soma sozinha pode ultrapassar o teto real da Brandwatch (30
-  // chamadas/10min), quanto mais somada a outras invocações recentes na
-  // mesma janela. Cada chamada agora é guardada por
-  // `hasBrandwatchCallBudget()`, interrompendo a fase assim que o
-  // orçamento acaba — o que ficar sem fazer aqui é retomado no próximo
-  // ciclo completo desta mesma fase (idempotente, sem perda de dado, só
-  // atraso).
-  //
-  // Sempre roda (não é throttled) — query inteira (category=null) + cada
-  // Category vinculada a alguma Narrativa deste projeto.
-  for (const categoryId of categoryTargets) {
-    if (!hasBrandwatchCallBudget()) return { didWork: true };
+  // Query inteira (category=null) sempre roda, sem freshness gate — 1
+  // chamada barata, alimenta os KPIs de topo, deve ficar sempre atual.
+  if (!hasBrandwatchCallBudget()) return { didWork: true, stayOnStep: true };
+  await syncSentimentMetrics(supabase, token, "days", projectId, queryId, null, metricsStartDate, now);
+
+  // Por Narrativa: capado + com freshness gate — ver nota grande acima.
+  const narrativeCategoryIds = categoryTargets.filter((c): c is number => c !== null);
+  const freshCategoryIds = await fetchDailySentimentFreshness(
+    supabase, projectId, queryId, narrativeCategoryIds, DAILY_SENTIMENT_FRESH_WINDOW_MS,
+  );
+  let sentimentCallsMade = 0;
+  let allNarrativeSentimentDone = true;
+  for (const categoryId of narrativeCategoryIds) {
+    if (freshCategoryIds.has(categoryId)) continue;
+    if (!hasBrandwatchCallBudget() || sentimentCallsMade >= MAX_SENTIMENT_TARGETS_PER_INVOCATION) {
+      allNarrativeSentimentDone = false;
+      break;
+    }
     await syncSentimentMetrics(supabase, token, "days", projectId, queryId, categoryId, metricsStartDate, now);
+    sentimentCallsMade++;
   }
-  // ✅ Reordenado 2026-07-20 (pedido do usuário: "revise se os valores de
-  // sentimento por narrativa estão corretos, no Frontend está tudo
-  // neutro"). Achado: net_sentiment por Narrativa (dimensão `categories`)
-  // e por Query inteira (dimensão `queries`) eram as ÚLTIMAS das 10
-  // chamadas fixas de agregado desta fase (depois de reachEstimate/
-  // engagementScore/authors/impressions × categories+queries) — em
-  // qualquer invocação com Narrativas suficientes pro budget de 25 chamadas
-  // se esgotar antes de chegar nelas (loop de sentimento acima já consome 1
-  // chamada por categoryTarget), `narrative_metrics.net_sentiment` nunca
-  // sincronizava pra essas Narrativas, e `public.narratives_overview.
-  // sentiment_bucket` caía pro fallback local (ver migration
-  // 20260720000000) com muito mais frequência do que deveria — sintoma
-  // batendo com o relatado ("está tudo neutro"). As duas chamadas de
-  // netSentiment agora rodam logo após o loop de sentimento, antes de
-  // qualquer outro agregado (reach/engajamento/autores/impressões), pra
-  // sobreviver ao corte de orçamento com prioridade sobre métricas menos
-  // centrais a este indicador.
+  if (!allNarrativeSentimentDone) return { didWork: true, stayOnStep: true };
+
+  // ✅ 2026-07-22: reachEstimate/engagementScore/authors/impressions/
+  // netSentiment, por categories e por queries, agora em 1 chamada cada
+  // (era 1 por aggregate × dimensão — 10 chamadas). Ver
+  // syncCategoryDailyMultiAggregate()/syncQueryDailyMultiAggregate() e a
+  // nota grande sobre o endpoint `data/multiAggregate/...` logo acima.
+  // Isso também fecha, por construção, a starvation de netSentiment
+  // corrigida em 2026-07-20 (reordenar as chamadas pra sobreviver ao corte
+  // de orçamento) — agora netSentiment está sempre na MESMA chamada que
+  // reach/engagement/autores/impressões, nunca mais "por último".
   if (!hasBrandwatchCallBudget()) return { didWork: true };
-  await syncCategoryDailyAggregate(
-    supabase, token, projectId, queryId, "netSentiment", "net_sentiment", metricsStartDate, now,
-  );
+  await syncCategoryDailyMultiAggregate(supabase, token, projectId, queryId, metricsStartDate, now);
   if (!hasBrandwatchCallBudget()) return { didWork: true };
-  await syncQueryDailyAggregate(
-    supabase, token, projectId, queryId, "netSentiment", "net_sentiment", metricsStartDate, now,
-  );
-  // Reach/engajamento/autores únicos por Narrativa não amostrados: 3
-  // chamadas cobrindo TODAS as Categories de uma vez (dimensão
-  // `categories`) — é aqui que a resposta de ~4825 linhas observada no
-  // crash de produção é processada; isolar esta fase das demais é o que
-  // reduz o pico de CPU por invocação.
+  await syncQueryDailyMultiAggregate(supabase, token, projectId, queryId, metricsStartDate, now);
+  // Breakdown de plataforma (volume+autores únicos+engajamento+sentimento
+  // líquido) — era 4 chamadas separadas (syncPlatformMetrics +
+  // syncPlatformAggregate × 3), agora 1 só via multiAggregate.
   if (!hasBrandwatchCallBudget()) return { didWork: true };
-  await syncCategoryDailyAggregate(
-    supabase, token, projectId, queryId, "reachEstimate", "reach_estimate", metricsStartDate, now,
-  );
-  if (!hasBrandwatchCallBudget()) return { didWork: true };
-  await syncCategoryDailyAggregate(
-    supabase, token, projectId, queryId, "engagementScore", "engagement_score", metricsStartDate, now,
-  );
-  if (!hasBrandwatchCallBudget()) return { didWork: true };
-  await syncCategoryDailyAggregate(
-    supabase, token, projectId, queryId, "authors", "unique_authors", metricsStartDate, now,
-  );
-  // Auditoria 2026-07-12 (pedido do usuário: conferir todo aggregate de
-  // chart-dimensions-and-aggregates contra o que já é capturado):
-  // `impressions` já era buscado por autor (author_enrichment,
-  // syncAuthorImpressions) e por mention individual (X), mas nunca no
-  // nível de Narrativa/Query inteira — mesmo agregado, mesma dimensão
-  // `categories` já usada por reach/engagement/authors acima.
-  if (!hasBrandwatchCallBudget()) return { didWork: true };
-  await syncCategoryDailyAggregate(
-    supabase, token, projectId, queryId, "impressions", "impressions", metricsStartDate, now,
-  );
-  // Corrige gap 2026-07-12: reach_estimate/engagement_score nunca tinham
-  // sido populados para category_id is null (dimensão `categories` nunca
-  // inclui a Query inteira) — mesma correção cobre a captura nova de
-  // unique_authors/impressions pra essa mesma linha.
-  if (!hasBrandwatchCallBudget()) return { didWork: true };
-  await syncQueryDailyAggregate(
-    supabase, token, projectId, queryId, "reachEstimate", "reach_estimate", metricsStartDate, now,
-  );
-  if (!hasBrandwatchCallBudget()) return { didWork: true };
-  await syncQueryDailyAggregate(
-    supabase, token, projectId, queryId, "engagementScore", "engagement_score", metricsStartDate, now,
-  );
-  if (!hasBrandwatchCallBudget()) return { didWork: true };
-  await syncQueryDailyAggregate(
-    supabase, token, projectId, queryId, "authors", "unique_authors", metricsStartDate, now,
-  );
-  if (!hasBrandwatchCallBudget()) return { didWork: true };
-  await syncQueryDailyAggregate(
-    supabase, token, projectId, queryId, "impressions", "impressions", metricsStartDate, now,
-  );
-  // Breakdown de plataforma — sempre roda, query inteira (sem quebra por
-  // Narrativa).
-  if (!hasBrandwatchCallBudget()) return { didWork: true };
-  await syncPlatformMetrics(supabase, token, projectId, queryId, null, metricsStartDate, now);
-  // Autores únicos/engajamento/sentimento líquido por plataforma (query
-  // inteira) — ver nota em syncPlatformAggregate() acima.
-  if (!hasBrandwatchCallBudget()) return { didWork: true };
-  await syncPlatformAggregate(
-    supabase, token, projectId, queryId, "authors", "unique_authors", metricsStartDate, now,
-  );
-  if (!hasBrandwatchCallBudget()) return { didWork: true };
-  await syncPlatformAggregate(
-    supabase, token, projectId, queryId, "engagementScore", "engagement_score", metricsStartDate, now,
-  );
-  if (!hasBrandwatchCallBudget()) return { didWork: true };
-  await syncPlatformAggregate(
-    supabase, token, projectId, queryId, "netSentiment", "net_sentiment", metricsStartDate, now,
-  );
+  await syncPlatformMultiAggregate(supabase, token, projectId, queryId, metricsStartDate, now);
   return { didWork: true };
 }
 
@@ -3829,8 +3828,18 @@ async function runSyncInvocation(supabase: SupabaseClient, invocationStartedAt: 
           throw new Error(`Fase desconhecida: ${currentStep}`);
       }
 
-      const { next, cycleComplete } = nextSyncStep(currentStep);
-      const cursorUpdate: Record<string, unknown> = { next_step: next, status: "idle", last_error: null };
+      const { next, cycleComplete: rawCycleComplete } = nextSyncStep(currentStep);
+      // ✅ 2026-07-22: `stayOnStep` (ver StepResult) mantém a MESMA fase em
+      // `next_step` em vez de avançar — usado por `daily_metrics` pra
+      // continuar o loop de sentimento por Narrativa no próximo heartbeat
+      // em vez de um burst só. Nunca fecha o ciclo (`last_synced_at`)
+      // enquanto isso, mesmo que a fase corrente por acaso fosse a última.
+      const cycleComplete = rawCycleComplete && !result.stayOnStep;
+      const cursorUpdate: Record<string, unknown> = {
+        next_step: result.stayOnStep ? currentStep : next,
+        status: "idle",
+        last_error: null,
+      };
       if (result.lastAddedCursor !== undefined) cursorUpdate.last_added_cursor = result.lastAddedCursor;
       if (result.backfillCompletedAt !== undefined) cursorUpdate.backfill_completed_at = result.backfillCompletedAt;
       // last_synced_at só avança quando o ciclo inteiro (todas as 7 fases)
@@ -3852,7 +3861,8 @@ async function runSyncInvocation(supabase: SupabaseClient, invocationStartedAt: 
       });
 
       log("invocation:step_done", {
-        projectId, queryId, step: currentStep, didWork: result.didWork, nextStep: next, cycleComplete,
+        projectId, queryId, step: currentStep, didWork: result.didWork, stayOnStep: result.stayOnStep ?? false,
+        nextStep: result.stayOnStep ? currentStep : next, cycleComplete,
       });
 
       if (result.didWork || cycleComplete) break;

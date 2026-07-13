@@ -1,6 +1,6 @@
 ---
 tipo: pending-tracker
-atualizado: 2026-07-21 (rev. 13)
+atualizado: 2026-07-22 (rev. 14)
 ---
 
 # Pendências — Digital Intelligent Communication
@@ -136,6 +136,23 @@ cenário já documentado de invocações manuais de teste no Dashboard
 somadas ao heartbeat de 15min, que o backoff puramente reativo não
 prevenia. Ver `CLAUDE.md`, "bw-sync rate limit — gate proativo" e
 `foundation/sync-brandwatch.md` passos 0.5d/8.
+
+✅ **Resolvida 2026-07-22** (pedido do usuário, não numerada: "ainda com
+problemas de rate limit... verifique se a busca está incremental e se há
+algo a otimizar" — follow-up ao gate proativo de 2026-07-21, que estava
+disparando corretamente mas só reagindo a um problema que persistia:
+`daily_metrics` sozinha fazia até 14 chamadas fixas + 1 por Narrativa numa
+única invocação, um burst grande demais pra janela real de 10min da
+Brandwatch). Duas otimizações em `bw-sync/index.ts`, sem migration: (1)
+consolidação via `data/multiAggregate/{dimension}/days` (endpoint oficial
+confirmado ao vivo contra developers.brandwatch.com nesta sessão) — 14
+chamadas fixas (reachEstimate/engagementScore/authors/impressions/
+netSentiment × categories+queries, +4 de plataforma) viram 3; (2) o loop
+de sentimento por Narrativa (não combinável — dimension1=sentiment já usa
+as 2 dimensões permitidas) agora espalha por vários heartbeats via novo
+`StepResult.stayOnStep`, capado a 8 chamadas reais por invocação com gate
+de frescor de 25min. Ver `CLAUDE.md`, "daily_metrics call-count reduction"
+e `foundation/sync-brandwatch.md`.
 
 ## Gaps técnicos (spec pronta, sem migration/código ainda)
 

@@ -3,7 +3,7 @@ tipo: feature-spec
 módulo: foundation
 funcionalidade: sync-brandwatch
 status: implementado
-atualizado: 2026-07-21
+atualizado: 2026-07-22
 ---
 
 # Sync Brandwatch
@@ -135,6 +135,63 @@ numa passada), popular **todos** os `categoryTargets`/dimensões de uma
 Narrativa recém-criada pode levar vários ciclos completos (cada ciclo =
 `BW_SYNC_INTERVAL_HOURS`) em vez de um só. Aceito em troca de nunca mais
 estourar o orçamento de CPU — ver `data-model.md` §4 (`sync_cursors`).
+
+✅ **Otimização definitiva de `daily_metrics` (2026-07-22)** — pedido do
+usuário: "ainda com problemas de rate limit... verifique se a busca está
+incremental e se há algo a otimizar", log real mostrando o gate proativo
+de 2026-07-21 disparando (`brandwatch_rate_limit_near_ceiling`,
+`lastRateLimitUsed: 27`) — o gate estava funcionando como desenhado, mas
+só reage a um problema que continuava existindo: esta fase sozinha ainda
+fazia até 14 chamadas fixas + 1 por Narrativa (o guard de
+`hasBrandwatchCallBudget()` do bug de 2026-07-13 acima limita o *total*
+por invocação, não o *tamanho do burst*, que é o que importa pro teto real
+de 30/10min). Duas correções, sem migration (mudança só na Edge Function):
+1. **Consolidação via `data/multiAggregate/{dimension}/days`** — endpoint
+   oficial da Brandwatch ("Multiple Aggregate Charts",
+   developers.brandwatch.com/docs/multi-aggregate-charts, conteúdo
+   confirmado ao vivo nesta sessão) que aceita `aggregate=a,b,c` (lista
+   separada por vírgula) e devolve `values[].value` como um OBJETO com uma
+   chave por aggregate pedido. `reachEstimate`+`engagementScore`+`authors`+
+   `impressions`+`netSentiment` (10 chamadas fixas, categories+queries) e
+   `volume`+`authors`+`engagementScore`+`netSentiment` de plataforma (4
+   chamadas) viram 1 chamada cada — 14 chamadas fixas → 3
+   (`syncCategoryDailyMultiAggregate`/`syncQueryDailyMultiAggregate`/
+   `syncPlatformMultiAggregate`, substituindo `syncCategoryDailyAggregate`/
+   `syncQueryDailyAggregate`/`syncPlatformAggregate`, removidas). Efeito
+   colateral: como `netSentiment` agora está sempre na MESMA chamada que
+   reach/engagement/autores/impressões, a starvation corrigida em
+   2026-07-20 (reordenar pra sobreviver ao corte de orçamento) deixa de ser
+   possível por construção — não tem mais como uma chamada da mesma
+   dimensão "chegar depois" da outra.
+   ⚠️ O split positivo/neutro/negativo de sentimento
+   (`syncSentimentMetrics`, `data/volume/sentiment/days&category=X`)
+   **não** pode entrar nesta consolidação — não é um "aggregate"
+   combinável, é o próprio eixo `dimension1=sentiment`, e a Brandwatch só
+   aceita 2 dimensões por chamada (sentiment × days já ocupa as duas).
+   Continua 1 chamada por `categoryTarget`, ver item 2.
+2. **Burst do loop de sentimento por Narrativa espalhado entre
+   heartbeats** — antes, o loop processava TODOS os `categoryTargets` numa
+   invocação só (só parava se o orçamento local acabasse no meio); com
+   Narrativas suficientes isso sozinho já era um burst grande dentro da
+   janela real de 10min da Brandwatch. Agora: a Query inteira
+   (`category=null`) sempre roda (1 chamada, sem gate de frescor — crítica
+   pros KPIs de topo); o restante das Narrativas é capado a
+   `MAX_SENTIMENT_TARGETS_PER_INVOCATION = 8` chamadas reais por invocação
+   e pula (sem gastar chamada) qualquer Narrativa cujo
+   `bw_query_metrics_daily.synced_at` mais recente já é mais novo que
+   `DAILY_SENTIMENT_FRESH_WINDOW_MS = 25min` (maior que o heartbeat de
+   15min, pra nunca reprocessar a mesma Narrativa no heartbeat seguinte).
+   Se sobrar Narrativa por cobrir, a fase retorna um novo sinal
+   `stayOnStep: true` (`StepResult`) — o dispatcher **não avança**
+   `next_step` (fica em `daily_metrics`, não pula pra `hourly_metrics`), e
+   o próximo heartbeat continua exatamente daqui. Mesmo racional de
+   "Phased execution per pair" (`weekly_monthly`/`topics`/`top_authors`)
+   já aceito neste projeto, só aplicado **dentro** da fase em vez de entre
+   fases — pra um número moderado de Narrativas (dezenas), ainda cobre o
+   ciclo completo bem dentro do `BW_SYNC_INTERVAL_HOURS` padrão (3h).
+   `last_synced_at` continua só avançando quando o ciclo INTEIRO (as 16
+   fases) fecha, então um `daily_metrics` que ainda está espalhando o
+   burst do sentimento não fecha o ciclo prematuramente.
 
 **Estado vive inteiro no Postgres, nunca em memória do isolate** — por
 isso uma invocação **manual** (clique em "Invoke" no Dashboard do

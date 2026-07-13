@@ -153,6 +153,12 @@ export interface AuthorRow {
   sentiment_neutral: number | null
   sentiment_negative: number | null
   is_influential: boolean
+  // Títulos das Narrativas/pautas em que o autor teve atividade dentro do
+  // escopo pedido — sempre array (nunca null), pode ter mais de um item
+  // (ex: página `themes`, um autor pode citar mais de uma pauta). Vazio
+  // quando o escopo é a Query inteira (sem Narrativa associada). Ver
+  // get_authors_ranking, migration 20260721030000.
+  narrative_labels: string[]
 }
 
 export interface Highlight {
@@ -267,34 +273,34 @@ const PAGE_BREAKDOWN_TYPES: Partial<Record<PageKey, Breakdown['type'][]>> = {
   reports: ['sentiment'],
 }
 
-// ✅ Revisto 2026-07-20 (pedido do usuário: "Tanto na página de overview
-// quanto na lista de narrativas serão mostradas todas as narrativas") —
-// substitui a decisão de 2026-07-16 abaixo só pras duas páginas citadas.
-// Motivo do usuário: overview/narrativas devem listar Category (Pauta) e
-// Subcategory juntas, sem esconder nenhum nível — viabilizado pela troca
-// simultânea do título da Narrativa pra "Categoria - Subcategoria" (ver
-// bw-sync/index.ts, buildNarrativeTitle()), que desambigua uma Subcategory
-// mesmo fora do contexto da sua Pauta na mesma lista plana.
+// ✅ Revisto 2026-07-21 (pedido do usuário: "Para facilitar vamos
+// considerar apenas as subcategorias em todas as narrativas. Retire a
+// regra de 'categoria - subcategoria'. Em Pautas faz-se uma restrição de
+// todas as subcategorias da categoria Pautas.") — substitui as decisões de
+// 2026-07-16/2026-07-20 abaixo (histórico, não mais o comportamento
+// atual). Toda página que lista Narrativas agora usa só Subcategories
+// (bw_categories.parent_id is not null) — a Category raiz (topo) nunca
+// mais aparece misturada na mesma lista, em nenhuma página. É isso que
+// tornou seguro remover o prefixo "Categoria - " do título de volta pro
+// nome simples da Subcategory (ver bw-sync/index.ts, buildNarrativeTitle):
+// sem a Category raiz na mesma lista, o nome sozinho não é mais ambíguo.
+// `themes` (Pautas Eleitorais) é mais restrito ainda: 'pautas' — só
+// Subcategories cuja Category-pai é especificamente a Category raiz
+// chamada "Pautas" (pautas_root_category_id, migration 20260721030000),
+// não qualquer Category raiz do Project (ex: "Pesquisas"/"Banco Master"
+// não são pautas eleitorais e não devem aparecer aqui).
 //
-// Histórico (2026-07-16): "Quando há categoria e subcategoria, o sistema
-// deve considerar na página de overview apenas a categoria, porém na aba
-// de narrativas considera-se as subcategorias." — 'roots' = só Narrativas
-// cuja Category é de topo (bw_categories.parent_id is null, mesma
-// definição de "Pauta" de electoral-themes.md); 'leaves' = só
-// Narrativas-filhas (Subcategory). `platforms`/`reports` continuam nesse
-// escopo original (não fizeram parte do novo pedido). get_narratives_table
-// (migration 20260716010000) só aplica p_scope quando p_pauta_id está
-// ausente — a página `themes` continua usando p_pauta_id (ctx.pautaId)
-// pra "todas as subcategorias da categoria Pauta" quando uma Pauta
-// específica é aberta; sem pautaId, cai no default 'leaves' abaixo (todas
-// as Narrativas-filhas de todas as Pautas).
+// Histórico (2026-07-16): "na página de overview apenas a categoria, na
+// aba de narrativas considera-se as subcategorias" (roots/leaves por
+// página). Histórico (2026-07-20): "mostrar todas as narrativas" em
+// overview/narrativas (p_scope null, Category+Subcategory juntas,
+// viabilizado pelo título composto). Ambos superados pela simplificação
+// acima — nenhuma página usa mais 'roots' ou null.
 // Páginas fora deste mapa (narrative_detail, authors, alerts) não usam o
 // bloco `narratives` via PAGE_BLOCKS — narrative_detail busca uma única
 // Narrativa à parte, via ui_meta.narrative (ver get-narrative-detail).
-function narrativesScopeForPage(page: PageKey): 'roots' | 'leaves' | null {
-  if (page === 'reports') return 'roots'
-  if (page === 'platforms' || page === 'themes') return 'leaves'
-  return null
+function narrativesScopeForPage(page: PageKey): 'leaves' | 'pautas' {
+  return page === 'themes' ? 'pautas' : 'leaves'
 }
 
 // =========================================================================
@@ -377,6 +383,7 @@ interface AuthorRankingRow {
   sentiment_positive: number | null
   sentiment_neutral: number | null
   sentiment_negative: number | null
+  narrative_labels: string[] | null
 }
 
 interface NarrativeSentimentBreakdownRow {
@@ -591,13 +598,20 @@ async function fetchNarratives(page: PageKey, supabase: SupabaseClient, ctx: Pag
   }
 }
 
-async function fetchAuthors(supabase: SupabaseClient, ctx: PageContext): Promise<AuthorRow[]> {
+// p_scope='pautas' (só página `themes`): escopa a Subcategories da
+// Category raiz "Pautas" em vez da Query inteira/1 Narrativa via
+// filters.narratives — pedido do usuário: "em Autores e comunidades por
+// pauta deve aparecer apenas os autores que citaram algo relacionado às
+// Pautas e deve ser informado a que pauta ele está associado, e poderá ser
+// mais de uma." Ver get_authors_ranking, migration 20260721030000.
+async function fetchAuthors(page: PageKey, supabase: SupabaseClient, ctx: PageContext): Promise<AuthorRow[]> {
   try {
     const { data, error } = await supabase.rpc('get_authors_ranking', {
       p_organization_id: ctx.organizationId,
       p_period_start: ctx.period.start,
       p_period_end: ctx.period.end,
       p_filters: effectiveFilters(ctx),
+      p_scope: page === 'themes' ? 'pautas' : null,
     })
     if (error) throw error
     return ((data ?? []) as AuthorRankingRow[]).map((row) => ({
@@ -611,6 +625,7 @@ async function fetchAuthors(supabase: SupabaseClient, ctx: PageContext): Promise
       sentiment_neutral: row.sentiment_neutral,
       sentiment_negative: row.sentiment_negative,
       is_influential: row.is_influential,
+      narrative_labels: row.narrative_labels ?? [],
     }))
   } catch (err) {
     console.error('[aggregated-metrics] fetchAuthors failed', err)
@@ -714,7 +729,7 @@ export async function assemblePageResponse(
     blocks.has('breakdowns') ? fetchBreakdowns(page, supabase, context) : Promise.resolve<Breakdown[]>([]),
     blocks.has('trends') ? fetchTrends(page, supabase, context) : Promise.resolve<Trend[]>([]),
     blocks.has('narratives') ? fetchNarratives(page, supabase, context) : Promise.resolve<NarrativeRow[]>([]),
-    blocks.has('authors') ? fetchAuthors(supabase, context) : Promise.resolve<AuthorRow[]>([]),
+    blocks.has('authors') ? fetchAuthors(page, supabase, context) : Promise.resolve<AuthorRow[]>([]),
     blocks.has('highlights') ? fetchHighlights(supabase, context) : Promise.resolve<Highlight[]>([]),
     blocks.has('term_signals') ? fetchTermSignals(supabase, context) : Promise.resolve<TermSignal[]>([]),
     blocks.has('graph') ? fetchGraph(supabase, context) : Promise.resolve<DisseminationGraph | null>(null),

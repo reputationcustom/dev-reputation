@@ -167,6 +167,12 @@ export interface AuthorRow {
   sentiment_neutral: number | null;
   sentiment_negative: number | null;
   is_influential: boolean;
+  // Títulos das Narrativas/pautas em que o autor teve atividade dentro do
+  // escopo pedido — sempre array (nunca null), pode ter mais de um item
+  // (ex: página `themes`, um autor pode citar mais de uma pauta). Vazio
+  // quando o escopo é a Query inteira (sem Narrativa associada). Ver
+  // get_authors_ranking, migration 20260721030000.
+  narrative_labels: string[];
 }
 
 export interface Highlight {

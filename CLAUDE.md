@@ -1221,6 +1221,70 @@ used to apply to `bw-sync`.)
   proactive gate doesn't catch (e.g. Brandwatch not returning the header
   for some reason).
 
+- **`daily_metrics` call-count reduction + sentiment burst spread across
+  heartbeats (2026-07-22)** — user follow-up: "ainda com problemas de
+  rate limit... verifique se a busca está incremental e se há algo a
+  otimizar", with a real log showing the 2026-07-21 proactive gate firing
+  as designed (`brandwatch_rate_limit_near_ceiling`, `lastRateLimitUsed:
+  27`). The gate was working correctly — the actual problem is that
+  `daily_metrics` alone still made up to 14 fixed calls
+  (`reachEstimate`/`engagementScore`/`unique_authors`/`impressions`/
+  `net_sentiment` × `categories`+`queries` dimensions, plus 4 for
+  platform) *plus* 1 sentiment call per Narrativa, all in a single
+  invocation — the 2026-07-13 fix only bounded the *total* per invocation
+  (`hasBrandwatchCallBudget()`), never the *burst size*, which is what
+  actually matters against Brandwatch's real 30-calls/**10-minute**
+  ceiling. Two fixes, both Edge-Function-only (no migration):
+  1. **Multi-aggregate consolidation.** Brandwatch documents a
+     `data/multiAggregate/{dimension}/days?aggregate=a,b,c` endpoint
+     ("Multiple Aggregate Charts") that returns one object per point
+     keyed by aggregate name (e.g. `{volume: 12, reachEstimate: 12}`) —
+     confirmed live against `developers.brandwatch.com/docs/
+     multi-aggregate-charts` this session, not inferred. Replaced 5
+     separate `categories`-dimension calls and 5 separate
+     `queries`-dimension calls with one `multiAggregate` call each
+     (`syncCategoryDailyMultiAggregate`/`syncQueryDailyMultiAggregate`),
+     and 4 separate `pageTypes`-dimension calls with one more
+     (`syncPlatformMultiAggregate`) — `syncCategoryDailyAggregate`/
+     `syncQueryDailyAggregate`/`syncPlatformAggregate` are gone, no
+     longer used anywhere. 14 fixed calls → 3. Bonus: since
+     `netSentiment` is now bundled in the *same* call as reach/
+     engagement/authors/impressions, the starvation bug fixed on
+     2026-07-20 (reordering calls so `netSentiment` survives a budget cut)
+     is now structurally impossible — there's no longer a "later" call
+     for it to be starved out of. The positive/neutral/negative sentiment
+     split (`syncSentimentMetrics`) can't join this consolidation — it
+     isn't a combinable "aggregate," it's the `dimension1=sentiment` axis
+     itself, and Brandwatch only accepts 2 dimensions per call (sentiment
+     × days already uses both) — it has to stay 1 call per Narrativa.
+  2. **That remaining per-Narrativa sentiment loop now spreads across
+     multiple heartbeats instead of bursting in one invocation.** The
+     whole-query (`category=null`) sentiment call still always runs, no
+     freshness gate (cheap, feeds top-line KPIs). The rest of the
+     Narrativas are capped to `MAX_SENTIMENT_TARGETS_PER_INVOCATION = 8`
+     real calls per invocation and skip (no call spent) any Narrativa
+     whose most recent `bw_query_metrics_daily.synced_at` is younger than
+     `DAILY_SENTIMENT_FRESH_WINDOW_MS = 25min` (deliberately longer than
+     the 15-minute heartbeat, so a Narrativa just processed isn't
+     immediately reprocessed next tick) — checked in one batched query
+     (`fetchDailySentimentFreshness`), not N queries. If Narrativas remain
+     after the cap, the phase returns a new `StepResult.stayOnStep: true`
+     — the dispatcher does **not** advance `next_step` (stays on
+     `daily_metrics` instead of moving to `hourly_metrics`), so the next
+     heartbeat resumes exactly where this one left off. Same "phased
+     execution" principle already accepted for `weekly_monthly`/`topics`/
+     `top_authors` (CLAUDE.md, "Phased execution per pair"), just applied
+     *within* one phase instead of *between* phases. `last_synced_at`
+     still only advances when the full 16-phase cycle closes, so a
+     `daily_metrics` still mid-burst never closes the cycle early. For a
+     moderate Narrativa count (dozens), this still fully refreshes well
+     within the default 3-hour `BW_SYNC_INTERVAL_HOURS`.
+  Not verified against a live Brandwatch response this session (no
+  credentials) — the `multiAggregate` request/response shape is
+  doc-confirmed (fetched directly from developers.brandwatch.com), but
+  should still be checked against real `[bw-sync]` logs after deploy, same
+  standing caveat as every other unconfirmed-payload item in this file.
+
 - **`bw_categories.status` — Category/Subcategory removed from Brandwatch
   no longer used by the system (2026-07-16, migration `20260716010000`)**
   — user request: "as categorias permanecem mesmo quando excluídas da
