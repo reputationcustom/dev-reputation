@@ -1,6 +1,6 @@
 ---
 tipo: pending-tracker
-atualizado: 2026-07-16 (rev. 8)
+atualizado: 2026-07-16 (rev. 9)
 ---
 
 # Pendências — Digital Intelligent Communication
@@ -109,6 +109,7 @@ na época. Itens #2/#3 resolvidos na mesma data (ver acima).
 | 19 | `intelligence-center`/`sentiment-analysis` | 2 widgets de `/sentiment` sem fonte de dado: "Sentimento por Narrativa" (barras por Narrativa — `block-mapping-per-page.md` não marca o bloco `narratives` para esta página) e "Menções que mais influenciaram o sentimento" (lista de mentions individuais, sem bloco correspondente no envelope) | [intelligence-center/sentiment-analysis.md](sentiment-analysis.md) |
 | 20 | `intelligence-center`/`narratives-exploration` | Detalhe de Narrativa: "Menções relevantes" e "Ações e decisões" (`cases`) ficam `<EmptyState />` — a primeira por falta de bloco no envelope (nenhum dos 8 blocos padrão cobre "lista de mentions em destaque"), a segunda porque a tabela `cases` (`intelligence-center/data-model.md`) ainda não tem migration — spec já previa esse estado vazio explicitamente ("Nenhuma ação registrada ainda") enquanto `cases` não existir | [intelligence-center/narratives-exploration.md](narratives-exploration.md), "Ações e decisões" |
 | 21 | `aggregated-metrics` | Cache de página (TTL 5min + invalidação por sync/refresh manual) não implementado — as 6 Edge Functions `get-page-*`/`get-narrative-detail` recalculam o envelope a cada chamada. Não bloqueia funcionalidade (cada chamada já é rápida — leitura de agregados já sincronizados, não de `mentions` cru), só custa mais chamadas RPC do que o necessário sob uso intenso | [aggregated-metrics/edge-functions-per-page.md](edge-functions-per-page.md), "Regras de negócio" |
+| 22 | `intelligence-center`/`aggregated-metrics` | Card "Share of Voice por Query Group" da Visão Geral nunca foi construído — `get_metrics_cards` só retorna os 5 KPIs de `bw_query_metrics_daily` (`total_mentions`/`sentiment_*`/`reach_estimate`/`engagement_score`/`unique_authors`), sem function SQL nem bloco de envelope para SOV agregado por Query Group. Achado ao revisar `executive-overview.md` contra o código em 2026-07-16 | [intelligence-center/executive-overview.md](intelligence-center/executive-overview.md), "Cards de topo" |
 
 ✅ Item #6 (`auth` — UI + Edge Functions) removido desta tabela: já estava
 `implementado` desde 2026-07-13 (ver `CLAUDE.md`, "Módulo auth (Sprint

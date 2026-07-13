@@ -2,11 +2,72 @@
 tipo: feature-spec
 módulo: intelligence-center
 funcionalidade: executive-overview
-status: pronto
+status: implementado
 atualizado: 2026-07-16
 ---
 
 # Executive Overview
+
+> ✅ **Implementado (2026-07-15, ajustes 2026-07-12)**: `/overview`
+> (`app/(intelligence-center)/(analytics)/overview/page.tsx`) consome o
+> envelope de `get-page-overview` via `usePageEnvelope` — nenhum cálculo no
+> frontend, só renderização (Princípio técnico 2), como a spec pede. Cobre
+> quase tudo desta spec como descrito:
+> - **Header global** (`components/intelligence-center/page-header-bar.tsx`)
+>   — seletor de organização (só aparece com >1 organização), os 4 modos de
+>   período (Diário/Semanal/Mensal/Personalizado, com popover de 2 datas
+>   pré-preenchido e validação `start <= end`), painel de "Filtros
+>   avançados" presentacional (9 chips, sem `onClick` — ver nota da própria
+>   spec sobre não inventar filtragem que o backend não resolve). Sem
+>   seletor de Query, como decidido.
+> - **5 cards de KPI** (`components/intelligence-center/metric-card.tsx`)
+>   — Total de menções/Sentimento geral/Autores únicos/Alcance
+>   estimado/Engajamento total, cada um com delta vs. período anterior já
+>   calculado pelo backend (`get_metrics_cards`).
+> - **Gráfico de volume por sentimento** (`charts/trend-line-chart.tsx`) e
+>   **tabela de Narrativas** (`narratives-table.tsx`, 7 colunas, ordenação
+>   default do backend por `risk_score` desc/`total_mentions` desc,
+>   reordenável por clique no cabeçalho, badges/barras de
+>   Sentimento/Velocidade/Momentum/Risco com banda+cor) — ambos exatamente
+>   como especificado abaixo.
+> - **Estados de loading/erro/vazio por widget** (`WidgetCard`,
+>   `<EmptyState />`) — cada card busca independentemente, um erro não
+>   derruba os outros.
+>
+> ⚠️ **Gap real, não implementado**: o card de **Share of Voice por Query
+> Group** ("Fluxo principal" item 4 e "Cards de topo" abaixo) nunca foi
+> construído — `get_metrics_cards` (`aggregated-metrics/sql-aggregation.md`)
+> só retorna os 5 KPIs de `bw_query_metrics_daily`
+> (`total_mentions`/`sentiment_*`/`reach_estimate`/`engagement_score`/
+> `unique_authors`); não existe function SQL nem bloco de envelope para SOV
+> agregado por Query Group. Não é uma decisão revertida, é uma lacuna que
+> passou despercebida entre esta spec e `sql-aggregation.md` — registrada
+> como gap técnico #22 em `_pending.md`.
+>
+> Deviação menor: a página também renderiza um painel de "Insights"
+> (`NarrativeTextPanel`/`HighlightsPanel`) acima da tabela de Narrativas —
+> não descrito nesta spec, vem do bloco `highlights`/`narrative_text` do
+> envelope (`block-mapping-per-page.md` já previa `overview` com esses
+> blocos). Hoje renderiza sempre vazio/"não disponível ainda", já que
+> `get_active_highlights` e a síntese de IA ainda não existem (gaps #7/#8
+> em `_pending.md`) — nenhum dado inventado, só o estado "ainda não
+> disponível".
+>
+> Passes de correção pós-implementação, sem mudança de comportamento desta
+> spec: revisão de paridade com o protótipo real (2026-07-12 — breakpoint
+> `900px`, rail colapsado, grids `md:` no tablet) e ajustes de UI a partir
+> de screenshot review (2026-07-12 — sentimento virou barra cumulativa em
+> vez de donut, linha do gráfico ganhou rótulo de valor no hover, sidebar
+> `sticky`/`min-h-screen` para não terminar antes do fim do conteúdo) — ver
+> `CLAUDE.md`, "Prototype-parity pass" e "Follow-up UI fixes" para o
+> detalhamento completo (afetam as 5 páginas de `intelligence-center`, não
+> só esta).
+>
+> Verificação: `npm run build` (typecheck + lint + rotas) passa limpo; sem
+> automação de browser disponível neste ambiente, então o carregamento
+> real dos widgets contra dados autenticados não foi verificado
+> visualmente (mesma limitação já registrada em `CLAUDE.md` para toda a
+> leva de `intelligence-center`).
 
 > ✅ **Movida de `foundation/executive-overview.md` para cá (2026-07-12)** —
 > era a única página de UI especificada dentro de um módulo que, por
