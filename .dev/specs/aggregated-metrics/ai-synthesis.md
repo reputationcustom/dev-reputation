@@ -3,10 +3,28 @@ tipo: feature-spec
 módulo: aggregated-metrics
 funcionalidade: ai-synthesis
 status: pronto
-atualizado: 2026-07-12
+atualizado: 2026-07-25
 ---
 
 # Síntese Narrativa da Página (`narrative_text`)
+
+> ✅ **Camada 0 implementada (2026-07-25, gap #27 de `_pending.md`,
+> resolvido)** — `fetchNarrativeText()` (`aggregated-metrics-service.ts`):
+> usa `summary`/`explanation` do highlight quando há exatamente 1 (hoje
+> inalcançável na prática, `get_active_highlights` ainda não existe, ver
+> gap #8 abaixo); caso contrário monta o template determinístico "Sem
+> eventos relevantes detectados no período. Volume {cresceu|caiu} de
+> {delta_pct}% em relação ao período anterior." via nova function SQL
+> `get_volume_delta` (migration `20260725020000`, escopada por
+> `filters.narratives` como `get_sentiment_breakdown`). `narrative_text`
+> deixa de ser sempre `null`. **Camada 1** (`page_narrative_synthesis`,
+> ver "Dados envolvidos" abaixo) continua sem migration — depende de
+> `event-radar` publicar 2+ highlights por página pra fazer sentido, gap
+> #7 de `_pending.md` continua aberto. Achado anterior (2026-07-13, ainda
+> relevante como histórico): o código chegou a ter um comentário afirmando
+> que a Camada 0 "já cobria o texto determinístico" quando na verdade
+> `narrative_text` era gravado `null` incondicionalmente — corrigido junto
+> com a implementação real desta vez.
 
 ## Objetivo
 

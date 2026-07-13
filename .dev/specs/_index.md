@@ -1,7 +1,7 @@
 ﻿---
 tipo: index
 projeto: Digital Intelligent Communication
-atualizado: 2026-07-13
+atualizado: 2026-07-25
 ---
 
 # Digital Intelligent Communication — Índice de Especificações
@@ -182,7 +182,8 @@ deve ser conferido contra esta lista antes de ser considerado pronto.
 | `auth`                  | Login/recuperação de senha via Supabase Auth + administração de usuários restrita a admins (`user_profiles`) — **pré-requisito de todo o resto**, nenhuma página é acessível sem sessão | **implementado** (2026-07-13, `middleware.ts` + `/login` + `/forgot-password` + `/reset-password` + `/admin/users` + `/perfil` (fuso horário, ver `data-model.md` "timezone") + as 6 Edge Functions administrativas + `update-my-timezone` — ver `CLAUDE.md` "Módulo auth") | 2 | [auth/overview.md](auth/overview.md) |
 | `entities`              | Cadastro Nacional de Entidades (EAV via entity_tags) + enriquecimento de mentions | rascunho | 2      | — |
 | `intelligence-center`   | Todas as páginas do frontend (Sprint 2): Executive Overview (entrada pós-login) + Exploração de Narrativas + Sentimento + Plataformas + Pautas Eleitorais — inclui `cases` (ações/decisões por Narrativa, ex-`command-center`, ver "Módulo `command-center` removido" abaixo) | pronto — não implementado | 2 | [intelligence-center/overview.md](intelligence-center/overview.md) |
-| `aggregated-metrics`    | Camada de agregação/envelope JSON único, reaproveitada por todas as páginas do frontend (Sprints 2-4) e pela síntese de IA — ver "Fusão de módulos" abaixo | pronto — não implementado | 2-4 | [aggregated-metrics/overview.md](aggregated-metrics/overview.md) |
+| `aggregated-metrics`    | Camada de agregação/envelope JSON único, reaproveitada por todas as páginas do frontend (Sprints 2-4) e pela síntese de IA — ver "Fusão de módulos" abaixo | **implementado** (2026-07-14/15 — `get_active_highlights`/breakdown de região/`page_narrative_synthesis`/Camada 0 de `ai-synthesis` pendentes, ver `_pending.md`) | 2-4 | [aggregated-metrics/overview.md](aggregated-metrics/overview.md) |
+| `communications`       | Registro de Comunicações (post, e-mail, propaganda de TV etc.) ou Decisões (data/título/responsável/detalhamento) vinculadas a uma Narrativa, com CRUD completo pela UI, e acompanhamento de impacto (sentimento/menções/risco/momentum antes vs. depois) | rascunho | 2.1 | [communications/overview.md](communications/overview.md) |
 | `event-radar`         | Detecção estatística (SQL) de picos/quedas/mudanças de sentimento + 1 card de IA por evento, publicado em `feed_events` — **substitui/absorve** `threshold-engine` e `intelligent-feed` abaixo, ver "Fusão de módulos" | rascunho     | 3      | [event-radar/overview.md](event-radar/overview.md) |
 | ~~`threshold-engine`~~  | Motor de risco próprio (volume/percentual/sentimento negativo) — **absorvido por `event-radar`** (motor de detecção + severidade fazem o mesmo papel, com mais rigor estatístico) | absorvido    | 3      | — |
 | ~~`intelligent-feed`~~  | Feed de eventos do sistema — **absorvido por `event-radar`** (grava em `feed_events`, mesma tabela já reservada em `_glossary.md`) | absorvido    | 3      | — |
@@ -334,6 +335,24 @@ Consome o envelope pronto, sem lógica de negócio própria. Ordem recomendada:
 2. ✅ [intelligence-center/narratives-exploration.md](intelligence-center/narratives-exploration.md) — a mais complexa (lista + detalhe + grafo de disseminação simplificado + disseminadores + menções relevantes) — construir logo em seguida, com o padrão do Overview ainda fresco. **Implementado 2026-07-15**, com 3 simplificações registradas em `_pending.md` (gaps #16/#20): detalhe abre como página cheia (não modal via intercepting route, que a spec já tinha decidido), "Menções relevantes" e "Ações e decisões" ficam `<EmptyState />` (sem bloco de envelope pra mentions em destaque; `cases` sem migration ainda).
 3. ✅ [intelligence-center/sentiment-analysis.md](intelligence-center/sentiment-analysis.md), [platform-analysis.md](intelligence-center/platform-analysis.md), [electoral-themes.md](intelligence-center/electoral-themes.md) — sem dependência forte entre si (todas reaproveitam os mesmos componentes de tabela/cards/states já validados nos passos 1-2) — podem ser feitas em qualquer ordem ou por sessões diferentes a partir daqui. **Implementadas 2026-07-15**, com gaps registrados em `_pending.md` (#17 drill-down de pauta, #18 4 widgets de Plataformas sem fonte, #19 2 widgets de Sentimento sem fonte) para os pedaços sem function SQL correspondente em `sql-aggregation.md`.
 
+### Sprint 2.1 — módulo `communications`
+
+> ✅ Adicionado 2026-07-25, a pedido do usuário — módulo novo, fora da
+> sequência original de Sprint 2 acima (por isso "2.1", não uma
+> renumeração do que já existe). Depende de `foundation` (`narratives`),
+> `auth` (`user_profiles`) e `aggregated-metrics` (reaproveita as fórmulas
+> de Sentimento/Momentum/Tendência/Risco de `sql-aggregation.md`, "Scores
+> de Narrativa") — todos já implementados —, e do shell de
+> `intelligence-center` (páginas novas vivem no mesmo route group, sem
+> layout próprio). Não bloqueia nem é bloqueado por `event-radar`
+> (Sprint 3). ✅ **Ampliado, mesma sessão**: o módulo cobre dois tipos de
+> registro — Comunicação (campos completos) e Decisão (data/título/
+> responsável/detalhamento, campos reduzidos) — mesma tabela
+> `communications`, coluna `record_type`. Ver
+> [communications/overview.md](communications/overview.md) para o
+> objetivo completo e a distinção explícita com `cases`
+> (`intelligence-center`) — são conceitos parecidos, mas não o mesmo.
+
 ### O que fica fora do Sprint 2 (não bloqueia as 5 páginas acima)
 
 - `entities` — ranking de autores já funciona sem ela (`bw_query_top_authors`/`bw_query_top_tweeters`, nativos da Brandwatch desde Sprint 1); só falta classificação partido/espectro (`entity_tags`) e a página dedicada `/authors`.
@@ -447,6 +466,7 @@ Consome o envelope pronto, sem lógica de negócio própria. Ordem recomendada:
 - `Narrativa` (entidade viva própria do produto: `narratives`, `narrative_signals`, `narrative_tags`, `narrative_metrics`; opcionalmente ligada a uma `Category` via `bw_category_id`) → `foundation`. Satélites `narrative_entities` (Sprint 2, depende de `Entity`) e `narrative_relationships` (Sprint 3, grafo) ficam para depois.
 - `Entity` / `entity_tags` (Cadastro Nacional de Entidades) → `entities`.
 - `Caso` (`cases`, schema mínimo — título/status/`assignee_id`/`due_date`) → `intelligence-center` (ver [intelligence-center/data-model.md](intelligence-center/data-model.md)). Satélites (`case_checklist_items`, `case_comments`, `case_files`, `case_status_history`) ficam para quando forem pedidos, não fazem parte do schema mínimo atual — ver "Módulo `command-center` removido" acima.
+- `Communication` / `Decision` (`communications`, coluna `record_type`) → `communications` (Sprint 2.1, ver [communications/data-model.md](communications/data-model.md)) — uma Comunicação já realizada (post, e-mail, propaganda de TV etc., campos completos) ou uma Decisão (data/título/responsável/detalhamento, campos reduzidos), vinculada a uma Narrativa; **não confundir com `Caso`** (`cases`, acima) — ver [communications/overview.md](communications/overview.md), "Relação com `cases`".
 - `FeedEvent` (`feed_events`) → produzido por `event-radar` (absorve o papel antes reservado a `threshold-engine`/`intelligent-feed`, ver tabela de módulos acima).
 - `radar_staging_events` (staging interno, pré-publicação — nunca lido pelo frontend) → `event-radar`.
 - Envelope de página (contrato de resposta, não é tabela) → `aggregated-metrics`.
@@ -588,11 +608,12 @@ Consome o envelope pronto, sem lógica de negócio própria. Ordem recomendada:
 > `data-model.md` for gerado — `event-radar`, `executive-reports`
 > (`command-center` removido do projeto, ver nota acima).
 
-> ⚠️ DECISÃO PENDENTE (`aggregated-metrics`): tipos TS do envelope em
-> pacote compartilhado (`packages/shared-types`) vs. duplicados entre
-> frontend e Edge Functions — recomendação registrada é pacote
-> compartilhado, para não haver drift entre o tipo usado no client e no
-> server. Ver [aggregated-metrics/service-layer-aggregation.md](aggregated-metrics/service-layer-aggregation.md).
+> ✅ **Resolvido (2026-07-14)**: tipos TS do envelope em pacote
+> compartilhado — `packages/shared-types` (`@reputation/shared-types`).
+> Ressalva: só resolve o lado Next.js/frontend, Edge Functions continuam
+> com cópia inline por Princípio técnico 5. Ver
+> [aggregated-metrics/service-layer-aggregation.md](aggregated-metrics/service-layer-aggregation.md)
+> e `_pending.md` (decisão #2).
 
 > ✅ **Resolvido (2026-07-13)**: síntese de página (`narrative_text`) é **assíncrona** (carrega
 > com fallback determinístico, atualiza quando a composição terminar) **e armazenada em banco

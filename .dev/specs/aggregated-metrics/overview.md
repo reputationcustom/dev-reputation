@@ -1,9 +1,23 @@
 ﻿---
 tipo: module-overview
 módulo: aggregated-metrics
-status: pronto
-atualizado: 2026-07-12
+status: implementado
+atualizado: 2026-07-25
 ---
+
+> ✅ **Corrigido nesta revisão (2026-07-25)**: este arquivo e as 6 specs
+> filhas ficaram com `status: pronto` (spec pronta, não implementada) por
+> meses depois do módulo já estar genuinamente implementado (ver
+> `_architecture.md`, corrigido em 2026-07-16, e `CLAUDE.md`) —
+> `_index.md`'s tabela de módulos também estava com a mesma defasagem,
+> ambas corrigidas agora. Na mesma sessão, 4 gaps técnicos + 1 decisão
+> pendente foram fechados: termo de interação em `risk_score` (decisão
+> #3), breakdown de região, trend de plataforma/pauta ao longo do tempo,
+> cache de página (TTL) e a Camada 0 de `ai-synthesis` — ver `_pending.md`
+> pros detalhes de cada um. **Únicos gaps reais que continuam pendentes**:
+> `get_active_highlights` (bloco `highlights`, depende de `event-radar`,
+> Sprint 3 ainda `rascunho`) e `page_narrative_synthesis` (Camada 1 de
+> `ai-synthesis`, mesma dependência).
 
 # Módulo: Métricas Agregadas (camada de síntese para frontend + IA)
 
@@ -37,11 +51,11 @@ prompt da IA. É um único contrato (`envelope`), reaproveitado nos dois consumo
 
 | Funcionalidade              | Descrição resumida                                              | Status   | Spec                                                              |
 |------------------------------|--------------------------------------------------------------------|----------|--------------------------------------------------------------------|
-| `standard-json-envelope`     | Contrato único de resposta usado por todas as páginas            | pronto   | [standard-json-envelope.md](standard-json-envelope.md)                |
-| `sql-aggregation`            | Views/functions Postgres que calculam cada bloco atomicamente    | pronto   | [sql-aggregation.md](sql-aggregation.md)                               |
-| `service-layer-aggregation`  | Camada TS que monta o envelope a partir dos blocos SQL           | pronto   | [service-layer-aggregation.md](service-layer-aggregation.md)           |
-| `edge-functions-per-page`    | Uma Edge Function fina por página, só orquestra os blocos        | pronto   | [edge-functions-per-page.md](edge-functions-per-page.md)       |
-| `ai-synthesis`               | Envio do envelope para a IA gerar o texto explicativo da página  | pronto   | [ai-synthesis.md](ai-synthesis.md)                                     |
+| `standard-json-envelope`     | Contrato único de resposta usado por todas as páginas            | implementado | [standard-json-envelope.md](standard-json-envelope.md)                |
+| `sql-aggregation`            | Views/functions Postgres que calculam cada bloco atomicamente    | implementado — só `get_active_highlights` pendente (depende de `event-radar`) | [sql-aggregation.md](sql-aggregation.md)                               |
+| `service-layer-aggregation`  | Camada TS que monta o envelope a partir dos blocos SQL           | implementado | [service-layer-aggregation.md](service-layer-aggregation.md)           |
+| `edge-functions-per-page`    | Uma Edge Function fina por página, só orquestra os blocos        | implementado — cache de página com TTL (sem invalidação por sync/refresh manual) | [edge-functions-per-page.md](edge-functions-per-page.md)       |
+| `ai-synthesis`               | Envio do envelope para a IA gerar o texto explicativo da página  | implementado — só a Camada 0 (Camada 1/`page_narrative_synthesis` depende de `event-radar`) | [ai-synthesis.md](ai-synthesis.md)                                     |
 
 ## Dependências
 

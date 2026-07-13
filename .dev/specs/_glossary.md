@@ -1,6 +1,6 @@
 ﻿---
 tipo: glossary
-atualizado: 2026-07-22
+atualizado: 2026-07-25
 ---
 
 # Glossário de Domínio
@@ -169,6 +169,33 @@ exatos em variáveis, componentes, tabelas e comentários.
   `case_status_history`) são visão futura, não implementadas — ver tabela
   de renomeação do schema anexo em `_index.md` pra quando forem.
 - **Spec de dados**: [intelligence-center/data-model.md](intelligence-center/data-model.md)
+
+### Comunicação / Decisão (Communication / Decision)
+- **Definição**: Registro de uma ação **já realizada**, vinculada a uma
+  Narrativa, usado para medir se o sentimento/percepção pública em torno
+  daquela Narrativa melhorou ou piorou depois (comparação antes/depois
+  ancorada na data do registro) — ver
+  [communications/overview.md](communications/overview.md), Sprint 2.1.
+  Dois tipos (`communications.record_type`), mesma tabela: **Comunicação**
+  (post no perfil do candidato, e-mail, propaganda de TV/rádio, nota de
+  imprensa, material impresso, evento presencial etc. — campos completos)
+  e **Decisão** (✅ adicionado 2026-07-25 — data, título, responsável,
+  detalhamento; um subconjunto estrito dos campos de Comunicação).
+- **Sinônimos a evitar**: não confundir com `Caso` (`cases`, abaixo) —
+  Comunicação/Decisão são fatos consumados com CRUD completo pela UI desde
+  o início; um Caso é uma tarefa com ciclo de vida (aberto→resolvido),
+  hoje somente leitura. "Decisão" (este módulo) e `Caso` se sobrepõem
+  conceitualmente mais do que "Comunicação" e `Caso` — mantidos separados
+  por pedido explícito do usuário, não por ausência de sobreposição. Ver
+  a tabela comparativa em [communications/overview.md](communications/overview.md),
+  "Relação com `cases`".
+- **Tabela no banco**: `communications` (`record_type` enum
+  `communication`\|`decision`; `communication_type_id` → FK para
+  `communication_types`, uma tabela de referência — não um enum — seed
+  inicial: `social_post`\|`email`\|`tv_ad`\|`radio_ad`\|`press_release`\|
+  `printed_material`\|`event`\|`other`, extensível por `INSERT`; `null`
+  quando `record_type = 'decision'`)
+- **Spec de dados**: [communications/data-model.md](communications/data-model.md)
 
 ### Feed Inteligente (Intelligent Feed)
 - **Definição**: Stream de eventos do sistema — narrativa detectada, threshold

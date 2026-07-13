@@ -1,6 +1,6 @@
 ---
 tipo: architecture-map
-atualizado: 2026-07-16
+atualizado: 2026-07-25
 ---
 
 # Mapa de Arquitetura — Digital Intelligent Communication
@@ -30,6 +30,10 @@ graph TD
         ENTITIES["entities<br/>Cadastro de Entidades"]
     end
 
+    subgraph SPRINT2_1["Sprint 2.1"]
+        COMMUNICATIONS["communications<br/>registro de comunicações + impacto"]
+    end
+
     subgraph SPRINT3["Sprint 3"]
         EVENTRADAR["event-radar<br/>detecção + IA por evento<br/>(absorve threshold-engine/intelligent-feed)"]
         PROPGRAPH["propagation-graph<br/>rollup materializado completo"]
@@ -50,6 +54,11 @@ graph TD
     AGGMETRICS --> INTEL
     ENTITIES -.-> AGGMETRICS
 
+    FOUNDATION --> COMMUNICATIONS
+    AUTH --> COMMUNICATIONS
+    AGGMETRICS --> COMMUNICATIONS
+    INTEL --> COMMUNICATIONS
+
     EVENTRADAR --> AGGMETRICS
     EVENTRADAR -.-> DECISIONCENTER
 
@@ -60,6 +69,7 @@ graph TD
     style AGGMETRICS fill:#c3e6cb,stroke:#2e7d32
     style INTEL fill:#c3e6cb,stroke:#2e7d32
     style ENTITIES fill:#e2e3e5,stroke:#6c757d
+    style COMMUNICATIONS fill:#e2e3e5,stroke:#6c757d
     style EVENTRADAR fill:#e2e3e5,stroke:#6c757d
     style PROPGRAPH fill:#e2e3e5,stroke:#6c757d
     style DECISIONCENTER fill:#e2e3e5,stroke:#6c757d
@@ -69,6 +79,12 @@ graph TD
 **Como ler**: seta cheia (`-->`) = dependência forte, o módulo de origem bloqueia o de destino.
 Seta pontilhada (`-.->`) = dependência fraca/opcional — o destino funciona sem a origem (com
 fallback), mas fica mais completo com ela.
+
+> ✅ **`communications` adicionado (2026-07-25)**, Sprint 2.1 — fora da sequência original de
+> Sprint 2, depende de `foundation`/`auth`/`aggregated-metrics` (já implementados) e do shell de
+> `intelligence-center` (páginas novas vivem no mesmo route group). Ver
+> [_index.md](_index.md), "Sprint 2.1 — módulo `communications`", e
+> [communications/overview.md](communications/overview.md).
 
 `threshold-engine` e `intelligent-feed` (módulos que existiam na tabela original de `_index.md`,
 Sprint 3) não aparecem como nós próprios — foram **absorvidos por `event-radar`** antes de
@@ -118,6 +134,7 @@ de `intelligence-center`, ver `_index.md`, "Módulo `command-center` removido".
 | `entities` | Cadastro Nacional de Entidades (partido/espectro/cargo) + enriquecimento de mentions | rascunho | — |
 | `intelligence-center` | As 5 páginas do frontend (Executive Overview, Narrativas, Sentimento, Plataformas, Pautas Eleitorais) + `cases` (ações/decisões, ex-`command-center`) | implementado — `cases` (schema) ainda não | [intelligence-center/overview.md](intelligence-center/overview.md) |
 | `aggregated-metrics` | Envelope JSON único + SQL de agregação + Edge Functions por página, consumido pelo frontend e pela IA | implementado — `get_active_highlights`/região/`page_narrative_synthesis` pendentes, ver `_pending.md` | [aggregated-metrics/overview.md](aggregated-metrics/overview.md) |
+| `communications` | Registro de comunicações (post/e-mail/TV etc.) por Narrativa + acompanhamento de impacto (sentimento/menções/risco/momentum antes vs. depois) — Sprint 2.1 | rascunho | [communications/overview.md](communications/overview.md) |
 | `event-radar` | Detecção estatística de picos/quedas/mudanças + 1 card de IA por evento — absorve `threshold-engine`/`intelligent-feed` | rascunho | [event-radar/overview.md](event-radar/overview.md) |
 | `propagation-graph` | Grafo de propagação com rollup materializado completo (versão simplificada já em `intelligence-center/narratives-exploration.md`) | rascunho | — |
 | `decision-center` | AI Advisors — perguntas livres/interativas do analista sobre mentions/narrativas | rascunho | — |

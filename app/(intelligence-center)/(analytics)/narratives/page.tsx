@@ -1,13 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import Link from "next/link";
 import { usePageEnvelope } from "@/hooks/use-page-envelope";
 import { PageHeaderBar } from "@/components/intelligence-center/page-header-bar";
 import { WidgetCard } from "@/components/intelligence-center/widget-card";
 import { NarrativesTable } from "@/components/intelligence-center/narratives-table";
 import { NarrativeCard } from "@/components/intelligence-center/narrative-card";
-import { SentimentBadge, RiskBadge, TrendIndicator, MomentumLabel } from "@/components/intelligence-center/score-badges";
 
 // Exploração de Narrativas — lista (`/narratives`,
 // intelligence-center/narratives-exploration.md). Clique numa linha abre um
@@ -36,41 +34,15 @@ export default function NarrativesListPage() {
           <NarrativesTable rows={rows} onRowClick={(row) => setSelectedId(row.id)} selectedId={selectedId} />
         </WidgetCard>
 
+        {/* Painel de resumo ao clicar numa linha — usa o mesmo NarrativeCard
+            do resto do produto (Top 3 da Visão Geral, grade sem seleção
+            logo abaixo), não mais um painel de badges ad hoc; garante que
+            SOV/menções/risco/momentum/resumo (reservado pra IA)/sentimento/
+            tags fiquem consistentes em toda tela, pedido do usuário
+            2026-07-25. */}
         {selected && (
-          <div className="rounded-xl border border-border-default bg-bg-card p-5">
-            <div className="flex items-center justify-between">
-              <h2 className="text-lg font-semibold text-text-primary">{selected.title}</h2>
-              <Link
-                href={`/narratives/${selected.id}`}
-                className="text-sm font-medium text-accent-blue hover:underline"
-              >
-                Ver página completa
-              </Link>
-            </div>
-            <div className="mt-4 flex flex-wrap items-center gap-6">
-              <div>
-                <p className="text-xs text-text-tertiary">Sentimento</p>
-                <SentimentBadge value={selected.net_sentiment} label={selected.sentiment_label} />
-              </div>
-              <div>
-                <p className="text-xs text-text-tertiary">Risco</p>
-                <RiskBadge score={selected.risk_score} label={selected.risk_label} />
-              </div>
-              <div>
-                <p className="text-xs text-text-tertiary">Tendência</p>
-                <TrendIndicator score={selected.trend_score} label={selected.trend_label} />
-              </div>
-              <div>
-                <p className="text-xs text-text-tertiary">Momentum</p>
-                <MomentumLabel score={selected.momentum_score} />
-              </div>
-              <div>
-                <p className="text-xs text-text-tertiary">SOV</p>
-                <p className="text-sm font-medium text-text-primary">
-                  {selected.sov_pct === null ? "—" : `${selected.sov_pct}%`}
-                </p>
-              </div>
-            </div>
+          <div className="sm:max-w-md">
+            <NarrativeCard narrative={selected} />
           </div>
         )}
 

@@ -4,6 +4,7 @@ import { usePageEnvelope } from "@/hooks/use-page-envelope";
 import { PageHeaderBar } from "@/components/intelligence-center/page-header-bar";
 import { WidgetCard } from "@/components/intelligence-center/widget-card";
 import { PautaCardGrid } from "@/components/intelligence-center/pauta-cards";
+import { TrendLineChart } from "@/components/intelligence-center/charts/trend-line-chart";
 import { NarrativesTable } from "@/components/intelligence-center/narratives-table";
 import { AuthorsList } from "@/components/intelligence-center/authors-list";
 import { TermSignalsList } from "@/components/intelligence-center/term-signals-list";
@@ -56,6 +57,13 @@ export default function ThemesPage() {
 
         <WidgetCard title="Share of Voice e sentimento por pauta" status={status} onRetry={retry}>
           <PautaCardGrid breakdown={themeBreakdown} emptyMessage="Nenhuma subcategoria da categoria 'Pautas' configurada na Brandwatch ainda." />
+        </WidgetCard>
+
+        {/* ✅ Implementado 2026-07-25 — get_theme_sov_trend, uma linha por
+            pauta (series_by_group), SOV = menções da pauta / menções da
+            Query inteira nos dias do bucket. */}
+        <WidgetCard title="SOV por pauta ao longo do tempo" status={status} onRetry={retry}>
+          <TrendLineChart trend={envelope?.trends[0]} emptyMessage="Nenhum dado de SOV por pauta ainda." />
         </WidgetCard>
 
         <WidgetCard title="Narrativas" status={status} onRetry={retry}>

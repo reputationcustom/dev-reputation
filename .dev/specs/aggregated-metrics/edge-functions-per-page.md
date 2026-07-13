@@ -2,11 +2,32 @@
 tipo: feature-spec
 módulo: aggregated-metrics
 funcionalidade: edge-functions-per-page
-status: pronto
-atualizado: 2026-07-12
+status: implementado
+atualizado: 2026-07-25
 ---
 
 # Edge Functions por Página
+
+> ✅ **Implementado (2026-07-15)**: as 6 Edge Functions que o Sprint 2
+> precisa (`get-page-{overview,narratives,sentiment,platforms,themes}`,
+> `get-narrative-detail`) estão em produção, seguindo exatamente o padrão
+> de autenticação descrito abaixo (client com a chave publicável + JWT
+> repassado, nunca `SUPABASE_SECRET_KEY`). `get-page-authors`/
+> `get-page-alerts`/`get-page-reports` continuam não implementadas —
+> dependem de `entities`/`event-radar`/`executive-reports` (Sprint 3-4,
+> ainda `rascunho`), por desenho (ver `overview.md`).
+>
+> ✅ **Cache de página implementado (2026-07-25, gap #21)** — tabela
+> `page_cache` (migration `20260725040000`) + `getPageEnvelopeWithCache()`
+> na service layer, chamada por todas as 6 Edge Functions no lugar de
+> `assemblePageResponse()` diretamente. **Escopo reduzido, deliberado**: só
+> o TTL de 5 minutos está implementado — a invalidação antecipada por
+> "sync da Brandwatch concluiu um ciclo" ou "usuário clicou 'Atualizar
+> dados'" descrita na regra de negócio abaixo **não está implementada**,
+> porque nenhum dos dois gatilhos existe hoje no produto (`bw-sync` não
+> conhece `page_cache`; não existe botão "Atualizar dados" no header do
+> frontend). Revisitar se o TTL sozinho se mostrar insuficiente na
+> prática.
 
 ## Objetivo
 

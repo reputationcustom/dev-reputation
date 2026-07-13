@@ -39,12 +39,12 @@ function InsightSection({ type, items }: { type: XInsightType; items: XInsightIt
       <div className="overflow-x-auto">
         <table className="w-full min-w-[520px] text-left text-sm">
           <thead>
-            <tr className="border-b border-border-subtle text-xs uppercase tracking-wide text-text-tertiary">
-              <th className="py-2 pr-4 font-medium"></th>
-              <th className="px-4 py-2 text-right font-medium">Posts</th>
-              <th className="px-4 py-2 text-right font-medium">Reposts</th>
-              <th className="px-4 py-2 text-right font-medium">All Posts</th>
-              <th className="px-4 py-2 text-right font-medium">Impressions</th>
+            <tr className="border-b border-border-subtle text-xs uppercase tracking-wide text-text-primary">
+              <th className="py-2 pr-4 font-bold"></th>
+              <th className="px-4 py-2 text-right font-bold">Posts</th>
+              <th className="px-4 py-2 text-right font-bold">Reposts</th>
+              <th className="px-4 py-2 text-right font-bold">All Posts</th>
+              <th className="px-4 py-2 text-right font-bold">Impressions</th>
             </tr>
           </thead>
           <tbody>

@@ -9,8 +9,12 @@ import { Tooltip } from "@/components/ui/tooltip";
 // CLAUDE.md pra confirmar que reachEstimate/engagementScore/authors são
 // agregados oficiais, não amostrados/calculados localmente — o texto aqui
 // só explica o conceito, não reimplementa nada. `net_sentiment` não entra
-// mais aqui — ver KPI_TOOLTIPS em SentimentMetricCard, abaixo.
-const KPI_TOOLTIPS: Record<string, string> = {
+// mais aqui — ver KPI_TOOLTIPS em SentimentMetricCard, abaixo. Exportado
+// pra ser reaproveitado por narrative-detail-content.tsx (pedido do
+// usuário 2026-07-25: padronizar as KPIs do modal de Detalhe de Narrativa
+// com o mesmo visual/tooltip da Visão Geral) — mesmas definições, sem
+// duplicar o texto.
+export const KPI_TOOLTIPS: Record<string, string> = {
   total_mentions:
     "Quantidade de publicações (posts, comentários, notícias etc.) que citaram o tema monitorado no período selecionado.",
   unique_authors:

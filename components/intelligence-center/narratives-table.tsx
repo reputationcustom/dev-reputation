@@ -5,7 +5,7 @@ import Link from "next/link";
 import type { NarrativeRow } from "@reputation/shared-types";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Tooltip } from "@/components/ui/tooltip";
-import { SentimentBadge, RiskBadge, TrendIndicator, ScoreBar } from "./score-badges";
+import { SentimentBadge, RiskBadge, TrendArrow, ScoreBar } from "./score-badges";
 
 type SortKey = "title" | "sov_pct" | "trend_score" | "net_sentiment" | "momentum_score" | "risk_score";
 
@@ -95,7 +95,7 @@ export function NarrativesTable({
     <div className="overflow-x-auto">
       <table className="w-full min-w-[760px] text-left text-sm">
         <thead>
-          <tr className="border-b border-border-subtle text-xs uppercase tracking-wide text-text-tertiary">
+          <tr className="border-b border-border-subtle text-xs font-bold uppercase tracking-wide text-text-primary">
             {COLUMNS.map((column) => (
               <th key={column.key} className="px-4 py-3 font-bold">
                 <span className="flex items-center gap-1">
@@ -147,7 +147,7 @@ export function NarrativesTable({
                 {row.sov_pct === null || row.sov_pct === 0 ? "—" : `${row.sov_pct}%`}
               </td>
               <td className="px-4 py-3">
-                <TrendIndicator score={row.trend_score} label={row.trend_label} />
+                <TrendArrow score={row.trend_score} label={row.trend_label} />
               </td>
               <td className="px-4 py-3">
                 <SentimentBadge value={row.net_sentiment} label={row.sentiment_label} />

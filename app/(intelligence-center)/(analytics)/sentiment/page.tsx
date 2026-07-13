@@ -68,7 +68,10 @@ export default function SentimentPage() {
         </WidgetCard>
 
         <WidgetCard title="Sentimento por localização" status={status} onRetry={retry}>
-          <EmptyState message="Ainda não implementado — sem function de agregação por região (ver _pending.md)." />
+          <BreakdownPanel
+            breakdown={envelope?.breakdowns.find((b) => b.type === "region")}
+            emptyMessage="Nenhum dado de localização ainda."
+          />
         </WidgetCard>
 
         <div className="grid grid-cols-1 gap-6 md:grid-cols-2">

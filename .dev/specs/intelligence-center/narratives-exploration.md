@@ -3,7 +3,7 @@ tipo: feature-spec
 módulo: intelligence-center
 funcionalidade: narratives-exploration
 status: pronto
-atualizado: 2026-07-22
+atualizado: 2026-07-25
 ---
 
 # Exploração de Narrativas (lista + detalhe)
@@ -210,6 +210,30 @@ em `get_narratives_table`).
   eventual checklist/comentários/arquivos/histórico, se algum dia forem
   pedidos) fica para uma spec própria futura, sem reabrir um módulo
   separado só para isso.
+
+- **Comunicações e Decisões** (✅ adicionado 2026-07-25, Sprint 2.1, módulo
+  `communications` — não confundir com "Ações e decisões" (`cases`) acima,
+  ver `communications/overview.md`, "Relação com `cases`", que também
+  cobre a sobreposição conceitual entre `cases` e o `record_type =
+  'decision'` deste módulo): nova seção logo abaixo, com um resumo
+  compacto (até 3 registros mais recentes — Comunicações e Decisões
+  misturados — para esta Narrativa, com os indicadores de Sentimento/
+  Menções/Risco/Momentum antes vs. depois), um botão **"+ Registrar"** no
+  cabeçalho da seção (com o seletor "Tipo de registro" Comunicação/
+  Decisão, sempre visível mesmo sem nenhum registro ainda — regra
+  transversal #2) e um link "Ver linha do tempo completa →" para
+  `/communications/[id]`. O botão está presente **tanto na página cheia
+  (`/narratives/[id]`) quanto no modal rápido**
+  (`@modal/(.)narratives/[id]`, "Fluxo principal" item 5 acima) — pedido
+  explícito do usuário: "de dentro do modal e do detalhamento de uma
+  narrativa, deve existir um botão para registrar uma comunicação". Abre o
+  mesmo `CommunicationFormModal` com a Narrativa já pré-preenchida e
+  travada (não editável), sem exigir busca/seleção — ver
+  [../communications/communication-registration.md](../communications/communication-registration.md),
+  "Entrada rápida a partir de uma Narrativa". Ver
+  [../communications/narrative-impact-tracking.md](../communications/narrative-impact-tracking.md)
+  para o desenho completo — spec ainda `rascunho`, não implementar antes
+  de `communications/data-model.md` existir como migration.
 
 ## Regras de negócio
 

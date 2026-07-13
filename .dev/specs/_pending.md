@@ -1,6 +1,6 @@
 ---
 tipo: pending-tracker
-atualizado: 2026-07-24 (rev. 17)
+atualizado: 2026-07-25 (rev. 22)
 ---
 
 # Pendências — Digital Intelligent Communication
@@ -28,8 +28,115 @@ atualizado: 2026-07-24 (rev. 17)
 
 | # | Módulo | Decisão | Spec |
 |---|---|---|---|
-| 3 | `aggregated-metrics` | Fórmula de `risk_score`: adicionar termo de interação pra não inflar risco quando Momentum/Tendência altos vêm com sentimento positivo (v1 é soma simples) | [aggregated-metrics/sql-aggregation.md](aggregated-metrics/sql-aggregation.md), "Scores de Narrativa" |
 | 5 | `event-radar` | UI de aprovação (aceitar/rejeitar) de `cases` pendentes `high`/`critical` — ainda sem spec própria, bloqueia só esse passo específico de `schema-integration.md` | [event-radar/schema-integration.md](event-radar/schema-integration.md) |
+| 28 | `communications` | Permissão de CRUD de `communications` restrita por papel/criador vs. aberta a qualquer membro da organização (proposta atual: aberta) | [communications/data-model.md](communications/data-model.md) |
+| 30 | `communications` | Tamanho padrão da janela de comparação antes/depois no acompanhamento de impacto (proposta: 7 dias, configurável 3/7/14) | [communications/narrative-impact-tracking.md](communications/narrative-impact-tracking.md) |
+
+✅ **Resolvida 2026-07-25** (decisão #3, `aggregated-metrics`, resposta do
+usuário nesta sessão: "Implementar termo de interação agora"): `risk_score`
+ganhou um amortecedor (`sentiment_dampener = least(1, greatest(0.5,
+sentiment_risk / 50.0))`) aplicado só à contribuição conjunta de
+Momentum+Tendência (0.25+0.20 dos pesos) — nunca abaixo de 50% do peso
+original (piso, uma Narrativa virótica ainda pesa risco, só menos que uma
+virótica negativa), nunca acima de 100% (sentimento negativo/neutro não
+amplifica, fórmula original intacta). Migration `20260725000000`. Ver
+`aggregated-metrics/sql-aggregation.md`, "Risco".
+
+✅ **Resolvidos 2026-07-25** (gaps técnicos #9/#10/#21/#27,
+`aggregated-metrics`, mesma sessão de revisão de documentação — resposta
+do usuário: "Implementar agora: país + net_sentiment" / "Trend de
+plataforma/pauta ao longo do tempo" / "Cache de página (TTL 5min)" / "
+Camada 0 de ai-synthesis (recomendado)"):
+- **#9 (breakdown de região)**: `get_region_breakdown` (migration
+  `20260725010000`), fonte `bw_query_demographics_daily`
+  (`dimension_type='country'`), `value`=`net_sentiment` médio ponderado,
+  `pct`=participação de menções, top 15 países. ⚠️ Limitação real: essa
+  tabela nunca teve `category_id` — só cobre o escopo "Query inteira",
+  nunca uma Narrativa específica (`narrative_detail` sempre recebe vazio
+  de propósito, não o dado errado mascarado). Frontend: widget "Sentimento
+  por localização" em `/sentiment` trocado de `EmptyState` pra
+  `BreakdownPanel` real.
+- **#10 (trend de plataforma/pauta ao longo do tempo)**:
+  `get_platform_volume_trend`/`get_theme_sov_trend` (migration
+  `20260725030000`), reagrupados localmente em semana/mês quando o
+  período > 31 dias (sem agregado oficial semanal/mensal por
+  plataforma/pauta na Brandwatch, só o diário — mesma classe de operação
+  já aceita no projeto, nunca soma sobre `mentions` cru). Frontend:
+  "Evolução do volume" em `/platforms` e novo widget "SOV por pauta ao
+  longo do tempo" em `/themes`, ambos via `TrendLineChart`
+  (`series_by_group`, um grupo por plataforma/pauta) — componente ganhou
+  uma paleta de fallback com hash determinístico pra grupos fora do mapa
+  fixo (nomes de plataforma/pauta não são conhecidos de antemão).
+- **#21 (cache de página)**: tabela `page_cache` (migration
+  `20260725040000`, TTL 5min via `expires_at`) + `getPageEnvelopeWithCache()`
+  na service layer, chamada por todas as 6 Edge Functions no lugar de
+  `assemblePageResponse()` direto. ⚠️ Escopo reduzido, documentado: só o
+  TTL — invalidação antecipada por "sync concluiu um ciclo" ou "usuário
+  clicou 'Atualizar dados'" **não** está implementada (nenhum dos dois
+  gatilhos existe hoje no produto: `bw-sync` não conhece `page_cache`, e
+  não existe botão "Atualizar dados" no header). Revisitar se isso passar
+  a incomodar na prática.
+- **#27 (Camada 0 de `ai-synthesis.md`)**: `fetchNarrativeText()` na
+  service layer — usa o `summary`/`explanation` de um highlight quando há
+  exatamente 1 (hoje inalcançável, `get_active_highlights` ainda não
+  existe, gap #8), senão monta o template determinístico de
+  volume/tendência via nova function `get_volume_delta` (migration
+  `20260725020000`, mesmo padrão de escopo por Narrativa de
+  `get_sentiment_breakdown`). `narrative_text` deixa de ser sempre `null`.
+- Achado durante a propagação destas 4 mudanças pelas 6 Edge Functions
+  (Princípio técnico 5): um script de propagação com substituição de
+  texto ingênua causou uma duplicação real (3 cópias de
+  `fetchNarrativeText`) e uma chamada recursiva quebrada
+  (`getPageEnvelopeWithCache` chamando a si mesma em vez de
+  `assemblePageResponse` internamente) nas 6 Edge Functions — detectado
+  e corrigido na mesma sessão reconstruindo os 6 arquivos a partir do
+  arquivo canônico + cada handler original, antes de `npm run build`
+  confirmar tudo limpo. Mencionado aqui como lembrete: qualquer alteração
+  futura no arquivo canônico ainda precisa ser recopiada manualmente pras
+  6 Edge Functions (não há ferramenta de propagação automática segura
+  neste projeto).
+Ver `aggregated-metrics/sql-aggregation.md`, `service-layer-aggregation.md`
+e `ai-synthesis.md` para as specs atualizadas. `npx tsc --noEmit` e
+`npm run build` confirmados limpos (18 rotas) — migrations não executadas
+contra um banco real nesta sessão (sem acesso, mesma limitação recorrente
+de toda sessão sem credenciais de deploy).
+
+✅ **Ampliação de escopo 2026-07-25** (pedido do usuário, não numerado,
+`communications`, mesma sessão): "o usuário poderá registrar uma
+comunicação ou uma decisão. Comunicação deve ter os campos já
+documentados e decisão deve ter apenas a data, um título, responsável,
+detalhamento." `communications` ganhou `record_type` (`communication`\|
+`decision`) — Decisão é um subconjunto estrito dos campos de Comunicação
+(sem `communication_type_id`/`channel_detail`/`external_url`/
+`bw_resource_id`, aplicado via CHECK constraint), mesma tabela/formulário/
+tela/mecanismo de impacto antes/depois que Comunicação já tinha. `published_at`
+renomeado para `occurred_at` (neutro entre os dois tipos). Observação
+registrada (não uma pendência bloqueante): a sobreposição conceitual entre
+"Decisão" e `cases` ficou maior do que quando o módulo só cobria
+Comunicação — mantidos separados por ser um pedido específico do usuário,
+não uma fusão de modelos assumida. Ver `communications/overview.md`
+("Relação com `cases`"), `communications/data-model.md` e
+`communications/communication-registration.md`.
+
+✅ **Resolvidas 2026-07-25** (decisões #27 e #29, `communications`, mesma
+sessão, dois pedidos do usuário): "1) tipo de comunicação pode ser uma
+tabela que é atualizada com os tipos e a lógica do módulo pega dela. 2) o
+vínculo será manual, no cadastro da comunicação o usuário seleciona uma
+narrativa em um campo combo box." Decisão #27 (lista final de
+`communication_type`) deixou de ser uma decisão de schema bloqueante —
+virou tabela `communication_types` (`code`/`label`/`is_active`/`position`),
+extensível por `INSERT`, nunca por `ALTER TYPE`; mesmo padrão de
+extensibilidade já usado em `entity_tags`/`bw_categories.status`. Decisão
+#29 (vínculo `communications` ↔ `mentions`) confirmada como manual,
+definitiva — usuário cola o link/ID da mention, sem matching automático
+planejado em nenhuma versão futura. Mesmo pedido também esclareceu a UX de
+vínculo com a Narrativa (não numerada nesta tabela, não era uma decisão em
+aberto): combobox com busca no formulário de cadastro, mais um botão "+
+Registrar comunicação" reaproveitando o mesmo formulário a partir do
+detalhe/modal de uma Narrativa (pré-preenchido e travado). Ver
+`communications/overview.md`, `communications/data-model.md` e
+`communications/communication-registration.md`, "Entrada rápida a partir
+de uma Narrativa".
 
 ✅ **Resolvida 2026-07-24** (decisões #1 e #4, e um pedido adicional do
 mesmo turno, todos na mesma sessão do usuário): "1) faça Modal [pra
@@ -272,21 +379,19 @@ na época. Itens #2/#3 resolvidos na mesma data (ver acima).
 
 | # | Módulo | O que falta | Spec |
 |---|---|---|---|
-| 7 | `aggregated-metrics` | Tabela `page_narrative_synthesis` (armazenamento persistente da síntese de página) — spec pronta, sem migration | [aggregated-metrics/ai-synthesis.md](aggregated-metrics/ai-synthesis.md) |
+| 7 | `aggregated-metrics` | Tabela `page_narrative_synthesis` (armazenamento persistente da síntese de página, Camada 1 de `ai-synthesis.md`) — spec pronta, sem migration. Depende só de `event-radar` estar publicando `feed_events` pra fazer sentido em toda página (2+ highlights) | [aggregated-metrics/ai-synthesis.md](aggregated-metrics/ai-synthesis.md) |
 | 8 | `aggregated-metrics` | `get_active_highlights` (bloco `highlights`) — depende de `feed_events`, populada por `event-radar` (Sprint 3, ainda `rascunho`, tabela não existe). Os outros 9 blocos do envelope já têm function SQL implementada (migration `20260714000000`); `fetchHighlights` na service layer já existe e retorna `[]` até essa function existir | [aggregated-metrics/sql-aggregation.md](aggregated-metrics/sql-aggregation.md) |
-| 9 | `aggregated-metrics` | Breakdown por região/localização (`breakdowns` tipo `'region'`, pedido em `narrative_detail`/`sentiment`) — `bw_query_demographics_daily` existe (`foundation/data-model.md`) mas nenhuma function SQL do tipo `get_region_breakdown` foi especificada em `sql-aggregation.md`. `fetchOneBreakdown('region', ...)` na service layer já loga e retorna `null` (não quebra o envelope), só falta a function+wiring quando alguém confirmar o desenho (que dimensão de localização — país/estado/cidade? — e qual métrica exibir) | [aggregated-metrics/sql-aggregation.md](aggregated-metrics/sql-aggregation.md) |
-| 10 | `aggregated-metrics` | Trend "volume por plataforma ao longo do tempo" (`platforms`) e "SOV por pauta ao longo do tempo" (`themes`) — `block-mapping-per-page.md` pede os dois, mas `sql-aggregation.md`'s `get_volume_trend` só cobre volume/sentimento geral, sem quebra por plataforma/pauta ao longo de uma série temporal (só como snapshot estático via `get_platform_breakdown`/`get_theme_breakdown`). `fetchTrends()` na service layer já loga e retorna `[]` pra essas 2 páginas em vez de inventar uma série | [aggregated-metrics/sql-aggregation.md](aggregated-metrics/sql-aggregation.md) |
 | 11 | `aggregated-metrics` | `authors[].risk_level` sempre `null` — diferente de `narratives` (que tem a fórmula completa "Scores de Narrativa"), nenhuma spec define como calcular risco por autor individual. `get_authors_ranking` retorna `null` de propósito até uma spec futura definir a fórmula | [aggregated-metrics/sql-aggregation.md](aggregated-metrics/sql-aggregation.md) |
 | 16 | `intelligence-center` | ✅ **Fechado (2026-07-24)**: implementado como modal via intercepting route (`@modal/(.)narratives/[id]/page.tsx`), exatamente como `narratives-exploration.md` decidira em 2026-07-12 — ver decisão #1 (resolvida) acima | [intelligence-center/narratives-exploration.md](intelligence-center/narratives-exploration.md), "Fluxo principal" item 5 |
 | 17 | `intelligence-center` | ✅ **Fechado por não-aplicabilidade (2026-07-21)**: drill-down "narrativas dentro da pauta" não existe mais como conceito — o escopo de Pautas Eleitorais foi corrigido (`intelligence-center/electoral-themes.md`) pra "Pauta = Subcategory da Category raiz 'Pautas'", e uma Subcategory já é folha (a Brandwatch não suporta um 3º nível). Não há "narrativas dentro de uma pauta" pra abrir. Histórico do gap original (quando "Pauta" ainda significava "qualquer Category raiz"): `get_theme_breakdown`/`BreakdownItem` nunca carregaram um `id` de Pauta pro clique escopar `get-page-themes` com `pauta_id` — deixou de ser relevante com a correção de escopo | [intelligence-center/electoral-themes.md](intelligence-center/electoral-themes.md) |
 | 18 | `intelligence-center`/`platform-analysis` | 4 widgets de `/platforms` sem fonte de dado (nenhuma function SQL cobre): evolução do volume por plataforma ao longo do tempo, narrativas dominantes especificamente por plataforma, velocidade de propagação por plataforma (variação % entre períodos por `page_type`), conteúdos de destaque (cards de mentions individuais) — todos renderizados como `<EmptyState />` explicando o motivo, não omitidos silenciosamente. ✅ **2026-07-13**: mais 2 gaps do mesmo tipo identificados na paridade com o protótipo e também deixados como `<EmptyState />` honesto (não fabricados): "Engajamento médio por publicação" e "Autores únicos por plataforma" — o dado (`unique_authors`/`engagement_score`) já existe em `bw_query_metrics_daily_by_platform`, mas `BreakdownItem` só expõe `label`/`value`/`pct`, sem esses 2 campos; precisaria de um novo shape de breakdown ou campos extras. O widget "Sentimento por plataforma" que existia antes em `/platforms` foi removido (duplicava o mesmo widget da página `/sentiment`) e substituído por "Participação por plataforma" (barras de `pct`, sem score de sentimento), igual ao protótipo original | [intelligence-center/platform-analysis.md](platform-analysis.md) |
 | 19 | `intelligence-center`/`sentiment-analysis` | ✅ **Metade resolvida (2026-07-17)**: "Sentimento por Narrativa" agora tem function+bloco (`get_narrative_sentiment_breakdown`, breakdown `type = 'narrative'`) — o dado (`narrative_metrics.sentiment_*`) já existia, só faltava o wiring. Continua em aberto só "Menções que mais influenciaram o sentimento" (lista de mentions individuais, sem bloco correspondente no envelope) | [intelligence-center/sentiment-analysis.md](sentiment-analysis.md), [aggregated-metrics/sql-aggregation.md](aggregated-metrics/sql-aggregation.md) |
 | 20 | `intelligence-center`/`narratives-exploration` | Detalhe de Narrativa: "Menções relevantes" e "Ações e decisões" (`cases`) ficam `<EmptyState />` — a primeira por falta de bloco no envelope (nenhum dos 8 blocos padrão cobre "lista de mentions em destaque"), a segunda porque a tabela `cases` (`intelligence-center/data-model.md`) ainda não tem migration — spec já previa esse estado vazio explicitamente ("Nenhuma ação registrada ainda") enquanto `cases` não existir | [intelligence-center/narratives-exploration.md](narratives-exploration.md), "Ações e decisões" |
-| 21 | `aggregated-metrics` | Cache de página (TTL 5min + invalidação por sync/refresh manual) não implementado — as 6 Edge Functions `get-page-*`/`get-narrative-detail` recalculam o envelope a cada chamada. Não bloqueia funcionalidade (cada chamada já é rápida — leitura de agregados já sincronizados, não de `mentions` cru), só custa mais chamadas RPC do que o necessário sob uso intenso | [aggregated-metrics/edge-functions-per-page.md](edge-functions-per-page.md), "Regras de negócio" |
 | 22 | `intelligence-center`/`aggregated-metrics` | Card "Share of Voice por Query Group" da Visão Geral nunca foi construído — `get_metrics_cards` só retorna os 5 KPIs de `bw_query_metrics_daily` (`total_mentions`/`sentiment_*`/`reach_estimate`/`engagement_score`/`unique_authors`), sem function SQL nem bloco de envelope para SOV agregado por Query Group. Achado ao revisar `executive-overview.md` contra o código em 2026-07-16 | [intelligence-center/executive-overview.md](intelligence-center/executive-overview.md), "Cards de topo" |
 | 23 | `foundation` | `bw_query_top_authors.sentiment_positive/neutral/negative` (e o mesmo em `bw_query_top_tweeters`) — mapeamento de `d.sentiment` da resposta de `data/volume/topauthors/queries` **nunca confirmado** contra a documentação real do endpoint (diferente de todo campo vizinho na mesma tabela, que tem nota de confirmação explícita). Risco real de ser sempre `0/0/0` em produção sem erro. Achado numa auditoria de sentimento por autor (2026-07-17) — `aggregated-metrics.get_authors_ranking` foi corrigida pra não ler mais estas colunas (usa `bw_query_author_topics` em vez disso), mas as colunas em si continuam sem confirmação/uso — revisar contra logs reais antes de reativar | [foundation/data-model.md](foundation/data-model.md), "bw_query_top_authors" |
 | 24 | `aggregated-metrics` | `get_term_signals` mistura todo `topic_type` (`words`/`phrases`/`hashtags`/`entities`/`people`/`places`/`organisations`) num só ranking de "drivers" — nenhuma spec pediu filtrar só `phrases` (não é um gap de verdade), mas registrado caso o produto queira restringir no futuro | [intelligence-center/sentiment-analysis.md](sentiment-analysis.md) |
-| 25 | `foundation`/`aggregated-metrics` | "Sentimento de narrativas predominantemente neutro" reportado de novo pelo usuário em 2026-07-21, mesma queixa da sessão de 2026-07-20 (migration `20260720000000`). Reauditado função por função nesta sessão (`narratives_overview.sentiment_bucket`, ordem de chamadas de `runDailyMetricsStep`, `get_narratives_table.sentiment_label`, `get_narrative_sentiment_breakdown`) — a correção de 2026-07-20 está corretamente implementada, nenhuma causa adicional encontrada por inspeção de código. Se persistir depois deste deploy, o próximo passo precisa de logs reais de produção de `bw-sync` (não disponível em nenhuma sessão até agora) pra confirmar se `net_sentiment`/`sentiment_positive`/`negative` estão realmente chegando em `bw_query_metrics_daily` pras Narrativas afetadas — não é mais uma questão de revisão de código | [aggregated-metrics/sql-aggregation.md](aggregated-metrics/sql-aggregation.md), [foundation/data-model.md](foundation/data-model.md) |
+| 25 | `foundation`/`aggregated-metrics` | ✅ **Resolvida (2026-07-25)**: causa raiz real encontrada, diferente das duas hipóteses já descartadas em 2026-07-20/21 (fórmula de fallback diluída, chamadas de `netSentiment` starved pelo orçamento). Usuário reportou via screenshot que a borda do card de Narrativa e a coluna "Sentimento" da tabela mostravam um bucket (`sentiment_label`) que discordava do split pos/neu/neg mostrado na mesma linha/card. `get_narratives_table.sentiment_label`/`net_sentiment` vinham de `latest_day` — o snapshot de UM ÚNICO DIA (o mais recente do período) — enquanto `sentiment_positive_pct`/`neutral_pct`/`negative_pct` vinham de `period_agg`, somado sobre TODO o período pedido: duas janelas de tempo diferentes na mesma linha, podendo legitimamente discordar. Corrigido na migration `20260725000000`: `net_sentiment`/`sentiment_label` agora vêm de uma nova CTE `sentiment_final`/`sentiment_labeled`, calculada sobre a MESMA janela agregada de `period_agg` — média de `net_sentiment` ponderada por `total_mentions` no período, com o mesmo fallback local já usado pelas porcentagens. `risk_inputs.sentiment_risk` também passou a ler esse valor period-consistente | [aggregated-metrics/sql-aggregation.md](aggregated-metrics/sql-aggregation.md), "Sentimento (já um score, não precisa de cálculo aqui)" |
+| 31 | `aggregated-metrics`/`communications` | `get_narratives_table` precisa de um parâmetro opcional `p_reference_at` (default `now()`) pra Tendência poder ser calculada ancorada numa data histórica (não só "agora") — sem essa extensão, `communications`' acompanhamento de impacto não pode mostrar Tendência antes/depois, só Sentimento/Momentum/Risco (que já são period-dependentes hoje). Mudança aditiva, sem impacto nos consumidores atuais (nenhum passa esse parâmetro, herdam o default) | [communications/narrative-impact-tracking.md](communications/narrative-impact-tracking.md), "Dependências técnicas" |
 | 26 | `aggregated-metrics`/`intelligence-center` | ✅ **Fechado (2026-07-24)**: o rename `velocity_score`/`velocity_label` → `trend_score`/`trend_label` que tinha ficado incompleto (envelope.ts e a migration editados, consumidores não) foi terminado nesta sessão como parte da troca Velocidade→Tendência pedida pelo usuário (ver decisão resolvida acima) — todos os consumidores (`narratives/page.tsx`, `score-badges.tsx`, `narratives-table.tsx`, `narrative-detail-content.tsx`, `aggregated-metrics-service.ts`, as 6 Edge Functions `get-page-*`/`get-narrative-detail`) atualizados em conjunto. `npm run build` deve passar agora — reconfirmar antes do próximo deploy | `packages/shared-types/src/envelope.ts`, `app/(intelligence-center)/(analytics)/narratives/page.tsx` |
 
 ✅ Item #6 (`auth` — UI + Edge Functions) removido desta tabela: já estava

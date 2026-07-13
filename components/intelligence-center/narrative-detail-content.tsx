@@ -9,9 +9,45 @@ import { TrendLineChart } from "@/components/intelligence-center/charts/trend-li
 import { AuthorsList } from "@/components/intelligence-center/authors-list";
 import { DisseminationGraphPanel } from "@/components/intelligence-center/dissemination-graph";
 import { SentimentBadge, RiskBadge, TrendIndicator, MomentumLabel } from "@/components/intelligence-center/score-badges";
+import { KPI_TOOLTIPS } from "@/components/intelligence-center/metric-card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Spinner } from "@/components/ui/spinner";
 import { ErrorMessage } from "@/components/ui/error-message";
+import { Tooltip } from "@/components/ui/tooltip";
+
+// Mesmo texto do tooltip de "Momentum" já usado em narratives-table.tsx
+// (coluna Momentum) — não existe em KPI_TOOLTIPS (metric-card.tsx) porque
+// Momentum não é um dos 5 KPIs da Visão Geral, só das Narrativas.
+const MOMENTUM_TOOLTIP =
+  "Força atual da Narrativa (volume, engajamento, autores e alcance), comparando o período selecionado com o período anterior de mesma duração.";
+
+// Label de KPI padronizado (pedido do usuário 2026-07-25: "padronize as
+// KPIs da mesma maneira que são mostrados na página overview") — mesmo
+// estilo de metric-card.tsx (MetricCard/SentimentMetricCard): rótulo em
+// caixa alta, negrito, preto, com "?" de tooltip ao lado. Local a este
+// arquivo porque os 4 stats aqui vêm de `ui_meta.narrative` (um resumo por
+// Narrativa), não do bloco `metrics` do envelope que MetricCard consome —
+// sem `delta_pct`/comparação com período anterior disponível pra esses 4
+// campos, então só o "shell" visual é reaproveitado, não o componente
+// inteiro.
+function KpiLabel({ label, tooltip }: { label: string; tooltip?: string }) {
+  return (
+    <p className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-text-primary">
+      {label}
+      {tooltip && (
+        <Tooltip text={tooltip}>
+          <span
+            tabIndex={0}
+            aria-label={`O que é ${label}`}
+            className="flex h-3.5 w-3.5 flex-shrink-0 cursor-help items-center justify-center rounded-full border border-text-tertiary text-[9px] font-bold normal-case text-text-tertiary outline-none focus-visible:border-accent-blue focus-visible:text-accent-blue"
+          >
+            ?
+          </span>
+        </Tooltip>
+      )}
+    </p>
+  );
+}
 
 // Espelha get-narrative-detail's NarrativeSummary (supabase/functions/
 // get-narrative-detail/index.ts) — ui_meta.narrative não faz parte do
@@ -130,25 +166,28 @@ export function NarrativeDetailContent({
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
         <div className="rounded-xl border border-border-default bg-bg-card p-5">
-          <p className="text-xs font-medium uppercase tracking-wide text-text-tertiary">Momentum (crescimento)</p>
-          <div className="mt-2">
+          <KpiLabel label="Momentum (crescimento)" tooltip={MOMENTUM_TOOLTIP} />
+          <p className="mt-2 text-2xl font-bold text-text-primary">
+            {summary.momentum_score === null ? "—" : Math.round(summary.momentum_score)}
+          </p>
+          <div className="mt-1">
             <MomentumLabel score={summary.momentum_score} />
           </div>
         </div>
         <div className="rounded-xl border border-border-default bg-bg-card p-5">
-          <p className="text-xs font-medium uppercase tracking-wide text-text-tertiary">Autores únicos</p>
+          <KpiLabel label="Autores únicos" tooltip={KPI_TOOLTIPS.unique_authors} />
           <p className="mt-2 text-2xl font-bold text-text-primary">
             {summary.unique_authors === null ? "—" : new Intl.NumberFormat("pt-BR").format(summary.unique_authors)}
           </p>
         </div>
         <div className="rounded-xl border border-border-default bg-bg-card p-5">
-          <p className="text-xs font-medium uppercase tracking-wide text-text-tertiary">Alcance estimado</p>
+          <KpiLabel label="Alcance estimado" tooltip={KPI_TOOLTIPS.reach_estimate} />
           <p className="mt-2 text-2xl font-bold text-text-primary">
             {summary.reach_estimated === null ? "—" : new Intl.NumberFormat("pt-BR").format(summary.reach_estimated)}
           </p>
         </div>
         <div className="rounded-xl border border-border-default bg-bg-card p-5">
-          <p className="text-xs font-medium uppercase tracking-wide text-text-tertiary">Engajamento total</p>
+          <KpiLabel label="Engajamento total" tooltip={KPI_TOOLTIPS.engagement_score} />
           <p className="mt-2 text-2xl font-bold text-text-primary">
             {summary.engagement_total === null ? "—" : new Intl.NumberFormat("pt-BR").format(summary.engagement_total)}
           </p>

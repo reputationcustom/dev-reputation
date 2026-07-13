@@ -2,11 +2,26 @@
 tipo: feature-spec
 módulo: aggregated-metrics
 funcionalidade: block-mapping-per-page
-status: pronto
+status: implementado
 atualizado: 2026-07-18
 ---
 
 # Mapeamento de Blocos por Página
+
+> ✅ **Implementado (2026-07-14)**: esta tabela é espelhada 1:1 pela
+> constante `PAGE_BLOCKS` em
+> `supabase/functions-shared-source/aggregated-metrics-service.ts` (ver
+> `service-layer-aggregation.md`). `x_insights` (linha adicionada
+> 2026-07-18) e a coluna `narrative_detail`/`highlights` (deliberadamente
+> sem bloco `highlights`, conferido célula-a-célula em 2026-07-15) já estão
+> refletidos no código. ✅ **`breakdowns` tipo `'region'` e `trends` de
+> plataforma/pauta ao longo do tempo implementados (2026-07-25)** — ver
+> `_pending.md` gaps #9/#10 (resolvidos) e `sql-aggregation.md`,
+> `get_region_breakdown`/`get_platform_volume_trend`/`get_theme_sov_trend`.
+> ⚠️ `region` em `narrative_detail` continua sempre vazio na prática —
+> `bw_query_demographics_daily` não tem `category_id`, sem como escopar
+> por Narrativa (limitação real da tabela de origem, não um gap de
+> código).
 
 ## Objetivo
 

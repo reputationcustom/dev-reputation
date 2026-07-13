@@ -1,3 +1,5 @@
+import { Tooltip } from "@/components/ui/tooltip";
+
 // Mapeamento score/rótulo → cor+texto em pt-BR — nenhum threshold é
 // recalculado aqui além do band de Momentum (ver nota abaixo); os rótulos
 // (`sentiment_label`/`trend_label`/`risk_label`) já vêm prontos do
@@ -81,6 +83,30 @@ export function TrendIndicator({ score, label }: { score: number | null; label: 
       {meta.label}
       {rounded !== 0 && <span className="text-xs opacity-70">({rounded})</span>}
     </span>
+  );
+}
+
+// Versão compacta de TrendIndicator — só a seta, valor completo (rótulo +
+// score) só ao passar o mouse (pedido do usuário 2026-07-25: a coluna
+// "Tendência" da tabela ficava poluída com texto longo repetido em toda
+// linha; a seta sozinha já comunica a direção, o resto vira detalhe sob
+// demanda). Usada só em narratives-table.tsx — os outros usos de
+// TrendIndicator (cabeçalho do Detalhe de Narrativa, painel de seleção)
+// têm espaço de sobra e continuam mostrando o texto completo.
+export function TrendArrow({ score, label }: { score: number | null; label: string | null }) {
+  if (score === null || !label) return <span className="text-sm text-text-tertiary">—</span>;
+  const meta = TREND_META[label] ?? TREND_META.stable;
+  const rounded = Math.round(score);
+  return (
+    <Tooltip text={`${meta.label} (${rounded})`}>
+      <span
+        tabIndex={0}
+        aria-label={`${meta.label}, ${rounded}`}
+        className={`flex h-6 w-6 cursor-help items-center justify-center rounded-full text-base font-bold outline-none focus-visible:ring-1 focus-visible:ring-accent-blue ${meta.color}`}
+      >
+        {meta.arrow}
+      </span>
+    </Tooltip>
   );
 }
 

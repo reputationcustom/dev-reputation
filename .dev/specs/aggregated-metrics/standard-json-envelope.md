@@ -2,11 +2,24 @@
 tipo: feature-spec
 módulo: aggregated-metrics
 funcionalidade: standard-json-envelope
-status: pronto
+status: implementado
 atualizado: 2026-07-22
 ---
 
 # Contrato do Envelope JSON (formato único de resposta de página)
+
+> ✅ **Implementado (2026-07-14/22)**: `@reputation/shared-types`
+> (`packages/shared-types/src/envelope.ts`) é o tipo TS canônico deste
+> contrato no lado Next.js; `supabase/functions-shared-source/
+> aggregated-metrics-service.ts` mantém a cópia inline usada pelas 6 Edge
+> Functions (Princípio técnico 5 impede importar o pacote de workspace em
+> produção — ver `_pending.md`, decisão #2 resolvida). Todas as 6 Edge
+> Functions (`get-page-*`/`get-narrative-detail`) já retornam este envelope
+> exatamente na forma descrita abaixo, incluindo os campos evoluídos desde
+> a versão original (`x_insights`, `trend_score`/`trend_label` no lugar de
+> `velocity_score`/`velocity_label`). Único campo que nunca é preenchido
+> hoje: `narrative_text` — fica sempre `null` (nem o template Camada 0 de
+> `ai-synthesis.md` está implementado ainda, ver nota nesse arquivo).
 
 ## Objetivo
 

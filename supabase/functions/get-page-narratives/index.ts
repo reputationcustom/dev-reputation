@@ -126,6 +126,9 @@ export interface NarrativeRow {
   sentiment_neutral_pct: number | null
   sentiment_negative_pct: number | null
   momentum_score: number | null
+  // Substitui velocity_score/velocity_label (migration 20260722010000) —
+  // tendência estatística (regressão linear sobre 14 dias), não mais
+  // snapshot 3h-vs-3h.
   trend_score: number | null
   trend_label: string | null
   risk_score: number | null
@@ -254,11 +257,11 @@ export const PAGE_BLOCKS: Record<PageKey, BlockKey[]> = {
 
 // Quais "sabores" de breakdown cada página pedir — ver block-mapping-per-page.md
 // (ex: narrative_detail precisa sentimento + plataforma + região juntos).
-// 'region' está listado onde a spec pede, mas nenhuma function SQL cobre
-// ainda breakdown por localização (bw_query_demographics_daily não tem
-// function correspondente em sql-aggregation.md — gap real, ver
-// _pending.md) — fetchBreakdown() loga e retorna null pra esse tipo, o
-// bloco só fica sem aquele item, nunca quebra o envelope inteiro.
+// ✅ 'region' implementado 2026-07-25 (get_region_breakdown) — mas só
+// devolve dado no escopo "Query inteira" (bw_query_demographics_daily não
+// tem category_id, sem como escopar por Narrativa) — em narrative_detail
+// (que tem um filtro de Narrativa sempre ativo via ctx.narrativeId),
+// sempre vem vazio de propósito. Ver sql-aggregation.md.
 const PAGE_BREAKDOWN_TYPES: Partial<Record<PageKey, Breakdown['type'][]>> = {
   // ✅ 'narrative' removido de `overview` (2026-07-21, redesenho dos cards de
   // Narrativa): NarrativeRow.sentiment_positive_pct/neutral_pct/negative_pct
@@ -402,6 +405,25 @@ interface TermSignalRow {
   sentiment_associated: string
 }
 
+interface PlatformVolumeTrendRow {
+  page_type: string
+  bucket_date: string
+  total_mentions: number
+}
+
+interface ThemeSovTrendRow {
+  pauta_title: string
+  bucket_date: string
+  sov_pct: number | null
+}
+
+interface VolumeDeltaRow {
+  current_value: number
+  previous_value: number
+  delta_pct: number | null
+  trend: TrendDirection
+}
+
 // =========================================================================
 // fetchX — uma por bloco, 1:1 com uma function SQL (ver "Fluxo principal"
 // da spec). Cada uma tenta a chamada e, em erro, loga e retorna o fallback
@@ -495,10 +517,15 @@ async function fetchOneBreakdown(
         })),
       }
     } else {
-      // 'region' — sem function SQL ainda (bw_query_demographics_daily sem
-      // get_region_breakdown correspondente). Gap documentado, não inventado.
-      console.error('[aggregated-metrics] fetchOneBreakdown(region) skipped: no backing SQL function yet')
-      return null
+      // 'region' — get_region_breakdown (migration 20260725010000). ⚠️
+      // bw_query_demographics_daily não tem category_id — a function só
+      // devolve dado quando não há filtro de Narrativa ativo (escopo
+      // "Query inteira"); com filters.narratives setado (ex: narrative_detail),
+      // volta vazio de propósito, nunca o dado da Query inteira mascarado
+      // como se fosse da Narrativa. Ver sql-aggregation.md.
+      const { data, error } = await supabase.rpc('get_region_breakdown', baseArgs)
+      if (error) throw error
+      rows = (data ?? []) as BreakdownRow[]
     }
     return {
       key: type,
@@ -564,14 +591,59 @@ async function fetchTrends(page: PageKey, supabase: SupabaseClient, ctx: PageCon
         },
       ]
     }
-    if (page === 'platforms' || page === 'themes') {
-      // "Volume por plataforma"/"SOV por pauta" ao longo do tempo — sem
-      // function SQL própria em sql-aggregation.md (só o breakdown estático
-      // existe, get_platform_breakdown/get_theme_breakdown). Gap
-      // documentado (_pending.md), não substituído por uma série genérica
-      // que fingiria ser algo que não é.
-      console.error(`[aggregated-metrics] fetchTrends(${page}) skipped: no backing SQL function yet`)
-      return []
+    if (page === 'platforms') {
+      // ✅ Implementado 2026-07-25 — get_platform_volume_trend (migration
+      // 20260725030000), reagrupado localmente em semana/mês quando o
+      // período > 31 dias (sem agregado oficial semanal/mensal por
+      // plataforma na Brandwatch, só o diário).
+      const { data, error } = await supabase.rpc('get_platform_volume_trend', {
+        p_organization_id: ctx.organizationId,
+        p_period_start: ctx.period.start,
+        p_period_end: ctx.period.end,
+        p_filters: effectiveFilters(ctx),
+      })
+      if (error) throw error
+      const rows = (data ?? []) as PlatformVolumeTrendRow[]
+      const byPlatform = new Map<string, { date: string; value: number }[]>()
+      for (const row of rows) {
+        const series = byPlatform.get(row.page_type) ?? []
+        series.push({ date: row.bucket_date, value: row.total_mentions })
+        byPlatform.set(row.page_type, series)
+      }
+      return [
+        {
+          key: 'platform_volume',
+          label: 'Volume por plataforma',
+          series_by_group: Array.from(byPlatform.entries()).map(([group, series]) => ({ group, series })),
+        },
+      ]
+    }
+    if (page === 'themes') {
+      // ✅ Implementado 2026-07-25 — get_theme_sov_trend (migration
+      // 20260725030000). SOV por bucket = menções da Pauta / menções da
+      // Query inteira nos dias daquele bucket, mesma definição de
+      // narratives_overview.sov_percent.
+      const { data, error } = await supabase.rpc('get_theme_sov_trend', {
+        p_organization_id: ctx.organizationId,
+        p_period_start: ctx.period.start,
+        p_period_end: ctx.period.end,
+        p_filters: effectiveFilters(ctx),
+      })
+      if (error) throw error
+      const rows = (data ?? []) as ThemeSovTrendRow[]
+      const byPauta = new Map<string, { date: string; value: number }[]>()
+      for (const row of rows) {
+        const series = byPauta.get(row.pauta_title) ?? []
+        series.push({ date: row.bucket_date, value: row.sov_pct ?? 0 })
+        byPauta.set(row.pauta_title, series)
+      }
+      return [
+        {
+          key: 'pauta_sov',
+          label: 'SOV por pauta',
+          series_by_group: Array.from(byPauta.entries()).map(([group, series]) => ({ group, series })),
+        },
+      ]
     }
     const rows = await fetchVolumeTrend(supabase, ctx, effectiveFilters(ctx))
     return [volumeRowsToTrend('volume_sentiment', 'Volume e sentimento', rows)]
@@ -638,8 +710,11 @@ async function fetchAuthors(page: PageKey, supabase: SupabaseClient, ctx: PageCo
 // feed_events, que só existe quando `event-radar` (Sprint 3, rascunho) for
 // implementado — ver sql-aggregation.md e _pending.md. Até lá, todo bloco
 // `highlights` de toda página fica vazio (não é erro, é o estado esperado
-// hoje — narrative_text/ai-synthesis.md's Camada 0 já cobre o texto
-// determinístico sem depender de highlights reais).
+// hoje). ✅ narrative_text (fetchNarrativeText, ver abaixo) já tem a
+// Camada 0 de ai-synthesis.md implementada (2026-07-25) — não depende de
+// highlights reais, só do template determinístico de volume. Camada 1
+// (page_narrative_synthesis, 2+ highlights) continua não implementada,
+// mesma dependência de event-radar — ver _pending.md #7.
 async function fetchHighlights(_supabase: SupabaseClient, _ctx: PageContext): Promise<Highlight[]> {
   return []
 }
@@ -696,6 +771,56 @@ async function fetchXInsights(supabase: SupabaseClient, ctx: PageContext): Promi
   }
 }
 
+const NARRATIVE_TEXT_TREND_WORDS: Record<TrendDirection, string> = {
+  up: 'cresceu',
+  down: 'caiu',
+  stable: 'permaneceu estável',
+}
+
+// ai-synthesis.md "Camada 0" — template determinístico, sem IA, achado
+// nesta revisão (2026-07-25) como não implementado (_pending.md #27,
+// diferente do gap #7/Camada 1, que de fato depende de event-radar). Só
+// os casos de 0 e 1 highlight estão especificados pra esta camada; como
+// get_active_highlights (Camada 1/feed_events) ainda não existe, highlights
+// é sempre [] hoje — na prática só o ramo "0 highlights" roda. O ramo "2+"
+// (Camada 1, page_narrative_synthesis) também não está implementado — se
+// algum dia get_active_highlights passar a devolver 2+ itens antes de
+// Camada 1 existir, cai no mesmo template desta função como fallback
+// seguro (mesma regra de "Fluxos alternativos" do spec: nunca null sem
+// explicação).
+async function fetchNarrativeText(
+  supabase: SupabaseClient,
+  ctx: PageContext,
+  highlights: Highlight[],
+): Promise<string | null> {
+  if (highlights.length === 1) {
+    const h = highlights[0]
+    return [h.summary, h.explanation].filter(Boolean).join(' ')
+  }
+  try {
+    const { data, error } = await supabase.rpc('get_volume_delta', {
+      p_organization_id: ctx.organizationId,
+      p_period_start: ctx.period.start,
+      p_period_end: ctx.period.end,
+      p_filters: effectiveFilters(ctx),
+    })
+    if (error) throw error
+    const row = ((data ?? [])[0] ?? null) as VolumeDeltaRow | null
+    if (!row) return null
+    if (row.delta_pct === null) {
+      return `${row.current_value} menções no período — sem dado do período anterior para comparação.`
+    }
+    const trendSentence =
+      row.trend === 'stable'
+        ? 'Volume permaneceu estável em relação ao período anterior.'
+        : `Volume ${NARRATIVE_TEXT_TREND_WORDS[row.trend]} de ${Math.abs(row.delta_pct)}% em relação ao período anterior.`
+    return `Sem eventos relevantes detectados no período. ${trendSentence}`
+  } catch (err) {
+    console.error('[aggregated-metrics] fetchNarrativeText failed', err)
+    return null
+  }
+}
+
 async function fetchGraph(supabase: SupabaseClient, ctx: PageContext): Promise<DisseminationGraph | null> {
   if (!ctx.narrativeId) return null
   try {
@@ -737,6 +862,12 @@ export async function assemblePageResponse(
     blocks.has('x_insights') ? fetchXInsights(supabase, context) : Promise.resolve<XInsightItem[]>([]),
   ])
 
+  // ✅ Camada 0 de ai-synthesis.md implementada 2026-07-25 (ver
+  // fetchNarrativeText acima) — antes gravava null incondicionalmente.
+  const narrativeText = blocks.has('narrative_text')
+    ? await fetchNarrativeText(supabase, context, highlights)
+    : null
+
   return {
     schema_version: ENVELOPE_SCHEMA_VERSION,
     page,
@@ -753,14 +884,85 @@ export async function assemblePageResponse(
     term_signals: termSignals,
     graph,
     x_insights: xInsights,
-    // ai-synthesis.md ainda não implementado nesta sessão — fica null até
-    // a síntese rodar, exatamente o estado que o envelope já prevê.
-    narrative_text: null,
+    narrative_text: narrativeText,
     ui_meta: {},
   }
 }
 
 // =========================================================================
+// Cache de página (TTL 5min) — edge-functions-per-page.md, "Regras de
+// negócio". Tabela page_cache (migration 20260725040000). ⚠️ Só cobre o
+// TTL — invalidação antecipada por sync concluído/"Atualizar dados" manual
+// NÃO está implementada (nenhum dos dois gatilhos existe hoje no produto,
+// ver _pending.md #21). getPageEnvelopeWithCache() é o que cada handler
+// chama no lugar de assemblePageResponse() diretamente.
+// =========================================================================
+
+const PAGE_CACHE_TTL_MS = 5 * 60 * 1000
+
+interface PageCacheRow {
+  envelope: PageEnvelope
+  expires_at: string
+}
+
+async function cacheFingerprint(ctx: PageContext): Promise<string> {
+  const canonical = JSON.stringify({
+    filters: effectiveFilters(ctx),
+    pautaId: ctx.pautaId ?? null,
+  })
+  const bytes = new TextEncoder().encode(canonical)
+  const digest = await crypto.subtle.digest('SHA-256', bytes)
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('')
+    .slice(0, 32)
+}
+
+export async function getPageEnvelopeWithCache(
+  supabase: SupabaseClient,
+  page: PageKey,
+  context: PageContext,
+): Promise<PageEnvelope> {
+  const filtersHash = await cacheFingerprint(context)
+  const cacheKey = {
+    organization_id: context.organizationId,
+    page,
+    period_start: context.period.start,
+    period_end: context.period.end,
+    filters_hash: filtersHash,
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from('page_cache')
+      .select('envelope, expires_at')
+      .match(cacheKey)
+      .maybeSingle()
+    if (error) throw error
+    const cached = data as PageCacheRow | null
+    if (cached && new Date(cached.expires_at).getTime() > Date.now()) {
+      return cached.envelope
+    }
+  } catch (err) {
+    console.error('[aggregated-metrics] page_cache read failed', err)
+  }
+
+  const envelope = await assemblePageResponse(supabase, page, context)
+
+  try {
+    const { error } = await supabase.from('page_cache').upsert(
+      { ...cacheKey, envelope, expires_at: new Date(Date.now() + PAGE_CACHE_TTL_MS).toISOString() },
+      { onConflict: 'organization_id,page,period_start,period_end,filters_hash' },
+    )
+    if (error) throw error
+  } catch (err) {
+    console.error('[aggregated-metrics] page_cache write failed', err)
+  }
+
+  return envelope
+}
+
+
 // Handler HTTP — ver edge-functions-per-page.md, "Fluxo principal" e
 // "Autenticação do client Supabase (exceção ao padrão do Princípio técnico 5)".
 // =========================================================================
@@ -853,7 +1055,7 @@ Deno.serve(async (req) => {
       return jsonResponse({ error: 'Você não tem acesso a esta organização.' }, 403)
     }
 
-    const envelope = await assemblePageResponse(supabase, 'narratives', {
+    const envelope = await getPageEnvelopeWithCache(supabase, 'narratives', {
       organizationId,
       period,
       filters: normalizeFilters(body.filters),
@@ -865,3 +1067,4 @@ Deno.serve(async (req) => {
     return jsonResponse({ error: 'Não foi possível carregar os dados.' }, 503)
   }
 })
+

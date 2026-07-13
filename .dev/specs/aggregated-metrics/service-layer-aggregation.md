@@ -2,11 +2,19 @@
 tipo: feature-spec
 módulo: aggregated-metrics
 funcionalidade: service-layer-aggregation
-status: pronto
-atualizado: 2026-07-20
+status: implementado
+atualizado: 2026-07-22
 ---
 
 # Service Layer de Agregação (TypeScript)
+
+> ✅ **Implementado (2026-07-14, migration de código
+> `supabase/functions-shared-source/aggregated-metrics-service.ts`)** —
+> `assemblePageResponse`/`PAGE_BLOCKS`/os 9 `fetchX` (incl. `fetchXInsights`,
+> adicionado 2026-07-18) estão em produção, copiados por Princípio técnico
+> 5 para dentro de cada uma das 6 Edge Functions `get-page-*`/
+> `get-narrative-detail`. A decisão pendente original deste arquivo (pacote
+> de tipos compartilhado) foi resolvida no mesmo dia — ver nota abaixo.
 
 ## Objetivo
 
@@ -56,6 +64,12 @@ concentra o reaproveitamento de código entre páginas.
 - Erros de uma function SQL individual não devem derrubar o envelope inteiro: se
   `fetchTermSignals` falhar, por exemplo, o bloco correspondente deve retornar `[]` e o restante
   do envelope segue normalmente. Logar o erro, não propagar.
+- ✅ **`fetchNarrativeText` implementada (2026-07-25)** — Camada 0 de `ai-synthesis.md`,
+  ver `ai-synthesis.md` para o fluxo completo. `narrative_text` deixa de ser sempre `null`.
+- ✅ **`getPageEnvelopeWithCache` implementada (2026-07-25, gap #21)** — wrapper em torno de
+  `assemblePageResponse`, checa/grava `page_cache` (TTL 5min) antes/depois de montar o envelope.
+  As 6 Edge Functions chamam esta function no lugar de `assemblePageResponse` diretamente. Ver
+  `edge-functions-per-page.md`.
 
 ## Interface (código)
 
@@ -70,9 +84,14 @@ concentra o reaproveitamento de código entre páginas.
 - Cliente Supabase configurado para chamar as functions RPC de `sql-aggregation.md`.
 - Tipos TypeScript do envelope compartilhados entre frontend e Edge Functions (ver nota abaixo).
 
-> ⚠️ DECISÃO PENDENTE: definir se os tipos TS do envelope ficam em um pacote compartilhado
-> (`packages/shared-types`) ou duplicados entre frontend e `supabase/functions`. Recomendação:
-> pacote compartilhado, para não haver drift entre o tipo usado no client e no server.
+> ✅ **Resolvida (2026-07-14)**: tipos TS do envelope ficam em pacote compartilhado —
+> `packages/shared-types` (`@reputation/shared-types`, primeiro workspace npm deste repo),
+> consumido pelo frontend via `next.config.ts`'s `transpilePackages`. Ressalva: isso resolve só
+> o lado Next.js/frontend — Edge Functions continuam sem conseguir importar um pacote de
+> workspace local em produção (Princípio técnico 5), então
+> `supabase/functions-shared-source/aggregated-metrics-service.ts` mantém sua própria cópia
+> inline dos tipos, sincronizada à mão a cada mudança de schema. Ver `_pending.md` (decisão #2,
+> resolvida) e `CLAUDE.md`, "aggregated-metrics module (Sprint 2)".
 
 ## Referências relacionadas
 

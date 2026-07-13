@@ -218,13 +218,13 @@ export function UsersAdminView() {
             <>
               <table className="w-full min-w-[720px] text-left text-sm">
                 <thead>
-                  <tr className="border-b border-border-subtle text-xs uppercase tracking-wide text-text-tertiary">
-                    <th className="px-4 py-3 font-medium">Nome</th>
-                    <th className="px-4 py-3 font-medium">E-mail</th>
-                    <th className="px-4 py-3 font-medium">Organizações</th>
-                    <th className="px-4 py-3 font-medium">Admin</th>
-                    <th className="px-4 py-3 font-medium">Status</th>
-                    <th className="px-4 py-3 font-medium">Ações</th>
+                  <tr className="border-b border-border-subtle text-xs uppercase tracking-wide text-text-primary">
+                    <th className="px-4 py-3 font-bold">Nome</th>
+                    <th className="px-4 py-3 font-bold">E-mail</th>
+                    <th className="px-4 py-3 font-bold">Organizações</th>
+                    <th className="px-4 py-3 font-bold">Admin</th>
+                    <th className="px-4 py-3 font-bold">Status</th>
+                    <th className="px-4 py-3 font-bold">Ações</th>
                   </tr>
                 </thead>
                 <tbody>

@@ -4,6 +4,7 @@ import { usePageEnvelope } from "@/hooks/use-page-envelope";
 import { PageHeaderBar } from "@/components/intelligence-center/page-header-bar";
 import { WidgetCard } from "@/components/intelligence-center/widget-card";
 import { PlatformParticipationBars } from "@/components/intelligence-center/charts/breakdown-panel";
+import { TrendLineChart } from "@/components/intelligence-center/charts/trend-line-chart";
 import { NarrativesTable } from "@/components/intelligence-center/narratives-table";
 import { AuthorsList } from "@/components/intelligence-center/authors-list";
 import { XInsightsPanel } from "@/components/intelligence-center/x-insights-panel";
@@ -41,7 +42,7 @@ export default function PlatformsPage() {
             <PlatformParticipationBars breakdown={platformBreakdown} emptyMessage="Nenhum dado de plataforma ainda." />
           </WidgetCard>
           <WidgetCard title="Evolução do volume" status={status} onRetry={retry}>
-            <EmptyState message="Ainda não implementado — sem function de série temporal por plataforma (ver _pending.md)." />
+            <TrendLineChart trend={envelope?.trends[0]} emptyMessage="Nenhum dado de evolução por plataforma ainda." />
           </WidgetCard>
         </div>
 

@@ -33,7 +33,17 @@ below) are both implemented. The rest of Sprint 2 is `intelligence-center`
 Eleitorais) plus the `aggregated-metrics` backend it depends on — see
 `_index.md` "Sequência de implantação — Sprint 2" for the exact build
 order. Sprints 3-4 (`event-radar`, `propagation-graph`, `decision-center`,
-`executive-reports`) are not started.
+`executive-reports`) are not started. **Sprint 2.1** (`communications` —
+logging communication actions per Narrativa + before/after impact
+tracking on Sentiment/Mentions/Risk/Momentum) got its full spec written
+2026-07-25 (`.dev/specs/communications/`) but has **no migration/code
+yet** — `status: rascunho` in every file of that module, with several
+`⚠️ DECISÃO PENDENTE` markers (final `communication_type` enum, CRUD
+permission scope, manual vs. automatic linking to `mentions`, default
+before/after window size) that need a user decision before implementation
+starts. It also depends on a small additive extension to
+`get_narratives_table` (`p_reference_at` param, for historical Tendência)
+that doesn't exist yet — see `_pending.md` gap #31.
 
 ### Close the loop: update docs at the end of every development session
 
@@ -264,13 +274,19 @@ Added 2026-07-13, apply to every page/component going forward, not just
    would page at the query level, but the constant/component are the
    same).
 7. **Widget titles, KPI labels, and table column headers all render
-   `font-bold`**, never `font-medium`/`font-semibold` — user feedback
-   2026-07-13 ("não está bom de ler"). `WidgetCard`'s `<h2>`,
-   `MetricCard`/`SentimentMetricCard`'s label `<p>`, and
-   `NarrativesTable`'s `<th>` are the 3 shared components this applies to;
-   since all 3 are reused across every page in `intelligence-center`, a
-   fix in the shared component is a fix everywhere — don't override back
-   to a lighter weight in a specific page.
+   `font-bold` and `text-text-primary`** (near-black, `#1a1d29`), never
+   `font-medium`/`font-semibold` or a gray tone (`text-text-secondary`/
+   `text-text-tertiary`) — user feedback 2026-07-13 ("não está bom de
+   ler"). `WidgetCard`'s `<h2>`, `MetricCard`/`SentimentMetricCard`'s label
+   `<p>`, and `NarrativesTable`'s `<th>` were fixed the same day this rule
+   was first written; **`XInsightsPanel`'s and `users-admin-view.tsx`'s
+   `<th>` were missed at the time** (still `font-medium text-text-tertiary`)
+   and only caught in a follow-up pass on 2026-07-25, after a report that
+   some tables were still hard to read. Every `<table>` in this codebase
+   (`NarrativesTable`, `XInsightsPanel`, the admin users table) now applies
+   both classes on its `<th>` — check this rule specifically any time a
+   new `<table>` is added, since it's easy to satisfy the weight half of
+   the rule (`font-bold`) while missing the color half.
 8. **A table column with a non-obvious/computed meaning (a score, a
    formula-derived metric) gets a hover tooltip**, same treatment as the
    Executive Overview KPI cards — small "?" icon,
@@ -3268,6 +3284,71 @@ open items in `_pending.md` (decisions #1/#4) or an entirely new ask
   overlay's actual rendering (backdrop, close affordances, responsive
   width) was not visually confirmed in a browser, same standing limitation
   noted throughout this file's `intelligence-center` sessions.
+
+### Narrative card border / table "Sentimento" column disagreeing with the card's own pos/neu/neg bar — real root cause found (2026-07-25)
+
+User report, via screenshot: the Renan Santos card had a red (negative)
+left border while its own pos/neu/neg bar showed neutro (62.8%) as
+dominant; the Segurança Pública card had a gray (neutral) border while its
+bar showed negativo (40.2%) as dominant — and the "Todas as Narrativas"
+table's "Sentimento" column showed the same wrong-looking values. This is
+the same user complaint already logged twice before (2026-07-20, migration
+`20260720000000`; 2026-07-21, `_pending.md` gap #25, "reaudited, no new bug
+found") — both prior sessions checked and fixed real things (a
+diluted-fallback formula, a call-budget starvation bug) but neither was
+the actual cause of *this* specific symptom, and neither had a concrete
+screenshot to diagnose from.
+
+**Real root cause**: `get_narratives_table`'s `net_sentiment`/
+`sentiment_label` (what `NarrativeCard`'s left border and
+`NarrativesTable`'s "Sentimento" column both read, `narrative-card.tsx:39`/
+`narratives-table.tsx:153`) came from the `latest_day` CTE — a single-day
+snapshot (`distinct on (narrative_id) order by metric_date desc`, i.e. the
+most recent day inside the requested period) — while
+`sentiment_positive_pct`/`neutral_pct`/`negative_pct` (the pos/neu/neg bar
+rendered on the *same* card) came from `period_agg`, summed over the
+*entire* requested period. Two different time windows feeding two visual
+elements of the same card: a single recent day can easily read differently
+in tone than the period as a whole, so the border color and the bar could
+legitimately disagree — exactly what both screenshots showed. Neither
+prior session (2026-07-20/21) had looked at this because both were
+investigating *why net_sentiment might be wrong*, not *why net_sentiment
+and the pct split might be computed over different date ranges*.
+
+**Fix** (migration `20260725000000`, same file as the risk-score
+interaction term added earlier that session — edited before it had been
+deployed): new `sentiment_final`/`sentiment_labeled` CTEs compute
+`net_sentiment` as a `total_mentions`-weighted average over the *same*
+`period_start`/`period_end` window `period_agg` already uses (only over
+days where `net_sentiment` synced), falling back to the same local
+`positivo/(positivo+negativo)*100` formula the pct split's fallback
+already uses (never dividing by total mentions — same care taken in
+`20260720000000`) when no day in the period has `net_sentiment` synced.
+`sentiment_label` buckets that same value into the existing 7 bands.
+`risk_inputs.sentiment_risk` was also switched from `latest_day.net_sentiment`
+to this new period-consistent value, so `risk_score` stays coherent with
+what the card/table now show. `latest_day` no longer selects
+`net_sentiment`/`sentiment_bucket` at all (dead columns removed, not just
+unused). `_pending.md` gap #25 closed with the real cause on file, in case
+this resurfaces a third time with a different, still-undiscovered cause —
+see `aggregated-metrics/sql-aggregation.md`, "Sentimento (já um score, não
+precisa de cálculo aqui)" for the corrected spec text (the original said
+"repassa o valor do dia mais recente," which was the bug itself, not a
+description of intended behavior).
+
+**Also fixed the same session** (unrelated report, same message): two
+`<table>` components had been missed by the 2026-07-13 "table headers must
+be `font-bold`" rule (Cross-cutting UX rule 7) — `XInsightsPanel` and
+`users-admin-view.tsx`'s users table both still had `font-medium
+text-text-tertiary` headers. Both switched to `font-bold text-text-primary`,
+matching `NarrativesTable`'s existing correct styling. Rule 7 above updated
+to call out the color half of the rule explicitly (not just weight), since
+that's the half that was actually missed.
+
+**Verification**: `npx tsc --noEmit` passes clean. No live Supabase access
+in this environment — migration reviewed manually, not run against a real
+database, same recurring limitation as every migration-only session in
+this file without deploy credentials.
 
 ## Directory structure
 

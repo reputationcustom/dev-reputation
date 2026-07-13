@@ -24,6 +24,23 @@ const GROUP_LABELS: Record<string, string> = {
   geral: "Volume geral",
 };
 
+// Paleta de fallback pra grupos fora do mapa fixo acima — usada por séries
+// dinâmicas (ex: um group por page_type em "Volume por plataforma" ou por
+// título de Pauta em "SOV por pauta ao longo do tempo", ambas 2026-07-25),
+// cujos nomes não são conhecidos de antemão. Hash determinístico simples
+// (mesma string sempre cai na mesma cor, estável entre re-renders).
+const FALLBACK_PALETTE = ["#2f6fed", "#1a9d5c", "#e0483e", "#f5a623", "#9b59b6", "#17a2b8", "#8a8f98", "#d4478e"];
+
+function hashGroupKey(key: string): number {
+  let hash = 0;
+  for (let i = 0; i < key.length; i++) hash = (hash * 31 + key.charCodeAt(i)) >>> 0;
+  return hash;
+}
+
+function colorForGroup(group: string): string {
+  return GROUP_COLORS[group] ?? FALLBACK_PALETTE[hashGroupKey(group) % FALLBACK_PALETTE.length];
+}
+
 // Largura usada só até o primeiro layout medir o container de verdade (ver
 // useLayoutEffect abaixo) — depois disso, `width` sempre reflete o
 // container real, nunca este valor.
@@ -203,7 +220,7 @@ export function TrendLineChart({ trend, emptyMessage }: { trend: Trend | undefin
             key={group.group}
             d={buildPath(group.series, maxValue, width)}
             fill="none"
-            stroke={GROUP_COLORS[group.group] ?? "#9aa0ab"}
+            stroke={colorForGroup(group.group)}
             strokeWidth={2}
           />
         ))}
@@ -218,7 +235,7 @@ export function TrendLineChart({ trend, emptyMessage }: { trend: Trend | undefin
                 cx={xForIndex(hoverIndex, pointCount, width)}
                 cy={yForValue(point.value, maxValue)}
                 r={4}
-                fill={GROUP_COLORS[group.group] ?? "#9aa0ab"}
+                fill={colorForGroup(group.group)}
                 stroke="#ffffff"
                 strokeWidth={2}
               />
@@ -254,7 +271,7 @@ export function TrendLineChart({ trend, emptyMessage }: { trend: Trend | undefin
                 textAnchor="middle"
                 fontSize={12}
                 fontWeight={600}
-                fill={GROUP_COLORS[group.group] ?? "#9aa0ab"}
+                fill={colorForGroup(group.group)}
                 stroke="#ffffff"
                 strokeWidth={2}
                 paintOrder="stroke"
@@ -281,7 +298,7 @@ export function TrendLineChart({ trend, emptyMessage }: { trend: Trend | undefin
               <span key={group.group} className="flex items-center gap-1.5 text-text-secondary">
                 <span
                   className="h-2 w-2 rounded-full"
-                  style={{ backgroundColor: GROUP_COLORS[group.group] ?? "#9aa0ab" }}
+                  style={{ backgroundColor: colorForGroup(group.group) }}
                 />
                 {GROUP_LABELS[group.group] ?? group.group}:{" "}
                 <span className="font-semibold text-text-primary">
@@ -297,7 +314,7 @@ export function TrendLineChart({ trend, emptyMessage }: { trend: Trend | undefin
             <span key={group.group} className="flex items-center gap-1.5 text-xs text-text-secondary">
               <span
                 className="h-2 w-2 rounded-full"
-                style={{ backgroundColor: GROUP_COLORS[group.group] ?? "#9aa0ab" }}
+                style={{ backgroundColor: colorForGroup(group.group) }}
               />
               {GROUP_LABELS[group.group] ?? group.group}
             </span>

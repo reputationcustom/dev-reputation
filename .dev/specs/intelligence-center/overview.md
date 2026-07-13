@@ -2,7 +2,7 @@
 tipo: module-overview
 módulo: intelligence-center
 status: pronto
-atualizado: 2026-07-15
+atualizado: 2026-07-25
 ---
 
 # Módulo: Intelligence Center (Sprint 2)
@@ -46,6 +46,16 @@ espaço.
 | Análise de Sentimento | [sentiment-analysis.md](sentiment-analysis.md) | pronto | `foundation` (bw_query_metrics_daily, bw_query_topics, bw_query_demographics_daily) |
 | Análise por Plataforma | [platform-analysis.md](platform-analysis.md) | pronto | `foundation` (bw_query_metrics_daily_by_platform) |
 | Pautas Eleitorais | [electoral-themes.md](electoral-themes.md) | pronto | `foundation` (bw_categories hierarquia, narratives) |
+
+✅ **Novo item de menu "Comunicação" (2026-07-25)**: o módulo
+`communications` (Sprint 2.1, fora desta tabela — não é uma das 5 páginas
+de exploração) adiciona um 7º item ao grupo `ANALYSIS_ITEMS` da `Sidebar`
+compartilhada deste módulo, apontando para `/communications` (fora do
+route group `(analytics)`, mesma convenção de `/admin/users`/`/perfil`).
+O detalhe de Narrativa (`narratives-exploration.md`) ganha também uma
+seção "Comunicações e impacto". Ver
+[../communications/overview.md](../communications/overview.md) para o
+módulo completo — ainda `rascunho`, não implementado.
 
 Todas as cinco são **só leitura** — nenhuma escreve dado novo, todas
 consomem exclusivamente o que `bw-sync`/`refresh_narrative_metrics()` já
