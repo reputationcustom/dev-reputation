@@ -1327,6 +1327,91 @@ Achados e correções:
   manualmente (mesmo padrão de sessões anteriores sem acesso a
   `supabase db push`).
 
+### Metrics calls stop re-fetching full history every invocation once a pair is backfilled (2026-07-19)
+
+User request: "uma vez que já existe base de dados, o bw-sync pode buscar
+os dados incrementais, do dia atual em diante. Não faz sentido ele buscar
+sempre desde de janeiro." Reviewing `metricsStartDate` (used by every
+`data/volume/...`/topics/top-authors/platform/x-insights/demographics/SOV
+call — every phase in `SYNC_STEPS` except `metadata`/`mentions`/
+`hourly_metrics`/`full_text_enrichment`) confirmed this was real, not a
+misreading of already-incremental behavior: since the 2026-07-10 "Metrics
+date range bug" fix (see above), `metricsStartDate` had been a single flat
+value, `getMentionsStartDate()` (`BRANDWATCH_MENTIONS_START_DATE`, default
+`2026-01-01`), used unconditionally on **every** invocation regardless of
+how long a pair had already been syncing. That fix was correct for the bug
+it targeted (populate the missing historical range at all), but never
+revisited once history actually got populated — so a "mature" pair kept
+requesting and re-upserting 6+ months of already-correct
+daily/weekly/monthly/topics/top-authors/platform/SOV rows on every single
+throttled-open invocation, forever, growing more wasteful every day as the
+window between `BRANDWATCH_MENTIONS_START_DATE` and "now" widens. Same
+waste category (not the same crash — these are single-call chart
+aggregates, not paginated like mentions) that already caused a real
+`WORKER_RESOURCE_LIMIT` crash on the mentions poller.
+
+✅ **Confirmed live, same session, before this fix was deployed** — the
+user pasted real `bw-sync` logs showing exactly this: `daily_metrics`
+calling `/data/{authors,engagementScore,reachEstimate,impressions}/
+categories/days?...&startDate=2026-01-01T00:00:00.000%2B0000&endDate=2026-07-13T03:11:23.715%2B0000...`
+on a single-Query project, each returning `rows: 2925` (≈15 Narrativas ×
+~195 days, i.e. the full Jan→Jul range, on every call), followed by a
+`429` on `/data/impressions/categories/days` after 3 exhausted retries and
+the pair falling into the `mark_bw_rate_limited`/`rate_limited_until`
+600s backoff added 2026-07-16 (logged as `invocation:rate_limited` then
+`invocation:rate_limited_skip` on the next heartbeats — degraded exactly
+as designed, no crash, no data loss). Important nuance for whoever reads
+this log pattern again: Brandwatch's 30-calls/10min ceiling is
+**call-count** based, not payload-size based, so narrowing
+`metricsStartDate` does not by itself reduce how many calls
+`daily_metrics` makes per invocation (still one call per aggregate ×
+dimension × due categoryTarget) — a 429 from budget exhaustion can still
+happen and is already handled reactively by the existing backoff. What
+this fix removes is the **per-call cost** (2925 rows → ~
+`BW_METRICS_INCREMENTAL_WINDOW_DAYS` once `backfill_completed_at` is set
+for that pair), which shortens invocation duration/CPU and reduces the
+odds that a single invocation's own request burst is what tips the shared
+window over 30. Whether this specific pair (`project_id=1998408338`,
+`query_id=2004020694`) benefits immediately depends on its current
+`sync_cursors.backfill_completed_at` — not observable from this session
+(no DB access) — if it's still `null` (the `2925`-row/full-range response
+is consistent with that), it'll keep requesting the full range until its
+mentions backfill genuinely reaches "now," same as before this fix; only
+pairs that have already reached that point switch immediately on deploy.
+
+Fixed by making `metricsStartDate` per-pair and stateful, via new
+`getMetricsStartDate(backfillCompletedAt)` (`bw-sync/index.ts`, replacing
+the flat `getMentionsStartDate()` call at the top of `runSyncInvocation`):
+reuses `sync_cursors.backfill_completed_at` — the same column that already
+tracks "has this pair's mentions poll caught up to real-time" (see
+"Mentions polling walks history forward" above) — as the signal for
+"does this pair still need the full historical range for its aggregate
+tables too." While `backfill_completed_at` is still `null`, behavior is
+unchanged: full range from `getMentionsStartDate()`, since the aggregate
+tables genuinely still need it populated across cycles alongside the raw
+mentions backfill. Once it's set, every metrics phase switches to a
+rolling window (`now() - BW_METRICS_INCREMENTAL_WINDOW_DAYS`, new optional
+Edge Function secret, default `30`) — same pattern `runHourlyMetricsStep`
+already used (`HOURLY_METRICS_WINDOW_MS`, hardcoded 30 days there since
+its use case, short-term event detection, never needed to be
+configurable), just extracted into a configurable constant reused by the
+other 11 phases. `getMentionsStartDate()` itself is untouched and still
+used as-is for `/data/mentions` (`fetchMentions()`'s required `startDate`
+param) — mentions polling was never the problem here, it's already
+incremental via `last_added_cursor`/`sinceAdded`; this fix only applies to
+the aggregate/chart endpoints, which never had a per-invocation
+incremental cursor of their own before this.
+
+Trade-off, stated explicitly rather than left implicit: a Brandwatch-side
+correction to a bucket **older** than the rolling window (e.g., a
+sentiment reclassification landing on a mention from March, once a pair is
+well past backfill) stops being picked up — that history becomes
+effectively final once it falls outside the window. No known consumer in
+this project depends on catching corrections that old today; revisit the
+window size (via the secret, no migration needed) if that changes. No
+migration and no envelope/frontend change — this is purely an Edge
+Function fetch-range optimization, upsert keys/shapes are unchanged.
+
 ### Reporting/BI split
 
 `reporting.narratives_overview` and `reporting.mentions_daily` exist for

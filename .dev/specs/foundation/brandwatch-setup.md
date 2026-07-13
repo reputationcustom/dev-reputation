@@ -399,6 +399,12 @@ crie a Category correspondente e promova a narrativa para `bw_aggregate`.
       `bw-sync` (opcional — default `3` se omitido; controla de quanto em
       quanto tempo cada par `(project_id, query_id)` é recapturado, ver
       `sync-brandwatch.md` passo 0.5b)
+- [ ] `BW_METRICS_INCREMENTAL_WINDOW_DAYS` cadastrado como secret da Edge
+      Function `bw-sync` (opcional — default `30` se omitido; só se aplica
+      depois que o backfill histórico de mentions de um par já terminou —
+      controla a janela móvel usada pelas chamadas de métricas
+      (`data/volume/...`, topics, top-authors, SOV etc.), ver
+      `sync-brandwatch.md` passo 6, correção 2026-07-19)
 - [x] Heartbeat de `pg_cron` (`bw-sync-heartbeat`, a cada 15min) já vem
       pronto na migration `20260711020000` — URL da function hardcoded na
       migration (não é segredo, mesmo valor já exposto via

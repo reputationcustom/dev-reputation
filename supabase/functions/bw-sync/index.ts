@@ -238,6 +238,52 @@ function getSyncIntervalHours(): number {
   return 3;
 }
 
+// Janela móvel (dias) usada pelas chamadas de métricas (data/volume/...,
+// topics, top-authors, SOV etc.) depois que o backfill histórico de um par
+// já terminou (sync_cursors.backfill_completed_at != null) — parametrizável
+// via secret (BW_METRICS_INCREMENTAL_WINDOW_DAYS), default 30. Correção
+// 2026-07-19 (pedido do usuário: já existe base de dados histórica, não faz
+// sentido pedir sempre `data/volume/...` desde `BRANDWATCH_MENTIONS_START_DATE`
+// — ver `getMetricsStartDate()` abaixo pelo racional completo).
+function getMetricsIncrementalWindowDays(): number {
+  const raw = Deno.env.get("BW_METRICS_INCREMENTAL_WINDOW_DAYS");
+  if (raw) {
+    const parsed = Number(raw);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+    logError(
+      "getMetricsIncrementalWindowDays:invalid",
+      `BW_METRICS_INCREMENTAL_WINDOW_DAYS="${raw}" inválido, usando default 30`,
+    );
+  }
+  return 30;
+}
+
+// Data de início a usar nas chamadas de métricas de um par nesta invocação.
+// Enquanto o backfill histórico de mentions daquele par ainda não terminou
+// (`backfill_completed_at` null), mantém o range completo desde
+// `getMentionsStartDate()` — as tabelas de agregado (diário/semanal/mensal/
+// topics/top-authors/SOV/...) ainda precisam ser populadas com o histórico
+// inteiro ao longo dos ciclos, mesma razão da correção 2026-07-10 (ver
+// CLAUDE.md, "Metrics date range bug"). Uma vez que o par já tem base
+// histórica capturada, alargar o range pra sempre-desde-janeiro em toda
+// invocação deixa de fazer sentido — essas chamadas de chart devolvem todos
+// os buckets do range pedido numa única chamada, então um par "maduro"
+// estava reprocessando e re-upsertando meses de linhas já corretas em
+// toda invocação, só pra capturar o(s) bucket(s) mais recente(s). Depois do
+// backfill, usa uma janela móvel curta (`now() - N dias`, mesmo padrão já
+// usado por `runHourlyMetricsStep`/`HOURLY_METRICS_WINDOW_MS`) — grande o
+// bastante pra reabsorver correções/atraso de indexação da Brandwatch em
+// dados recentes, pequena o bastante pra não recobrir o histórico inteiro.
+// Trade-off aceito: uma correção da Brandwatch a um período **fora** dessa
+// janela (mais antigo que N dias) deixa de ser capturada — histórico já
+// sincronizado passa a ser efetivamente definitivo. Nenhum consumidor deste
+// projeto depende de correções tardias tão antigas hoje.
+function getMetricsStartDate(backfillCompletedAt: string | null): Date {
+  if (!backfillCompletedAt) return getMentionsStartDate();
+  const windowMs = getMetricsIncrementalWindowDays() * 24 * 60 * 60 * 1000;
+  return new Date(Date.now() - windowMs);
+}
+
 // =========================================================================
 // Passo 0 — Semeadura inicial de sync_cursors (ver sync-brandwatch.md,
 // passo 0). MVP de Client único: usa BRANDWATCH_PROJECT_ID/QUERY_IDS em vez
@@ -3579,14 +3625,11 @@ async function runSyncInvocation(supabase: SupabaseClient, invocationStartedAt: 
   const token = brandwatchToken.accessToken;
 
   const now = new Date();
-  // Correção 2026-07-10 (pedido do usuário: "Data início 01/01/2026 até a
-  // data de hj" para as métricas, não só mentions): as chamadas de
-  // data/volume/{...} devolvem todos os buckets do range pedido numa única
-  // chamada (não uma por dia/semana) — usar o range completo configurado
-  // em vez de só os últimos 7 dias é o mesmo custo de rate limit, só que
-  // cobrindo o histórico inteiro em vez de uma janela que nunca alcançava
-  // Jan-Jun/26.
-  const metricsStartDate = getMentionsStartDate();
+  // Correção 2026-07-19: ver `getMetricsStartDate()` pelo racional completo
+  // — range completo (`BRANDWATCH_MENTIONS_START_DATE`) só enquanto o
+  // backfill de mentions do par ainda não terminou; depois disso, janela
+  // móvel incremental (`BW_METRICS_INCREMENTAL_WINDOW_DAYS`, default 30d).
+  const metricsStartDate = getMetricsStartDate(cursor.backfill_completed_at as string | null);
 
   try {
     // Resolve organization_id (necessário pro bootstrap de metadata e pro

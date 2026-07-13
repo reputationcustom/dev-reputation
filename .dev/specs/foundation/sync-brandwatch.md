@@ -590,6 +590,28 @@ própria `platform_by_narrative` (passo 6.3c abaixo) — ver `data-model.md`
    range pedido numa única chamada — alargar a janela não custa chamada
    extra de rate limit, só passa a cobrir o histórico configurado de
    verdade.
+   ✅ **Correção 2026-07-19** (pedido do usuário: já existe base histórica
+   sincronizada, não faz sentido `metricsStartDate` continuar sempre igual
+   a `BRANDWATCH_MENTIONS_START_DATE` — "buscar dados incrementais, do dia
+   atual em diante"): a correção acima resolveu o problema de 2026-07-10
+   (histórico realmente populado), mas deixou todo par "maduro" pedindo e
+   re-upsertando o histórico completo (Jan/26 → hoje) em **toda**
+   invocação, mesmo depois de já ter sido sincronizado — desperdício de
+   payload/CPU/upsert crescente com o tempo, mesma classe de risco que já
+   causou `WORKER_RESOURCE_LIMIT` no polling de mentions (ver
+   `data-model.md`). `getMetricsStartDate(backfill_completed_at)` agora
+   decide por par: enquanto o backfill histórico de mentions daquele par
+   não terminou (`sync_cursors.backfill_completed_at` null), mantém o
+   range completo (`getMentionsStartDate()`) — os agregados ainda
+   dependem disso pra se popular ao longo do backfill. Uma vez que o
+   backfill termina, todos os passos 6.x passam a pedir só uma **janela
+   móvel** (`now() - BW_METRICS_INCREMENTAL_WINDOW_DAYS`, secret opcional,
+   default 30 dias) — mesmo padrão já usado pelo passo 6.3e
+   (`HOURLY_METRICS_WINDOW_MS`), só que configurável e não hardcoded.
+   Trade-off aceito: uma correção da Brandwatch a um bucket **fora** dessa
+   janela deixa de ser recapturada — histórico já sincronizado antes da
+   janela passa a ser efetivamente definitivo. Ver `bw-sync/index.ts`,
+   `getMetricsStartDate()`, pelo racional completo.
 6.1. Mesma lógica para `data/volume/sentiment/weeks`/`.../months`, upsert em
    `bw_query_metrics_weekly`/`bw_query_metrics_monthly` — mas só quando não
    existir linha "fresca" (semanal: sem `synced_at` nos últimos 7 dias;
