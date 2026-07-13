@@ -1,6 +1,6 @@
 ---
 tipo: pending-tracker
-atualizado: 2026-07-25 (rev. 22)
+atualizado: 2026-07-25 (rev. 23)
 ---
 
 # Pendências — Digital Intelligent Communication
@@ -31,6 +31,23 @@ atualizado: 2026-07-25 (rev. 22)
 | 5 | `event-radar` | UI de aprovação (aceitar/rejeitar) de `cases` pendentes `high`/`critical` — ainda sem spec própria, bloqueia só esse passo específico de `schema-integration.md` | [event-radar/schema-integration.md](event-radar/schema-integration.md) |
 | 28 | `communications` | Permissão de CRUD de `communications` restrita por papel/criador vs. aberta a qualquer membro da organização (proposta atual: aberta) | [communications/data-model.md](communications/data-model.md) |
 | 30 | `communications` | Tamanho padrão da janela de comparação antes/depois no acompanhamento de impacto (proposta: 7 dias, configurável 3/7/14) | [communications/narrative-impact-tracking.md](communications/narrative-impact-tracking.md) |
+
+✅ **Bug corrigido 2026-07-25** (`auth`/`intelligence-center`, report do
+usuário: "Sempre que utilizo ctrl+r ele vai para a última organização
+cadastrada e não para a que está marcada como default"). Condição de
+corrida real em `header-context.tsx` entre `useOrganizations()` e
+`useUserProfile()` (fonte de `defaultOrganizationId`, funcionalidade de
+2026-07-22 abaixo): num reload frio, se a lista de organizações resolvesse
+antes do perfil, o efeito de organização inicial travava em
+`organizations[0]` (via seu guard `!organizationId`) usando um
+`defaultOrganizationId` ainda no fallback `null`, e nunca reavaliava
+quando o valor real chegava um instante depois. Corrigido com uma condição
+extra no mesmo efeito, `userProfileStatus !== "loading"`. Sem mudança de
+schema/Edge Function. A segunda parte do pedido ("mesmo limpando o cache,
+deve continuar a organização default") já era verdadeira antes deste fix —
+a preferência é lida do banco a cada carregamento, nunca de
+`localStorage`. Ver `CLAUDE.md`, "Default organization — self-service,
+third user_profiles write", bloco "Bug real encontrado e corrigido".
 
 ✅ **Resolvida 2026-07-25** (decisão #3, `aggregated-metrics`, resposta do
 usuário nesta sessão: "Implementar termo de interação agora"): `risk_score`

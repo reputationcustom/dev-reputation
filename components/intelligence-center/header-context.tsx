@@ -67,7 +67,12 @@ const HeaderContext = createContext<HeaderContextValue | null>(null);
 // dela) antes de cair de volta para a primeira organização retornada.
 export function IntelligenceCenterProvider({ children }: { children: React.ReactNode }) {
   const { status: organizationsStatus, organizations, retry: retryOrganizations } = useOrganizations();
-  const { timezone, defaultOrganizationId, retry: retryUserProfile } = useUserProfile();
+  const {
+    timezone,
+    defaultOrganizationId,
+    status: userProfileStatus,
+    retry: retryUserProfile,
+  } = useUserProfile();
   const [organizationId, setOrganizationId] = useState<string | null>(null);
   const [isSettingDefaultOrganization, setIsSettingDefaultOrganization] = useState(false);
   const [periodMode, setPeriodModeState] = useState<PeriodMode>("weekly");
@@ -76,14 +81,30 @@ export function IntelligenceCenterProvider({ children }: { children: React.React
     return { start: range.start, end: range.end };
   });
 
+  // `useOrganizations()` e `useUserProfile()` são 2 fetches independentes —
+  // sem o gate em `userProfileStatus !== "loading"`, um reload completo
+  // (Ctrl+R) tinha uma condição de corrida real: se a lista de organizações
+  // resolvesse antes do perfil (comum, é a query mais simples das duas),
+  // este efeito rodava com `defaultOrganizationId` ainda no fallback
+  // (`null`, perfil não carregou de verdade ainda), travava em
+  // `organizations[0]` via `!organizationId`, e nunca mais reavaliava
+  // quando o `defaultOrganizationId` real chegava um instante depois — a
+  // organização padrão salva parecia nunca ser respeitada num reload frio.
+  // Aguardar o perfil sair de "loading" (carregado OU erro — erro degrada
+  // pro mesmo fallback de antes, `organizations[0]`) fecha a corrida.
   useEffect(() => {
-    if (organizationsStatus === "loaded" && organizations.length > 0 && !organizationId) {
+    if (
+      organizationsStatus === "loaded" &&
+      organizations.length > 0 &&
+      !organizationId &&
+      userProfileStatus !== "loading"
+    ) {
       const preferred = defaultOrganizationId
         ? organizations.find((org) => org.id === defaultOrganizationId)
         : undefined;
       setOrganizationId((preferred ?? organizations[0]).id);
     }
-  }, [organizationsStatus, organizations, organizationId, defaultOrganizationId]);
+  }, [organizationsStatus, organizations, organizationId, defaultOrganizationId, userProfileStatus]);
 
   // Chamada pelo seletor do header (page-header-bar.tsx) — grava a
   // organização atualmente ativa como padrão via

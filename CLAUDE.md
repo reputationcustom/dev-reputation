@@ -3140,6 +3140,35 @@ not switching itself.
   next load) versus the complexity of doing it from the membership-removal
   side, which is a different, currently-unbuilt admin flow.
 
+> ✅ **Bug real encontrado e corrigido (2026-07-25)** — user report: "Sempre
+> que utilizo ctrl+r ele vai para a última organização cadastrada e não
+> para a que está marcada como default." Causa raiz: condição de corrida
+> real entre os 2 fetches independentes que `header-context.tsx` depende —
+> `useOrganizations()` e `useUserProfile()` (este último é quem carrega
+> `defaultOrganizationId`). O efeito que decide a organização inicial só
+> checava `organizationsStatus === "loaded"`, não o status do perfil — num
+> reload frio (Ctrl+R remonta a árvore React inteira, refaz os 2 fetches do
+> zero), se a lista de organizações resolvesse primeiro (comum, é a query
+> mais simples das duas — `useUserProfile` também busca `full_name`/
+> `is_admin`/`is_principal`/`timezone`), o efeito rodava com
+> `defaultOrganizationId` ainda no fallback (`null`, perfil não tinha
+> carregado de verdade ainda), travava em `organizations[0]` via seu guard
+> `!organizationId`, e **nunca mais reavaliava** quando o valor real do
+> perfil chegava um instante depois — a organização padrão salva parecia
+> nunca ser respeitada, mas só em reload, nunca durante uma troca manual na
+> mesma sessão (por isso não foi pego na sessão original). Corrigido
+> adicionando `userProfileStatus !== "loading"` como condição extra do
+> mesmo efeito — espera o perfil sair de "loading" (carregado OU erro; erro
+> degrada pro mesmo fallback de sempre, `organizations[0]`) antes de decidir
+> a organização inicial. Nenhuma mudança de schema/Edge Function — só o
+> efeito em `header-context.tsx`. Sobre a segunda parte do pedido do
+> usuário ("mesmo que o usuário limpe o cache, deve permanecer a
+> organização default selecionada"): já era verdade antes deste fix e
+> continua sendo — a preferência é lida do banco (`user_profiles`) a cada
+> carregamento, nunca de `localStorage`/cookie local, então limpar cache do
+> navegador não a afeta (só um logout de verdade removeria a sessão que
+> permite ler o perfil).
+
 **Verification**: `npx tsc --noEmit` passes clean. `npm run build` was
 **not** confirmed clean this session — it currently fails on an unrelated,
 pre-existing issue found in the working tree at the start of this session:
