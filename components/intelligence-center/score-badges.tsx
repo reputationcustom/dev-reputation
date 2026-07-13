@@ -1,6 +1,6 @@
 // Mapeamento score/rótulo → cor+texto em pt-BR — nenhum threshold é
 // recalculado aqui além do band de Momentum (ver nota abaixo); os rótulos
-// (`sentiment_label`/`velocity_label`/`risk_label`) já vêm prontos do
+// (`sentiment_label`/`trend_label`/`risk_label`) já vêm prontos do
 // envelope (aggregated-metrics/sql-aggregation.md, "Scores de Narrativa").
 // Cores de .dev/specs/_design-tokens.md.
 
@@ -21,16 +21,17 @@ const RISK_META: Record<string, { label: string; text: string; bg: string }> = {
   critical: { label: "Crítico", text: "text-risk-critical", bg: "bg-risk-critical-bg" },
 };
 
-const VELOCITY_META: Record<string, { label: string; arrow: string; color: string }> = {
-  shrinking_fast: { label: "Encolhendo rapidamente", arrow: "↓", color: "text-intensity-1" },
-  declining: { label: "Diminuindo", arrow: "↘", color: "text-intensity-2" },
+// Substitui VELOCITY_META (2026-07-22, pedido do usuário) — 3 estados em
+// vez de 5, tendência estatística (regressão linear sobre 14 dias,
+// get_narratives_table) em vez de snapshot 3h-vs-3h.
+const TREND_META: Record<string, { label: string; arrow: string; color: string }> = {
+  decreasing: { label: "Tendência de queda", arrow: "↓", color: "text-intensity-2" },
   stable: { label: "Estável", arrow: "→", color: "text-intensity-3" },
-  growing: { label: "Crescendo", arrow: "↑", color: "text-intensity-4" },
-  viral: { label: "Viralizando", arrow: "↗", color: "text-intensity-5" },
+  increasing: { label: "Tendência de alta", arrow: "↑", color: "text-intensity-4" },
 };
 
 // Faixas de Momentum (0-19/20-39/40-59/60-79/80-100) — a única banda dos 4
-// scores sem rótulo próprio no envelope (sentiment/velocity/risk todos
+// scores sem rótulo próprio no envelope (sentiment/trend/risk todos
 // devolvem `*_label`; momentum só devolve o número). Thresholds copiados
 // literalmente de executive-overview.md/_design-tokens.md — mapeamento de
 // apresentação, não um cálculo novo.
@@ -70,9 +71,9 @@ export function RiskBadge({ score, label }: { score: number | null; label: strin
   );
 }
 
-export function VelocityIndicator({ score, label }: { score: number | null; label: string | null }) {
+export function TrendIndicator({ score, label }: { score: number | null; label: string | null }) {
   if (score === null || !label) return <span className="text-sm text-text-tertiary">—</span>;
-  const meta = VELOCITY_META[label] ?? VELOCITY_META.stable;
+  const meta = TREND_META[label] ?? TREND_META.stable;
   const rounded = Math.round(score);
   return (
     <span className={`inline-flex items-center gap-1 text-sm font-medium ${meta.color}`}>

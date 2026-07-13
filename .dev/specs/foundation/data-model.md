@@ -2,7 +2,7 @@
 tipo: data-model
 módulo: foundation
 status: implementado
-atualizado: 2026-07-20
+atualizado: 2026-07-23
 ---
 
 > ✅ **Status corrigido 2026-07-14** (premissa do projeto, ver CLAUDE.md
@@ -689,11 +689,16 @@ adicionar depois se `event-radar`/`aggregated-metrics` precisarem):
 
 **Janela de captura, deliberadamente curta** (diferente de `daily`/`weekly`/`monthly`, que
 cobrem o histórico completo desde `BRANDWATCH_MENTIONS_START_DATE`): este grão existe só pra
-detecção de curto prazo (`event-radar`) e pra Velocidade (`aggregated-metrics`), não pra
-histórico/BI — `bw-sync` busca **últimos 30 dias** a cada invocação (não só as horas desde o
-último sync). Motivo do tamanho: 30 dias cobre tanto a janela "Últimas 3h" quanto "Hora atual vs.
-média das últimas 4 semanas na mesma hora" (`event-radar/detection-engine.md`) com a **mesma
-tabela** — a segunda janela calcula a média agrupando por hora-do-dia sobre os próprios registros
+detecção de curto prazo (`event-radar`) e pro grão `hour` do gráfico de tendência
+(`get_volume_trend`, `aggregated-metrics`) — não pra histórico/BI. ⚠️ **Não é mais usado por
+Tendência de Narrativa** (`get_narratives_table().trend_score`, antes "Velocidade"/`velocity_score`)
+— desde a migration `20260722010000`, esse indicador passou a usar a série **diária** de
+`narrative_metrics` (regressão sobre 14 dias), não mais o grão horário; ver
+`aggregated-metrics/sql-aggregation.md`, "Tendência". `bw-sync` busca **últimos 30 dias** a cada
+invocação (não só as horas desde o último sync). Motivo do tamanho: 30 dias cobre tanto a janela
+"Últimas 3h" quanto "Hora atual vs. média das últimas 4 semanas na mesma hora"
+(`event-radar/detection-engine.md`) com a **mesma tabela** — a segunda janela calcula a média
+agrupando por hora-do-dia sobre os próprios registros
 já armazenados aqui (`extract(hour from metric_hour)`), sem precisar de uma segunda chamada
 usando a dimensão cíclica `hourOfDay` da Brandwatch. Sem custo extra de chamada por causa disso —
 uma chamada de chart devolve todos os buckets do range pedido numa resposta só (mesmo princípio
@@ -1754,7 +1759,7 @@ join daily d on d.narrative_id = n.id
 left join query_totals t on t.metric_date = d.metric_date and t.query_id = d.query_id;
 
 comment on view reporting.narratives_overview is
-  'View usada pela tabela interativa de Narrativas no Executive Overview e exposta para BI externo. sov_percent = menções da Narrativa / total de menções de todas as Narrativas da MESMA Query no mesmo dia — corrigido 2026-07-11 (ver nota abaixo). sentiment_bucket usa net_sentiment (score oficial da Brandwatch, 7 faixas, ver aggregated-metrics/sql-aggregation.md) com fallback pro cálculo local só enquanto net_sentiment não sincronizou. Momentum/Velocidade/Risco (scores 0-100) NÃO vivem nesta view — são período-dependentes (a UI escolhe 7/14/30 dias) e ficam em aggregated-metrics.get_narratives_table(), que já recebe period_start/period_end; esta view expõe só dado bruto por dia, reaproveitado tanto pela UI quanto pelo BI externo.';
+  'View usada pela tabela interativa de Narrativas no Executive Overview e exposta para BI externo. sov_percent = menções da Narrativa / total de menções de todas as Narrativas da MESMA Query no mesmo dia — corrigido 2026-07-11 (ver nota abaixo). sentiment_bucket usa net_sentiment (score oficial da Brandwatch, 7 faixas, ver aggregated-metrics/sql-aggregation.md) com fallback pro cálculo local só enquanto net_sentiment não sincronizou. Momentum/Tendência/Risco (scores 0-100) NÃO vivem nesta view — são período-dependentes (a UI escolhe 7/14/30 dias) e ficam em aggregated-metrics.get_narratives_table(), que já recebe period_start/period_end; esta view expõe só dado bruto por dia, reaproveitado tanto pela UI quanto pelo BI externo. ✅ Momentum/Velocidade/Risco → Momentum/Tendência/Risco (2026-07-22, migration 20260722010000, comentário atualizado em 20260722010000).';
 
 -- Role só-leitura para BI externo (Qlik Cloud, Power BI, ferramentas próprias)
 create role bi_reader login noinherit;
@@ -1932,6 +1937,23 @@ revoke all on schema public from bi_reader;
       antes de mintar token/chamar a Brandwatch de novo, em vez de repetir a
       mesma chamada fadada a tomar 429 a cada heartbeat de 15min — ver
       CLAUDE.md "bw-sync rate limit cross-invocation backoff"
+      → ✅ **bug real corrigido (2026-07-23)**: a desativação de
+      `bw_categories.status` acima estava correta como lógica, mas só
+      rodava quando `sync_cursors.next_step` chegava em `"metadata"` — a
+      primeira fase de `SYNC_STEPS`, reavaliada só quando um ciclo inteiro
+      de 16 fases fecha e dá a volta. Fases "stale-gated" avançam no
+      máximo 1 categoryTarget por invocação, e `daily_metrics` também pode
+      se estender por várias invocações desde 2026-07-22 (`stayOnStep`) —
+      um ciclo inteiro podia levar bem mais que `BW_SYNC_INTERVAL_HOURS`
+      (3h) pra fechar, deixando Categories removidas na Brandwatch
+      marcadas `active` por muito mais tempo do que o throttle de 1h de
+      `needsMetadataRefresh()` sugere. Corrigido: a checagem (e o refresh
+      de verdade, quando devido) agora roda em toda invocação do par,
+      independente da fase corrente — ver CLAUDE.md "Category
+      deactivation wasn't actually running on any predictable cadence".
+      Também ganhou log de sucesso (`refreshMetadata:categories_deactivated`,
+      via `.select("id")` no `UPDATE`) — antes não havia nenhum log
+      confirmando se a desativação rodou ou quantas linhas afetou
 - [ ] Triggers `set_updated_at` em `organizations`, `brandwatch_credentials`, `narratives`
 - [ ] RLS habilitada em **todas** as tabelas deste módulo (inclusive
       `sync_cursors`/`sync_log`, deny-all)

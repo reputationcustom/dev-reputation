@@ -591,15 +591,26 @@ async function refreshMetadata(
   // por Category real) como placeholder nesse caso, marcando tudo inativo.
   const returnedCategoryIds = categoryRows.map((c) => c.id as number);
   const knownIdsList = returnedCategoryIds.length > 0 ? returnedCategoryIds.join(",") : "0";
-  const { error: deactivateError } = await supabase
+  // ✅ Correção 2026-07-23: antes não havia NENHUM log de sucesso desta
+  // operação — impossível confirmar, a partir dos logs do Edge Function,
+  // se ela rodou ou quantas linhas afetou (só o `throw` em caso de erro).
+  // `.select("id")` força o PostgREST a devolver as linhas efetivamente
+  // atualizadas, em vez do padrão (nenhum dado de volta num `.update()`).
+  const { data: deactivatedRows, error: deactivateError } = await supabase
     .from("bw_categories")
     .update({ status: "inactive" })
     .eq("project_id", projectId)
     .eq("status", "active")
-    .not("id", "in", `(${knownIdsList})`);
+    .not("id", "in", `(${knownIdsList})`)
+    .select("id");
   if (deactivateError) {
     throw new Error(`Erro desativando bw_categories removidas da Brandwatch: ${deactivateError.message}`);
   }
+  log("refreshMetadata:categories_deactivated", {
+    projectId,
+    count: deactivatedRows?.length ?? 0,
+    categoryIds: (deactivatedRows ?? []).map((r) => (r as { id: number }).id),
+  });
 
   const narrativesCreated = await ensureNarrativesFromCategories(supabase, organizationId, categoryRows);
 
@@ -3025,7 +3036,7 @@ async function runDailyMetricsStep(
 }
 
 // =========================================================================
-// Passo 6.3e — grão horário (event-radar / Velocidade), especificado
+// Passo 6.3e — grão horário (event-radar / gráficos de tendência), especificado
 // 2026-07-13 (.dev/specs/_pending.md, gap técnico #2 de foundation).
 // Restrito a uma janela móvel de 30 dias (não histórico/BI como
 // bw_query_metrics_daily — ver prune_bw_query_metrics_hourly(), migration
@@ -3752,6 +3763,40 @@ async function runSyncInvocation(supabase: SupabaseClient, invocationStartedAt: 
       .single();
     if (projectRowError) throw new Error(`Erro lendo organization_id de bw_projects: ${projectRowError.message}`);
     const organizationId = projectRow.organization_id as string;
+
+    // ✅ Correção 2026-07-23 (pedido do usuário: "as categorias não estão
+    // sendo colocadas como inativas quando não existem mais na
+    // brandwatch"). Achado: `refreshMetadata()` (que inclui a desativação
+    // de bw_categories removidas do /rulecategories, ver migration
+    // `20260716010000`) só rodava quando `next_step` do par chegava em
+    // "metadata" — a PRIMEIRA fase de `SYNC_STEPS`, avaliada de novo só
+    // quando um ciclo inteiro de 16 fases fecha e dá a volta. Cada fase
+    // "stale-gated" (weekly_monthly/topics/top_authors/etc.) avança no
+    // máximo 1 categoryTarget/grupo por invocação — e desde 2026-07-22,
+    // `daily_metrics` também pode se estender por várias invocações
+    // (`stayOnStep`, ver StepResult) pra espalhar o burst de sentimento por
+    // Narrativa. Isso significa que, pra uma organização com Narrativas
+    // suficientes, um ciclo inteiro podia levar bem mais que
+    // `BW_SYNC_INTERVAL_HOURS` (3h padrão) pra fechar — e enquanto isso,
+    // `needsMetadataRefresh()` (throttle de 1h) nunca tinha CHANCE de ser
+    // reavaliado, porque "metadata" simplesmente não estava na vez.
+    // Categories removidas na Brandwatch ficavam "active" por muito mais
+    // tempo do que o throttle de 1h sugere — na prática, por um ciclo
+    // inteiro (potencialmente dias, não horas). Corrigido: a checagem
+    // (e, se devido, o refresh de verdade — que inclui a desativação) agora
+    // roda em TODA invocação deste par, independente de `currentStep` —
+    // barato quando não está devido (2 SELECTs em needsMetadataRefresh()),
+    // só gasta chamada de Brandwatch quando de fato passou 1h desde o
+    // último refresh (ou bw_categories está vazia) E há orçamento
+    // disponível (`hasBrandwatchCallBudget()`, pra não competir com o
+    // resto do orçamento desta invocação). O passo "metadata" continua
+    // existindo em `SYNC_STEPS` por compatibilidade com `next_step` já
+    // gravado em `sync_cursors` — ao chegar nele, `needsMetadataRefresh()`
+    // já vai achar tudo fresco (acabou de rodar aqui) e retornar
+    // `didWork: false` sem custo extra.
+    if (hasBrandwatchCallBudget() && await needsMetadataRefresh(supabase, projectId)) {
+      await refreshMetadata(supabase, token, projectId, organizationId);
+    }
 
     const narrativeCategoryIds = await fetchNarrativeCategoryIds(supabase, projectId, queryId);
     const categoryTargets: (number | null)[] = [null, ...narrativeCategoryIds];

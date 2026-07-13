@@ -129,8 +129,8 @@ export interface NarrativeRow {
   sentiment_neutral_pct: number | null
   sentiment_negative_pct: number | null
   momentum_score: number | null
-  velocity_score: number | null
-  velocity_label: string | null
+  trend_score: number | null
+  trend_label: string | null
   risk_score: number | null
   risk_label: string | null
   // Reservado pra IA (ai-synthesis, sprint futura) — narratives.description,
@@ -368,8 +368,8 @@ interface NarrativeTableRow {
   sentiment_neutral_pct: number | null
   sentiment_negative_pct: number | null
   momentum_score: number | null
-  velocity_score: number | null
-  velocity_label: string | null
+  trend_score: number | null
+  trend_label: string | null
   risk_score: number | null
   risk_label: string | null
   summary: string | null

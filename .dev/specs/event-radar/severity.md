@@ -3,7 +3,7 @@ tipo: feature-spec
 módulo: event-radar
 funcionalidade: severity
 status: rascunho
-atualizado: 2026-07-12
+atualizado: 2026-07-22
 ---
 
 # Severidade (SQL, sem IA)
@@ -43,6 +43,17 @@ esse score para a categoria de risco já existente no schema (`low`/`medium`/`hi
 > operacional) foi introduzido, com pesos muito mais parecidos aos de
 > `severity_score` (volume/sentimento/velocidade/alcance/autores/persistência)
 > do que os de Momentum.
+>
+> ⚠️ **Nota (2026-07-22)**: o indicador de Narrativa antes chamado
+> "Velocidade" (`get_narratives_table().velocity_score`, snapshot 3h-vs-3h)
+> foi substituído por "Tendência" (`trend_score`, regressão estatística de
+> 14 dias) — ver `sql-aggregation.md`, "Tendência". O fator "Velocidade" da
+> tabela de pesos acima **não** foi renomeado junto: este módulo ainda é
+> `rascunho`/não implementado, e o fator aqui é conceitualmente sobre a
+> rapidez de escalada do **evento** detectado (janela curta, mais próximo
+> do desenho antigo de Velocidade do que da nova regressão de 14 dias da
+> Narrativa) — decisão de nome/fórmula fica para quando `event-radar` for
+> de fato especificado/implementado, não decidida por tabela aqui.
 
 `severity_score` (por evento, só existe enquanto há um evento ativo pra
 aquela Narrativa) e `risk_score` (por Narrativa, sempre calculado, ver

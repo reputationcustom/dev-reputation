@@ -32,13 +32,24 @@ concentra o reaproveitamento de código entre páginas.
 - Cada `fetchX` desta camada corresponde 1:1 a uma function SQL — esta camada não deve conter
   lógica de agregação própria, apenas chamada + normalização de tipos (datas, números).
 - ✅ **`fetchNarratives` recebe `page` (2026-07-16)**: `narrativesScopeForPage(page)` resolve
-  `'roots' | 'leaves' | null` e é repassado como `get_narratives_table`'s parâmetro
-  `p_scope` (ver `sql-aggregation.md`). É a única `fetchX` que precisa saber qual página a chamou;
-  as demais continuam recebendo só `(supabase, ctx)`. ✅ **Revisto (2026-07-20)**, pedido do
-  usuário ("tanto na página de overview quanto na lista de narrativas serão mostradas todas as
-  narrativas"): Overview e Narrativas agora pedem `null` (sem restrição, era `'roots'`/`'leaves'`
-  respectivamente); Relatórios continua `'roots'`, Plataformas/Pautas continuam `'leaves'` — não
-  fizeram parte deste pedido.
+  `p_scope` (ver `sql-aggregation.md`) — é a única `fetchX` que precisa saber qual página a
+  chamou; as demais continuam recebendo só `(supabase, ctx)`. ✅ **Revisto duas vezes desde
+  então**: 2026-07-20 tinha feito Overview/Narrativas pedirem `null` (sem restrição — Category
+  raiz + Subcategory juntas, viabilizado por um título composto "Categoria - Subcategoria").
+  ✅ **2026-07-21** (pedido do usuário: "Para facilitar vamos considerar apenas as subcategorias
+  em todas as narrativas. Retire a regra de 'categoria - subcategoria'. Em Pautas faz-se uma
+  restrição de todas as subcategorias da categoria Pautas") reverteu isso: `narrativesScopeForPage`
+  agora retorna `'leaves' | 'pautas'` (sem `'roots'`/`null'` — nenhuma página mais precisa deles).
+  Toda página usa `'leaves'` (Overview, Narrativas, Plataformas, Relatórios); `themes` (Pautas
+  Eleitorais) usa `'pautas'` — um terceiro valor, mais restrito, só Subcategories cuja
+  Category-pai é a Category raiz chamada "Pautas" (`pautas_root_category_id()`, migration
+  `20260721030000`), não qualquer Category raiz do Project.
+- ✅ **`fetchAuthors` recebe `page` (2026-07-21)**, mesmo padrão de `fetchNarratives`: quando
+  `page === 'themes'`, passa `p_scope: 'pautas'` pro RPC `get_authors_ranking` — escopa o ranking
+  às Subcategories de "Pautas" em vez da Query inteira/1 Narrativa, e o resultado passa a incluir
+  `narrative_labels` (a quais pautas cada autor está associado, pode ser mais de uma). Pedido do
+  usuário: "em Autores e comunidades por pauta deve aparecer apenas os autores que citaram algo
+  relacionado às Pautas e deve ser informado a que pauta ele está associado."
 - `PAGE_BLOCKS` deve ser uma constante única, tipada, espelhando exatamente a tabela de
   [block-mapping-per-page.md](block-mapping-per-page.md). Se a tabela mudar, esta
   constante deve ser atualizada junto — o Claude Code deve tratar os dois como uma coisa só.

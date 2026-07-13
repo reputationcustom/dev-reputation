@@ -3,7 +3,7 @@ tipo: feature-spec
 módulo: event-radar
 funcionalidade: aggregated-metrics-integration
 status: rascunho
-atualizado: 2026-07-12
+atualizado: 2026-07-22
 ---
 
 # Integração com `aggregated-metrics`
@@ -50,7 +50,8 @@ qualquer PR que altere o formato de saída de um dos dois módulos deve revisar.
 
 1. `aggregated-metrics` pode ser implementado e entregue **completo** sem este módulo —
    `metrics`, `breakdowns`, `trends`, `authors`, `graph`, `term_signals` e a tabela `narratives`
-   (incl. `sentiment`/`momentum_score`/`velocity_score`/`risk_score`, todos calculados 100% a
+   (incl. `sentiment`/`momentum_score`/`trend_score` (antes `velocity_score`, ver
+   `sql-aggregation.md`, "Tendência")/`risk_score`, todos calculados 100% a
    partir de `foundation`, sem depender de `event-radar`) não dependem deste módulo.
 2. `highlights`, `narrative_text` e o boost de `risk_score` via evento ativo ficam vazios/em
    fallback até este módulo estar publicando em `feed_events`.

@@ -5,9 +5,9 @@ import Link from "next/link";
 import type { NarrativeRow } from "@reputation/shared-types";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Tooltip } from "@/components/ui/tooltip";
-import { SentimentBadge, RiskBadge, VelocityIndicator, ScoreBar } from "./score-badges";
+import { SentimentBadge, RiskBadge, TrendIndicator, ScoreBar } from "./score-badges";
 
-type SortKey = "title" | "sov_pct" | "velocity_score" | "net_sentiment" | "momentum_score" | "risk_score";
+type SortKey = "title" | "sov_pct" | "trend_score" | "net_sentiment" | "momentum_score" | "risk_score";
 
 // Tooltips por coluna (pedido do usuário 2026-07-13) — mesmo padrão/
 // componente já usado nos 5 KPIs da Visão Geral (metric-card.tsx). Como
@@ -22,10 +22,10 @@ const COLUMNS: { key: SortKey; label: string; tooltip?: string }[] = [
     tooltip: "Share of Voice — participação desta Narrativa no total de menções da Query em que ela está.",
   },
   {
-    key: "velocity_score",
-    label: "Velocidade",
+    key: "trend_score",
+    label: "Tendência",
     tooltip:
-      "Ritmo de crescimento recente (hoje vs. ontem) — mostra se a Narrativa está ganhando ou perdendo força rapidamente, independente do período selecionado no topo da página.",
+      "Tendência estatística dos últimos 14 dias (regressão sobre o volume diário de menções) — mostra se a Narrativa tende a aumentar, diminuir ou se manter estável, independente do período selecionado no topo da página.",
   },
   {
     key: "net_sentiment",
@@ -41,11 +41,11 @@ const COLUMNS: { key: SortKey; label: string; tooltip?: string }[] = [
   {
     key: "risk_score",
     label: "Risco",
-    tooltip: "Nível de risco reputacional, calculado a partir do sentimento, alcance e Momentum/Velocidade da Narrativa.",
+    tooltip: "Nível de risco reputacional, calculado a partir do sentimento, alcance e Momentum/Tendência da Narrativa.",
   },
 ];
 
-// Tabela interativa de Narrativas — 7 colunas (Narrativa/SOV/Velocidade/
+// Tabela interativa de Narrativas — 7 colunas (Narrativa/SOV/Tendência/
 // Sentimento/Momentum/Risco/Ação), reusada por Visão Geral, Narrativas
 // (lista completa) e Pautas Eleitorais (intelligence-center/executive-overview.md,
 // "Tabela interativa de Narrativas"; narratives-exploration.md: "mesma
@@ -147,7 +147,7 @@ export function NarrativesTable({
                 {row.sov_pct === null || row.sov_pct === 0 ? "—" : `${row.sov_pct}%`}
               </td>
               <td className="px-4 py-3">
-                <VelocityIndicator score={row.velocity_score} label={row.velocity_label} />
+                <TrendIndicator score={row.trend_score} label={row.trend_label} />
               </td>
               <td className="px-4 py-3">
                 <SentimentBadge value={row.net_sentiment} label={row.sentiment_label} />

@@ -11,15 +11,20 @@ import { HighlightsPanel, NarrativeTextPanel } from "@/components/intelligence-c
 import { EmptyState } from "@/components/ui/empty-state";
 
 // Pautas Eleitorais (`/themes`, intelligence-center/electoral-themes.md).
-// "Pauta" = Narrativa cujo bw_category_id aponta a uma Category raiz — não
-// é uma entidade nova (ver spec, "Mapeamento de conceito"). ⚠️ Simplificação
-// desta sessão: a tabela "Narrativas" abaixo mostra todas as Narrativas do
-// escopo (Pautas e Narrativas-filhas juntas, sem distinguir visualmente) —
-// o bloco `narratives` do envelope não expõe bw_category_id/hierarquia, só
-// o próprio `get_theme_breakdown` (painel de SOV/sentimento acima) já
-// filtra corretamente só as Pautas de topo. Drill-down "narrativas dentro
-// da pauta" (clicar numa Pauta e ver só as filhas, via `get-page-themes`
-// com `pauta_id`) fica para uma sessão futura.
+// ✅ Escopo corrigido 2026-07-21 (pedido do usuário: "Essa página deve focar
+// apenas na categoria Pautas. A ideia é que a análise que compõe essa
+// página venha de todas as subcategorias de Pautas."): "Pauta" deixou de
+// significar "qualquer Narrativa cuja Category é de topo" (o que misturava
+// narrativas de crise/monitoramento gerais, ex. "Pesquisas"/"Banco
+// Master", com pautas eleitorais de verdade) — agora é especificamente uma
+// Subcategory da Category raiz chamada "Pautas" (pautas_root_category_id,
+// migration 20260721030000). `get_theme_breakdown`/`get_narratives_table`
+// (`p_scope='pautas'`)/`get_authors_ranking` (`p_scope='pautas'`) já
+// aplicam esse filtro no backend — o widget "Narrativas" abaixo mostra
+// exatamente as pautas eleitorais (Educação, Saúde, Segurança...), nada
+// além disso. Sem drill-down "narrativas dentro da pauta": Brandwatch só
+// suporta 2 níveis (Category → Subcategory), então uma pauta (já uma
+// Subcategory) não tem filhas próprias.
 export default function ThemesPage() {
   const { status, envelope, retry } = usePageEnvelope("get-page-themes");
   const themeBreakdown = envelope?.breakdowns.find((b) => b.type === "theme");
@@ -29,8 +34,9 @@ export default function ThemesPage() {
       <PageHeaderBar title="Pautas Eleitorais" subtitle="O que está sendo discutido, por tema político." />
 
       <div className="flex flex-col gap-6 p-8">
-        {/* "Estrutura das pautas" — mesmos rótulos do card grid abaixo, só
-            como chips soltos (protótipo original: `pautasChips`). */}
+        {/* "Estrutura das pautas" — subcategorias da Category raiz "Pautas"
+            (mesmos rótulos do card grid abaixo, só como chips soltos;
+            protótipo original: `pautasChips`). */}
         <WidgetCard title="Estrutura das pautas" status={status} onRetry={retry}>
           {themeBreakdown && themeBreakdown.items.length > 0 ? (
             <div className="flex flex-wrap gap-2">
@@ -44,24 +50,27 @@ export default function ThemesPage() {
               ))}
             </div>
           ) : (
-            <EmptyState message="Nenhuma Pauta em monitoramento ainda." />
+            <EmptyState message="Nenhuma subcategoria da categoria 'Pautas' configurada na Brandwatch ainda." />
           )}
         </WidgetCard>
 
         <WidgetCard title="Share of Voice e sentimento por pauta" status={status} onRetry={retry}>
-          <PautaCardGrid breakdown={themeBreakdown} emptyMessage="Nenhuma Pauta em monitoramento ainda." />
+          <PautaCardGrid breakdown={themeBreakdown} emptyMessage="Nenhuma subcategoria da categoria 'Pautas' configurada na Brandwatch ainda." />
         </WidgetCard>
 
         <WidgetCard title="Narrativas" status={status} onRetry={retry}>
           <p className="mb-3 text-xs text-text-tertiary">
-            Todas as Narrativas do escopo ativo — Pautas e Narrativas-filhas juntas.
+            Todas as pautas eleitorais (subcategorias da categoria &quot;Pautas&quot;).
           </p>
           <NarrativesTable rows={envelope?.narratives ?? []} />
         </WidgetCard>
 
         <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
           <WidgetCard title="Autores e comunidades por pauta" status={status} onRetry={retry}>
-            <AuthorsList authors={envelope?.authors ?? []} />
+            <AuthorsList
+              authors={envelope?.authors ?? []}
+              emptyMessage="Nenhum autor citou uma pauta eleitoral neste período ainda."
+            />
           </WidgetCard>
           <WidgetCard title="Termos emergentes" status={status} onRetry={retry}>
             <TermSignalsList signals={envelope?.term_signals ?? []} />

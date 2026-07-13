@@ -129,8 +129,11 @@ export interface NarrativeRow {
   sentiment_neutral_pct: number | null
   sentiment_negative_pct: number | null
   momentum_score: number | null
-  velocity_score: number | null
-  velocity_label: string | null
+  // Substitui velocity_score/velocity_label (migration 20260722010000) —
+  // tendência estatística (regressão linear sobre 14 dias), não mais
+  // snapshot 3h-vs-3h.
+  trend_score: number | null
+  trend_label: string | null
   risk_score: number | null
   risk_label: string | null
   // Reservado pra IA (ai-synthesis, sprint futura) — narratives.description,
@@ -368,8 +371,8 @@ interface NarrativeTableRow {
   sentiment_neutral_pct: number | null
   sentiment_negative_pct: number | null
   momentum_score: number | null
-  velocity_score: number | null
-  velocity_label: string | null
+  trend_score: number | null
+  trend_label: string | null
   risk_score: number | null
   risk_label: string | null
   summary: string | null

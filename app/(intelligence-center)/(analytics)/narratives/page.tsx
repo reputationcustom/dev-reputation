@@ -7,16 +7,19 @@ import { PageHeaderBar } from "@/components/intelligence-center/page-header-bar"
 import { WidgetCard } from "@/components/intelligence-center/widget-card";
 import { NarrativesTable } from "@/components/intelligence-center/narratives-table";
 import { NarrativeCard } from "@/components/intelligence-center/narrative-card";
-import { SentimentBadge, RiskBadge, VelocityIndicator, MomentumLabel } from "@/components/intelligence-center/score-badges";
+import { SentimentBadge, RiskBadge, TrendIndicator, MomentumLabel } from "@/components/intelligence-center/score-badges";
 
 // Exploração de Narrativas — lista (`/narratives`,
 // intelligence-center/narratives-exploration.md). Clique numa linha abre um
 // painel de resumo abaixo da tabela sem navegar (equivalente ao estado
 // `hasSelection` do protótipo); "Ver página completa"/"Ver" navegam para o
-// detalhe. ⚠️ Simplificação desta sessão: o detalhe abre como página cheia
-// (`/narratives/[id]`), não como modal via intercepting route — a spec
-// decidiu por um modal (2026-07-12); implementar a rota interceptadora fica
-// para uma sessão futura, sem mudar a navegação por link direto.
+// detalhe. ✅ **Implementado (2026-07-22)**: o detalhe abre como modal
+// (intercepting route `@modal/(.)narratives/[id]`, ver
+// app/(intelligence-center)/(analytics)/@modal/) — clicar num link pra
+// `/narratives/[id]` a partir de qualquer página dentro de `(analytics)`
+// (não só daqui) abre por cima da tela atual; acessar a URL direto (link
+// compartilhado, recarregar a página) continua renderizando a página cheia,
+// sem modal — ver narrative-detail-content.tsx.
 export default function NarrativesListPage() {
   const { status, envelope, retry } = usePageEnvelope("get-page-narratives");
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -54,8 +57,8 @@ export default function NarrativesListPage() {
                 <RiskBadge score={selected.risk_score} label={selected.risk_label} />
               </div>
               <div>
-                <p className="text-xs text-text-tertiary">Velocidade</p>
-                <VelocityIndicator score={selected.velocity_score} label={selected.velocity_label} />
+                <p className="text-xs text-text-tertiary">Tendência</p>
+                <TrendIndicator score={selected.trend_score} label={selected.trend_label} />
               </div>
               <div>
                 <p className="text-xs text-text-tertiary">Momentum</p>

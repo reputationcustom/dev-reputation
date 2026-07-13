@@ -3,7 +3,7 @@ tipo: feature-spec
 módulo: intelligence-center
 funcionalidade: narratives-exploration
 status: pronto
-atualizado: 2026-07-21
+atualizado: 2026-07-22
 ---
 
 # Exploração de Narrativas (lista + detalhe)
@@ -36,39 +36,57 @@ membro de ao menos uma organização.
 2. Tabela com **todas** as Narrativas da organização ativa (header
    global, ver [executive-overview.md](executive-overview.md), "Header" —
    combina todas as Queries da organização, transparente ao usuário) —
-   mesmas 7 colunas do Executive Overview: Narrativa, SOV, Velocidade,
+   mesmas 7 colunas do Executive Overview: Narrativa, SOV, Tendência,
    Sentimento, Momentum, Risco, Ação — ordenação personalizada (ver
    [executive-overview.md](executive-overview.md), "Tabela interativa de
    Narrativas", já especificada lá; esta página reusa o mesmo componente,
-   sem duplicar regra). ✅ **Revertido (2026-07-20)**, pedido do usuário:
-   esta página volta a listar **todas** as Narrativas (Category de topo e
-   Subcategory juntas), igual ao Executive Overview agora — substitui a
-   decisão de 2026-07-16 abaixo. Viabilizado pela troca simultânea do
-   título da Narrativa pra `"Categoria - Subcategoria"`, que desambigua uma
-   Subcategory mesmo listada ao lado da Pauta a que pertence. Implementado
-   via `get_narratives_table(p_scope => null)`, ver
-   `aggregated-metrics/sql-aggregation.md` e `foundation/narratives.md`.
-   Narrativas cuja Category está `status = 'inactive'` (removida da
-   Brandwatch) continuam não aparecendo.
-   > Histórico (2026-07-16, não mais em vigor): diferente do Executive
-   > Overview (que na época mostrava só a Category de topo), esta página
-   > listava só as Subcategories (`p_scope => 'leaves'`) — "a granularidade
-   > mais específica, as narrativas dentro de cada categoria".
+   sem duplicar regra). ✅ **Simplificado (2026-07-21)**, pedido do usuário:
+   "Para facilitar vamos considerar apenas as subcategorias em todas as
+   narrativas. Retire a regra de 'categoria - subcategoria'." Esta página
+   (e o Executive Overview) voltam a listar só as Narrativas-folha
+   (Subcategory) — `get_narratives_table(p_scope => 'leaves')` — nunca mais
+   a Category raiz junto na mesma tabela. O título da Narrativa também
+   voltou a ser só o nome da própria Subcategory (o prefixo "Categoria -"
+   de 2026-07-20 deixou de ser necessário, já que a Category raiz nunca
+   mais aparece misturada na mesma lista). Narrativas cuja Category está
+   `status = 'inactive'` (removida da Brandwatch) continuam não aparecendo.
+   > Histórico (2026-07-20, revertido no dia seguinte): esta página tinha
+   > passado a listar Category de topo e Subcategory juntas
+   > (`p_scope => null`), viabilizado por um título composto
+   > "Categoria - Subcategoria" pra desambiguar. Histórico (2026-07-16,
+   > mesmo comportamento do estado atual): "a granularidade mais
+   > específica, as narrativas dentro de cada categoria" — `p_scope =>
+   > 'leaves'`.
 3. Clique numa linha → painel de resumo abaixo da tabela (nome, resumo,
    indicadores-chave, mix de plataformas) sem navegar de página —
    equivalente ao estado `hasSelection` do protótipo.
 4. Nenhuma linha selecionada → grid de cards, um por Narrativa (nome,
-   resumo, SOV, momentum, velocidade, botão "Explorar narrativa") —
-   equivalente a `hasNoSelection`/`narrativeCards` no protótipo.
+   resumo, SOV, momentum, tendência, botão "Explorar narrativa") —
+   equivalente a `hasNoSelection`/`narrativeCards` no protótipo. (Nota: o
+   `NarrativeCard` implementado, ver `sql-aggregation.md` "Campos do card
+   de Narrativa", não mostra um badge de Tendência dedicado hoje — mostra
+   Risco+Momentum no cabeçalho — mesma divergência de card/spec já
+   registrada antes da troca Velocidade→Tendência, não introduzida por
+   ela.)
 5. "Ver página completa" (no painel de resumo) ou "Explorar narrativa" (no
-   card) → abre o detalhe. ✅ **Decidido (2026-07-12)**: modal sobre a
-   lista (mantém contexto/filtros da lista, evita recarregar a página
-   inteira para um conteúdo tão rico) — via **intercepting route** do
-   Next.js App Router (`(.)narratives/[id]` sobre `/narratives/[id]`
-   "cheio"): navegar a partir da lista abre como modal por cima de
-   `/narratives`; acessar `/narratives/[id]` direto (link compartilhado,
-   recarregar a página) renderiza a página completa, sem modal. Um único
-   componente de detalhe serve os dois casos — não duplica UI.
+   card) → abre o detalhe. ✅ **Decidido (2026-07-12), implementado
+   (2026-07-22)**: modal sobre a lista (mantém contexto/filtros da lista,
+   evita recarregar a página inteira para um conteúdo tão rico) — via
+   **intercepting route** do Next.js App Router
+   (`app/(intelligence-center)/(analytics)/@modal/(.)narratives/[id]/page.tsx`
+   sobre `/narratives/[id]` "cheio"): navegar a partir de **qualquer**
+   página dentro de `(analytics)` (não só `/narratives` — Overview,
+   Plataformas e Pautas também linkam pra `/narratives/[id]` via
+   `NarrativesTable`/`NarrativeCard`) abre como modal por cima da tela
+   atual; acessar `/narratives/[id]` direto (link compartilhado, recarregar
+   a página) continua renderizando a página completa, sem modal — a
+   interceptação do Next.js só se aplica a navegação client-side, nunca a
+   um carregamento "duro" da URL. Um único componente de detalhe
+   (`components/intelligence-center/narrative-detail-content.tsx`) serve os
+   dois casos — não duplica UI; o modal (`narrative-detail-modal.tsx`)
+   também expõe um link "Abrir página completa" (`<a>` nativo, força
+   navegação dura pra escapar da interceptação), pra quem quiser a URL
+   compartilhável fora do modal.
 6. Detalhe da Narrativa: resumo executivo, evolução (narrativa vs. volume
    geral), formação e propagação (texto + disseminadores), grafo de
    disseminação simplificado, menções relevantes, ações e decisões.
@@ -111,9 +129,10 @@ em `get_narratives_table`).
 
 ### Detalhe (`/narratives/[id]`)
 
-- **Cabeçalho**: nome, badges de SOV/sentimento/risco/momentum/velocidade
-  (mesmos scores e faixas de `executive-overview.md`), botão "Voltar para
-  Narrativas".
+- **Cabeçalho**: nome, badges de SOV/sentimento/risco/momentum/tendência
+  (mesmos scores e faixas de `executive-overview.md`); "Voltar para
+  Narrativas" na página cheia, "Abrir página completa" no modal (ver
+  "Fluxo principal" item 5).
 - **Cards de indicadores**: crescimento vs. período anterior, autores
   únicos, alcance estimado, engajamento total — **ver nota de gap abaixo
   sobre "autores únicos"**.

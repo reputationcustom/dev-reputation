@@ -37,7 +37,13 @@ export type SentimentLabel =
   | 'negative'
   | 'very_negative';
 
-export type VelocityLabel = 'shrinking_fast' | 'declining' | 'stable' | 'growing' | 'viral';
+// Substitui VelocityLabel (2026-07-22, pedido do usuário) — antes um
+// snapshot 3h-vs-3h com 5 rótulos; agora uma tendência estatística
+// (regressão linear sobre 14 dias, get_narratives_table) com 3 estados.
+// Nome deliberadamente distinto de `Trend`/`TrendPoint` (bloco
+// `trends[]`, série temporal de gráfico) — conceitos diferentes que só
+// compartilham a palavra em português.
+export type NarrativeTrendLabel = 'decreasing' | 'stable' | 'increasing';
 
 // Mesmo enum de risco de _index.md ("risco_nivel" → risk_level): low|medium|high|critical.
 // Reaproveitado tanto por narratives[].risk_label quanto por authors[].risk_level/highlights[].severity.
@@ -132,8 +138,8 @@ export interface NarrativeRow {
   sentiment_neutral_pct: number | null;
   sentiment_negative_pct: number | null;
   momentum_score: number;
-  velocity_score: number;
-  velocity_label: VelocityLabel;
+  trend_score: number;
+  trend_label: NarrativeTrendLabel;
   risk_score: number;
   risk_label: RiskLevel;
   // Reservado para texto gerado por IA (ai-synthesis, sprint futura) — lido

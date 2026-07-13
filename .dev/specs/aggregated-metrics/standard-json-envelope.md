@@ -3,7 +3,7 @@ tipo: feature-spec
 módulo: aggregated-metrics
 funcionalidade: standard-json-envelope
 status: pronto
-atualizado: 2026-07-18
+atualizado: 2026-07-22
 ---
 
 # Contrato do Envelope JSON (formato único de resposta de página)
@@ -84,14 +84,17 @@ exibidos na UI ficam em português:
   `id`, `title`, `sov_pct`, `total_mentions`,
   `net_sentiment` (número, -100 a 100) + `sentiment_label` (`very_positive`|`positive`|
   `slightly_positive`|`neutral`|`slightly_negative`|`negative`|`very_negative`),
-  `momentum_score` (0-100), `velocity_score` (0-100) + `velocity_label`
-  (`shrinking_fast`|`declining`|`stable`|`growing`|`viral`),
+  `momentum_score` (0-100), `trend_score` (0-100) + `trend_label`
+  (`decreasing`|`stable`|`increasing`),
   `risk_score` (0-100) + `risk_label` (`low`|`medium`|`high`|`critical`) — mesmos nomes de campo
   usados por `reporting.narratives_overview`/`get_narratives_table()` (ver
   `foundation/data-model.md`/`aggregated-metrics/sql-aggregation.md`), este bloco não inventa um
   segundo vocabulário para a mesma tabela. Campo `trend`/`risk_level` (versão anterior deste
-  bloco) foram substituídos por `velocity_label`/`risk_label` — ver nota de migração em
-  `sql-aggregation.md` se algum consumidor antigo depender do nome anterior.
+  bloco) foram substituídos por `velocity_label`/`risk_label` (2026-07-13) — ver nota de migração
+  em `sql-aggregation.md`. ✅ **`velocity_score`/`velocity_label` renomeados para
+  `trend_score`/`trend_label` (2026-07-22, migration `20260722010000`)** — mesmo campo/posição no
+  envelope, só troca de nome/método (regressão estatística em vez de snapshot 3h-vs-3h) e de
+  cardinalidade do rótulo (3 valores em vez de 5) — ver `sql-aggregation.md`, "Tendência".
 - **`authors`**: ranking de autores/influenciadores. Cada item tem `entity_id` (nulo até
   `entities`, Sprint 2, existir e enriquecer — o ranking em si não depende disso, ver
   `sql-aggregation.md`), `name`, `type`, `reach`, `engagement`, `risk_level`,
@@ -169,9 +172,10 @@ Este envelope não é uma tabela — é a forma de saída. Ver
   em vez de gerar uma análise nova. Ver [ai-synthesis.md](ai-synthesis.md) para o fluxo completo.
 - ✅ **Atualizado 2026-07-13**: `narratives[].risk_score` (não mais `momentum_score`) é o campo
   que se beneficia de um evento ativo do radar — `risk_score = greatest(risk_score calculado,
-  severity_score do evento ativo)`, quando existir. `momentum_score`/`velocity_score` são 100%
-  estatísticos (SQL, sem IA) e nunca dependem de `event-radar` estar publicando — ver
-  [sql-aggregation.md](sql-aggregation.md), "Scores de Narrativa".
+  severity_score do evento ativo)`, quando existir. `momentum_score`/`trend_score` (antes
+  `velocity_score`, ver nota de 2026-07-22 acima) são 100% estatísticos (SQL, sem IA) e nunca
+  dependem de `event-radar` estar publicando — ver [sql-aggregation.md](sql-aggregation.md),
+  "Scores de Narrativa".
 
 ## Referências relacionadas
 

@@ -3,7 +3,7 @@ tipo: feature-spec
 módulo: event-radar
 funcionalidade: detection-engine
 status: rascunho
-atualizado: 2026-07-12
+atualizado: 2026-07-22
 ---
 
 # Motor de Detecção (100% SQL, sem IA)
@@ -18,8 +18,20 @@ calculado por soma local sobre uma tabela amostrada).
 
 ## Fluxo principal
 
-1. `pg_cron` dispara a checagem em intervalos regulares (ex: a cada 15-30min — definir junto do
-   time de infra conforme volume).
+1. `pg_cron` dispara a checagem a cada **15 minutos** — ✅ **Resolvido
+   (2026-07-22)**, decisão do usuário. Mesmo intervalo já usado pelo
+   heartbeat de `bw-sync` (`bw-sync-heartbeat`, `CLAUDE.md` "Scheduled
+   cadence") — reaproveita a mesma cadência de infraestrutura já validada
+   em produção para um job recorrente sobre este schema, em vez de
+   introduzir um segundo intervalo (30min) só para este motor. Como as
+   regras deste motor são 100% SQL sobre agregados já sincronizados (sem
+   chamada à Brandwatch — ver "Objetivo" acima), 15min não compete pelo
+   orçamento de rate limit de `bw-sync`; o único custo é execução de
+   queries Postgres, barato na escala do MVP. Revisitar se um teste de
+   carga real (Sprint 3, quando este módulo for implementado) mostrar que
+   15min é caro demais para o volume de organizações ativas — não uma
+   decisão travada para sempre, só a que resolve a pendência registrada em
+   `_pending.md` #4 com o dado disponível hoje.
 2. Para cada organização ativa, o sistema calcula as janelas de comparação definidas abaixo,
    lendo dos agregados oficiais da Brandwatch já sincronizados por `foundation`.
 3. Para cada janela, aplica as regras do MVP (variação %, volume mínimo, diferença absoluta,

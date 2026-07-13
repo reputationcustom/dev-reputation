@@ -7,6 +7,14 @@ import { EmptyState } from "@/components/ui/empty-state";
 // sql-aggregation.md, get_authors_ranking — sem fórmula de risco por autor
 // ainda).
 //
+// `narrative_labels` (chips soltos abaixo do nome) = a quais
+// Narrativas/pautas o autor está associado no escopo atual — pode ser mais
+// de uma. Só vem preenchido de verdade na página Pautas Eleitorais
+// (get_authors_ranking com p_scope='pautas': só autores que citaram algo
+// ligado às subcategorias da Category "Pautas", pedido do usuário
+// 2026-07-21); nas outras páginas o array normalmente tem no máximo 1 item
+// (escopo já é Query inteira ou 1 única Narrativa via filtro).
+//
 // Badge de sentimento (positivo/neutro/negativo dominante do autor) só
 // aparece quando os 3 campos vêm preenchidos — na prática, só os top 10
 // autores por volume da Query inteira (enriquecidos via
@@ -45,25 +53,42 @@ export function AuthorsList({ authors, emptyMessage = "Ainda sincronizando autor
       {authors.slice(0, 15).map((author) => {
         const sentiment = dominantSentiment(author);
         return (
-          <div key={author.name} className="flex items-center justify-between gap-3 py-2.5 text-sm">
-            <div className="flex min-w-0 items-center gap-2">
-              <span className="truncate font-medium text-text-primary">{author.name}</span>
-              {author.is_influential && (
-                <span className="flex-shrink-0 rounded-full bg-accent-blue-bg px-2 py-0.5 text-xs font-medium text-accent-blue">
-                  Influente
-                </span>
-              )}
-              {sentiment && (
-                <span className={`flex-shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${SENTIMENT_BADGE_CLASS[sentiment]}`}>
-                  {SENTIMENT_BADGE_LABEL[sentiment]}
-                </span>
-              )}
-              <span className="flex-shrink-0 text-xs text-text-tertiary">{author.type}</span>
+          <div key={author.name} className="flex flex-col gap-1.5 py-2.5 text-sm">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex min-w-0 items-center gap-2">
+                <span className="truncate font-medium text-text-primary">{author.name}</span>
+                {author.is_influential && (
+                  <span className="flex-shrink-0 rounded-full bg-accent-blue-bg px-2 py-0.5 text-xs font-medium text-accent-blue">
+                    Influente
+                  </span>
+                )}
+                {sentiment && (
+                  <span className={`flex-shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${SENTIMENT_BADGE_CLASS[sentiment]}`}>
+                    {SENTIMENT_BADGE_LABEL[sentiment]}
+                  </span>
+                )}
+                <span className="flex-shrink-0 text-xs text-text-tertiary">{author.type}</span>
+              </div>
+              <div className="flex flex-shrink-0 items-center gap-4 text-xs text-text-secondary">
+                <span>{new Intl.NumberFormat("pt-BR").format(author.reach)} alcance</span>
+                <span>{new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 1 }).format(author.engagement)} engaj.</span>
+              </div>
             </div>
-            <div className="flex flex-shrink-0 items-center gap-4 text-xs text-text-secondary">
-              <span>{new Intl.NumberFormat("pt-BR").format(author.reach)} alcance</span>
-              <span>{new Intl.NumberFormat("pt-BR", { maximumFractionDigits: 1 }).format(author.engagement)} engaj.</span>
-            </div>
+            {/* Pautas/Narrativas em que o autor teve atividade no escopo atual —
+                só populado de verdade na página Pautas Eleitorais (p_scope='pautas',
+                ver get_authors_ranking), pode ser mais de uma. */}
+            {author.narrative_labels.length > 0 && (
+              <div className="flex flex-wrap gap-1.5">
+                {author.narrative_labels.map((label) => (
+                  <span
+                    key={label}
+                    className="rounded-full bg-bg-page px-2 py-0.5 text-xs text-text-secondary"
+                  >
+                    {label}
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
         );
       })}

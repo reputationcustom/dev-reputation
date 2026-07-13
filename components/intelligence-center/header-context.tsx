@@ -1,10 +1,11 @@
 "use client";
 
-import { createContext, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import type { EnvelopePeriod } from "@reputation/shared-types";
 import { useOrganizations, type Organization } from "@/hooks/use-organizations";
 import { useUserProfile } from "@/hooks/use-user-profile";
 import { getLastNDaysRange } from "@/lib/date/format";
+import { callFunction } from "@/lib/supabase/call-function";
 
 // Diário/Semanal/Mensal/Personalizado — substitui o antigo seletor "7/14/30
 // dias" (intelligence-center/executive-overview.md, "Header", 2026-07-15,
@@ -41,6 +42,9 @@ interface HeaderContextValue {
   retryOrganizations: () => void;
   organizationId: string | null;
   setOrganizationId: (id: string) => void;
+  defaultOrganizationId: string | null;
+  isSettingDefaultOrganization: boolean;
+  setCurrentOrganizationAsDefault: () => Promise<void>;
   periodMode: PeriodMode;
   setPeriodMode: (mode: PeriodMode) => void;
   customRange: CustomRange;
@@ -54,14 +58,18 @@ const HeaderContext = createContext<HeaderContextValue | null>(null);
 // compartilham os mesmos 2 seletores — organização ativa e período").
 // Trocar organização/período aqui reescopa os dados de toda a navegação —
 // cada página só lê deste contexto, nunca gerencia o próprio seletor
-// (evita duplicar a mesma lógica 5 vezes). Sem persistência entre reloads
-// nesta primeira versão (volta para a primeira organização/7 dias a cada
-// carregamento da aplicação) — suficiente para o Sprint 2, sem pedido
-// explícito de persistência ainda.
+// (evita duplicar a mesma lógica 5 vezes). Período continua sem
+// persistência entre reloads (volta para "Semanal" a cada carregamento —
+// sem pedido explícito de persistir período). A organização ativa, porém,
+// persiste via `user_profiles.default_organization_id` (pedido do usuário,
+// 2026-07-22) — ver `setCurrentOrganizationAsDefault` abaixo: ao carregar,
+// prefere a organização marcada como padrão (se o usuário ainda for membro
+// dela) antes de cair de volta para a primeira organização retornada.
 export function IntelligenceCenterProvider({ children }: { children: React.ReactNode }) {
   const { status: organizationsStatus, organizations, retry: retryOrganizations } = useOrganizations();
-  const { timezone } = useUserProfile();
+  const { timezone, defaultOrganizationId, retry: retryUserProfile } = useUserProfile();
   const [organizationId, setOrganizationId] = useState<string | null>(null);
+  const [isSettingDefaultOrganization, setIsSettingDefaultOrganization] = useState(false);
   const [periodMode, setPeriodModeState] = useState<PeriodMode>("weekly");
   const [customRange, setCustomRange] = useState<CustomRange>(() => {
     const range = getLastNDaysRange(PERIOD_MODE_DAYS.weekly);
@@ -70,9 +78,29 @@ export function IntelligenceCenterProvider({ children }: { children: React.React
 
   useEffect(() => {
     if (organizationsStatus === "loaded" && organizations.length > 0 && !organizationId) {
-      setOrganizationId(organizations[0].id);
+      const preferred = defaultOrganizationId
+        ? organizations.find((org) => org.id === defaultOrganizationId)
+        : undefined;
+      setOrganizationId((preferred ?? organizations[0]).id);
     }
-  }, [organizationsStatus, organizations, organizationId]);
+  }, [organizationsStatus, organizations, organizationId, defaultOrganizationId]);
+
+  // Chamada pelo seletor do header (page-header-bar.tsx) — grava a
+  // organização atualmente ativa como padrão via
+  // update-my-default-organization (valida server-side que o usuário é
+  // membro dela, Princípio 2). `retryUserProfile()` refaz o fetch de
+  // `user_profiles` pra refletir o novo `defaultOrganizationId` sem exigir
+  // reload da página.
+  const setCurrentOrganizationAsDefault = useCallback(async () => {
+    if (!organizationId) return;
+    setIsSettingDefaultOrganization(true);
+    try {
+      await callFunction("update-my-default-organization", { organizationId });
+      retryUserProfile();
+    } finally {
+      setIsSettingDefaultOrganization(false);
+    }
+  }, [organizationId, retryUserProfile]);
 
   // Abrir "Personalizado" pela primeira vez preenche os 2 campos com o
   // intervalo do preset ativo até então, em vez de começar vazio
@@ -100,6 +128,9 @@ export function IntelligenceCenterProvider({ children }: { children: React.React
     retryOrganizations,
     organizationId,
     setOrganizationId,
+    defaultOrganizationId,
+    isSettingDefaultOrganization,
+    setCurrentOrganizationAsDefault,
     periodMode,
     setPeriodMode,
     customRange,

@@ -3,7 +3,7 @@ tipo: feature-spec
 módulo: foundation
 funcionalidade: sync-brandwatch
 status: implementado
-atualizado: 2026-07-22
+atualizado: 2026-07-23
 ---
 
 # Sync Brandwatch
@@ -488,6 +488,35 @@ própria `platform_by_narrative` (passo 6.3c abaixo) — ver `data-model.md`
    `get_theme_breakdown` (aggregated-metrics) param de listá-la. Reaparece
    automaticamente como `active` se a Category voltar a existir num
    `rulecategories` futuro.
+   ✅ **Bug real corrigido (2026-07-23, pedido do usuário: "as categorias
+   não estão sendo colocadas como inativas quando não existem mais na
+   brandwatch")**: a lógica de desativação acima estava correta, mas este
+   passo (`runMetadataStep()`) só era disparado quando
+   `sync_cursors.next_step` chegava em `"metadata"` — a primeira fase de
+   `SYNC_STEPS`, reavaliada de novo só quando o ciclo inteiro de 16 fases
+   fecha e dá a volta (ver "Execução em fases" acima). Toda fase
+   "stale-gated" avança no máximo 1 categoryTarget/grupo por invocação, e
+   `daily_metrics` também pode se estender por várias invocações desde
+   2026-07-22 (burst de sentimento espalhado via `stayOnStep`) — pra uma
+   organização com Narrativas suficientes, um ciclo inteiro podia
+   facilmente levar bem mais que `BW_SYNC_INTERVAL_HOURS` (3h padrão) pra
+   fechar, e o throttle de 1h deste passo nunca tinha CHANCE de ser
+   reavaliado nesse meio tempo — uma Category removida na Brandwatch podia
+   ficar `active` no Supabase por um ciclo inteiro (potencialmente muito
+   mais que 1h). Corrigido: `runSyncInvocation()` agora chama
+   `needsMetadataRefresh()`/`refreshMetadata()` (que inclui a desativação)
+   **em toda invocação do par**, logo após resolver `organization_id` e
+   antes de `fetchNarrativeCategoryIds()` — independente de qual fase o
+   `next_step` do par esteja — guardado por `hasBrandwatchCallBudget()`
+   pra não competir com o orçamento da fase que de fato está na vez.
+   Barato quando não está devido (2 SELECTs); só gasta chamada de
+   Brandwatch quando o throttle de 1h realmente já passou. O passo
+   `"metadata"` continua existindo em `SYNC_STEPS` sem mudança (fica
+   redundante/no-op na maioria das vezes, mantido só por compatibilidade
+   com `next_step` já persistido). Ganhou também um log de sucesso —
+   `refreshMetadata:categories_deactivated` (`count`/`categoryIds`, via
+   `.select("id")` no `UPDATE`) — antes não havia nenhuma confirmação nos
+   logs de que a desativação de fato rodou ou quantas linhas afetou.
 5. Busca mentions daquele par — **sempre** com `startDate`/`endDate` (⚠️
    correção 2026-07-07, encontrado em teste real: a Brandwatch rejeita
    `/data/mentions` sem `startDate`, mesmo no polling, apesar do exemplo de
@@ -780,8 +809,13 @@ própria `platform_by_narrative` (passo 6.3c abaixo) — ver `data-model.md`
    **restrito a uma janela móvel de 30 dias** (`startDate = now() - 30d`) —
    diferente de todo o resto deste sync, que cobre o histórico completo
    desde `BRANDWATCH_MENTIONS_START_DATE`; aqui o propósito é só detecção
-   de curto prazo (`event-radar`) e Velocidade (`aggregated-metrics`), não
-   histórico/BI. 30 dias (não só 72h) porque cobre também a janela "Hora
+   de curto prazo (`event-radar`) e o grão `hour` do gráfico de tendência
+   (`get_volume_trend`, `aggregated-metrics`), não histórico/BI. ⚠️ Não é
+   mais usado por Tendência de Narrativa (`trend_score`, antes
+   "Velocidade"/`velocity_score`) — desde 2026-07-22 esse indicador usa a
+   série diária de `narrative_metrics`, não este grão horário, ver
+   `aggregated-metrics/sql-aggregation.md`, "Tendência". 30 dias (não só
+   72h) porque cobre também a janela "Hora
    atual vs. média das últimas 4 semanas" sem uma segunda chamada — ver
    `foundation/data-model.md`, `bw_query_metrics_hourly`, "Janela de
    captura". Roda em **toda** invocação (não é "stale-gated" — o oposto do

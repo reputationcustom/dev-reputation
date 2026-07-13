@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { ErrorMessage } from "@/components/ui/error-message";
+import { Toast } from "@/components/ui/toast";
 import { formatDateOnly } from "@/lib/date/format";
 import { PERIOD_MODE_OPTIONS, useIntelligenceCenterHeader } from "./header-context";
 
@@ -39,12 +40,37 @@ export function PageHeaderBar({ title, subtitle }: { title?: string; subtitle?: 
     retryOrganizations,
     organizationId,
     setOrganizationId,
+    defaultOrganizationId,
+    isSettingDefaultOrganization,
+    setCurrentOrganizationAsDefault,
     periodMode,
     setPeriodMode,
     customRange,
     setCustomRange,
   } = useIntelligenceCenterHeader();
   const [filtrosOpen, setFiltrosOpen] = useState(false);
+  const [toast, setToast] = useState<{ type: "success" | "error"; message: string } | null>(null);
+
+  useEffect(() => {
+    if (!toast) return;
+    const timer = setTimeout(() => setToast(null), 4000);
+    return () => clearTimeout(timer);
+  }, [toast]);
+
+  const isCurrentOrganizationDefault =
+    organizationId !== null && organizationId === defaultOrganizationId;
+
+  async function handleSetDefaultOrganization() {
+    try {
+      await setCurrentOrganizationAsDefault();
+      setToast({ type: "success", message: "Organização definida como padrão." });
+    } catch (err) {
+      setToast({
+        type: "error",
+        message: err instanceof Error ? err.message : "Não foi possível salvar. Tente novamente.",
+      });
+    }
+  }
 
   return (
     <div>
@@ -62,17 +88,41 @@ export function PageHeaderBar({ title, subtitle }: { title?: string; subtitle?: 
             )}
 
             {organizationsStatus === "loaded" && organizations.length > 1 && (
-              <select
-                value={organizationId ?? ""}
-                onChange={(event) => setOrganizationId(event.target.value)}
-                className="rounded-md border border-border-default px-3 py-2 text-sm text-text-primary outline-none focus:border-accent-blue"
-              >
-                {organizations.map((org) => (
-                  <option key={org.id} value={org.id}>
-                    {org.name}
-                  </option>
-                ))}
-              </select>
+              <div className="flex items-center gap-1">
+                <select
+                  value={organizationId ?? ""}
+                  onChange={(event) => setOrganizationId(event.target.value)}
+                  className="rounded-md border border-border-default px-3 py-2 text-sm text-text-primary outline-none focus:border-accent-blue"
+                >
+                  {organizations.map((org) => (
+                    <option key={org.id} value={org.id}>
+                      {org.name}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  onClick={handleSetDefaultOrganization}
+                  disabled={isCurrentOrganizationDefault || isSettingDefaultOrganization}
+                  aria-label={
+                    isCurrentOrganizationDefault
+                      ? "Esta é a sua organização padrão"
+                      : "Definir esta organização como padrão"
+                  }
+                  title={
+                    isCurrentOrganizationDefault
+                      ? "Esta é a sua organização padrão"
+                      : "Definir esta organização como padrão"
+                  }
+                  className={`rounded-md border border-border-default px-2 py-2 text-sm transition-colors ${
+                    isCurrentOrganizationDefault
+                      ? "cursor-default text-accent-blue"
+                      : "text-text-tertiary hover:bg-bg-page disabled:opacity-50"
+                  }`}
+                >
+                  {isSettingDefaultOrganization ? "…" : isCurrentOrganizationDefault ? "★" : "☆"}
+                </button>
+              </div>
             )}
 
             <div className="flex rounded-md border border-border-default p-0.5">
@@ -131,6 +181,8 @@ export function PageHeaderBar({ title, subtitle }: { title?: string; subtitle?: 
           {subtitle && <p className="mt-1 text-sm text-text-secondary">{subtitle}</p>}
         </div>
       )}
+
+      {toast && <Toast type={toast.type} message={toast.message} />}
     </div>
   );
 }

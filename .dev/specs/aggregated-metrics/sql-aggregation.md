@@ -3,7 +3,7 @@ tipo: feature-spec
 módulo: aggregated-metrics
 funcionalidade: sql-aggregation
 status: pronto
-atualizado: 2026-07-21
+atualizado: 2026-07-22
 ---
 
 # Camada SQL de Agregação
@@ -56,11 +56,11 @@ observado — **sem `query_id`** (revertido 2026-07-13, ver nota abaixo).
 | `get_metrics_cards(...)`                | `metrics`           | `bw_query_metrics_daily`/`weekly`/`monthly` com `category_id is null` (Query inteira): `total_mentions`, `net_sentiment` (score -100..100, média ponderada por `total_mentions`), `reach_estimate`, `engagement_score`, `unique_authors`. ⚠️ O card "Sentimento geral" no frontend **não** renderiza este `net_sentiment` — ver nota abaixo da tabela |
 | `get_sentiment_breakdown(...)`          | `breakdowns`        | `bw_query_metrics_daily`/`weekly`/`monthly` (campos `sentiment_positive/neutral/negative`) |
 | `get_platform_breakdown(...)`           | `breakdowns`        | `bw_query_metrics_daily_by_platform` (`category_id is null` para o total; `net_sentiment` quando o breakdown for de sentimento por plataforma — ver limitação de score único em `intelligence-center/sentiment-analysis.md`) |
-| `get_theme_breakdown(...)`              | `breakdowns`        | `narrative_metrics`/`narratives` filtrado a `bw_category_id` apontando para `bw_categories` raiz (`parent_id is null`) — mesma definição de "Pauta" já fechada em `intelligence-center/electoral-themes.md`, não uma segunda |
+| `get_theme_breakdown(...)`              | `breakdowns`        | `narrative_metrics`/`narratives` filtrado a `bw_category_id` apontando para uma **Subcategory da Category raiz "Pautas"** (`pautas_root_category_id()`, ✅ corrigido 2026-07-21 — antes era "qualquer `bw_categories` raiz", ver `intelligence-center/electoral-themes.md`) |
 | `get_narrative_sentiment_breakdown(...)` | `breakdowns` (type `'narrative'`) | ✅ **Adicionado 2026-07-17** — `narrative_metrics.sentiment_positive/neutral/negative`, filtrado a Narrativas-folha (`bw_categories.parent_id is not null`, `status = 'active'`). Diferente de `get_platform_breakdown`/`get_theme_breakdown` (que devolvem `net_sentiment`, um score único), esta function devolve o **split completo** (`positive`/`neutral`/`negative`, cada um já normalizado em % daquela Narrativa) — o dado já existia em `narrative_metrics` desde sempre, só faltava esta function/o bloco correspondente (gap real, achado numa auditoria pedida pelo usuário — "verifique como estão vindo os dados... sentimento por narrativa" — e fechado na mesma sessão, ver `_pending.md` #19 e `CLAUDE.md`) |
 | `get_volume_trend(...)`                 | `trends`             | `bw_query_metrics_hourly`/`daily`/`weekly`/`monthly`, reaproveitando a regra de granularidade automática já especificada em `foundation/overview.md` ("Tabela interativa de Narrativas"/gráfico de volume) — não redefinir aqui. ✅ **Grão `hour` adicionado (2026-07-19)** — período de exatamente 1 dia (modo "Diário" do header) usa `bw_query_metrics_hourly`; `bucket_date` é `text`, não `date` (só o grão `hour` precisa de instante com hora, ver migration `20260719000000`) |
-| `get_narratives_table(...)`             | `narratives`         | `reporting.narratives_overview`/`public.narratives_overview` (view já existente, ver `foundation/data-model.md`) pro dado bruto por dia (`sov_percent`, `net_sentiment`/`sentiment_bucket`, `total_mentions`, `reach_estimated`, `engagement_total`, `unique_authors`) — **mas** os 3 scores derivados e período-dependentes (`momentum_score`, `velocity_score`, `risk_score`) são calculados **nesta function**, não na view (a view não recebe `period_start`/`period_end`) — ver seção "Scores de Narrativa" abaixo |
-| `get_authors_ranking(...)`              | `authors`            | `bw_query_top_authors`/`bw_query_top_tweeters` (quando o escopo for X) — nativos da Brandwatch, não amostrados. `entity_id`/classificação por partido/espectro fica `null` até `entities` (Sprint 2) existir; quando existir, `LEFT JOIN entity_tags` via `entity_accounts.username = bw_query_top_authors.author` é enriquecimento aditivo, nunca pré-requisito do ranking. ✅ **Ganhou `sentiment_positive`/`neutral`/`negative` (2026-07-17)** — `LEFT JOIN` agregado sobre `bw_query_author_topics` (soma os 3 contadores entre todos os temas do autor na semana mais recente sincronizada para aquele autor), não sobre `bw_query_top_authors.sentiment_*`. ⚠️ **Achado na mesma auditoria**: `bw_query_top_authors.sentiment_positive/neutral/negative` (e o mesmo em `bw_query_top_tweeters`) é escrito por `bw-sync` desde a criação da tabela lendo `d.sentiment` da resposta de `data/volume/topauthors/queries`, mas — diferente de todo campo vizinho na mesma tabela (`tweets`/`retweets`/`account_type`/`country_code`, todos com nota "confirmado contra developers.brandwatch.com/docs/top-tweeters") — esse mapeamento **nunca foi confirmado** contra a documentação real do endpoint, que não cita um objeto `sentiment` no payload. Risco real de ser sempre `0/0/0` em produção sem nenhum erro (fallback `?? 0`). Decisão do usuário (2026-07-17): documentar o achado e usar `bw_query_author_topics` (fonte já confirmada, mesmo padrão do `impressions` por autor) em vez de gastar uma chamada nova pra confirmar/substituir o campo agora — ver `foundation/data-model.md`, "bw_query_top_authors". Limitação herdada: só os top 10 autores por volume da Query inteira têm `bw_query_author_topics` — os demais autores do ranking vêm com os 3 campos `null` (nunca `0/0/0`, que seria "sentimento neutro" inventado) |
+| `get_narratives_table(...)`             | `narratives`         | `reporting.narratives_overview`/`public.narratives_overview` (view já existente, ver `foundation/data-model.md`) pro dado bruto por dia (`sov_percent`, `net_sentiment`/`sentiment_bucket`, `total_mentions`, `reach_estimated`, `engagement_total`, `unique_authors`) — **mas** os 3 scores derivados (`momentum_score` período-dependente, `trend_score` sempre 14 dias fixos, `risk_score`) são calculados **nesta function**, não na view (a view não recebe `period_start`/`period_end`) — ver seção "Scores de Narrativa" abaixo |
+| `get_authors_ranking(...)`              | `authors`            | `bw_query_top_authors`/`bw_query_top_tweeters` (quando o escopo for X) — nativos da Brandwatch, não amostrados. `entity_id`/classificação por partido/espectro fica `null` até `entities` (Sprint 2) existir; quando existir, `LEFT JOIN entity_tags` via `entity_accounts.username = bw_query_top_authors.author` é enriquecimento aditivo, nunca pré-requisito do ranking. ✅ **Ganhou `sentiment_positive`/`neutral`/`negative` (2026-07-17)** — `LEFT JOIN` agregado sobre `bw_query_author_topics` (soma os 3 contadores entre todos os temas do autor na semana mais recente sincronizada para aquele autor), não sobre `bw_query_top_authors.sentiment_*`. ⚠️ **Achado na mesma auditoria**: `bw_query_top_authors.sentiment_positive/neutral/negative` (e o mesmo em `bw_query_top_tweeters`) é escrito por `bw-sync` desde a criação da tabela lendo `d.sentiment` da resposta de `data/volume/topauthors/queries`, mas — diferente de todo campo vizinho na mesma tabela (`tweets`/`retweets`/`account_type`/`country_code`, todos com nota "confirmado contra developers.brandwatch.com/docs/top-tweeters") — esse mapeamento **nunca foi confirmado** contra a documentação real do endpoint, que não cita um objeto `sentiment` no payload. Risco real de ser sempre `0/0/0` em produção sem nenhum erro (fallback `?? 0`). Decisão do usuário (2026-07-17): documentar o achado e usar `bw_query_author_topics` (fonte já confirmada, mesmo padrão do `impressions` por autor) em vez de gastar uma chamada nova pra confirmar/substituir o campo agora — ver `foundation/data-model.md`, "bw_query_top_authors". Limitação herdada: só os top 10 autores por volume da Query inteira têm `bw_query_author_topics` — os demais autores do ranking vêm com os 3 campos `null` (nunca `0/0/0`, que seria "sentimento neutro" inventado). ✅ **Ganhou `p_scope`/`narrative_labels` (2026-07-21)** — ver nota dedicada abaixo, "Regras de negócio" |
 | `get_dissemination_graph(narrative_id)` | `graph`              | `mentions` (`reply_to`/`retweet_of`/`insights_mentioned`), restrito às mentions retornadas por `narrative_matched_mentions(narrative_id)` — reusa a função canônica já definida em `foundation/data-model.md`, mesma abordagem já decidida em `intelligence-center/narratives-exploration.md` ("grafo de disseminação simplificado"), não uma tabela `grafo_arestas` nova |
 | `get_term_signals(...)`                 | `term_signals`       | `bw_query_topics` (`label`, `sentiment_positive/neutral/negative`, `trending`) — já carrega tema/sentimento/tendência, não precisa extrair termo de `mentions` |
 | `get_x_insights(...)`                   | `x_insights` (só `platforms`) | ✅ **Adicionado 2026-07-18** — `bw_query_x_insights` (`insight_type`: `hashtag`/`emoticon`/`url`/`mentioned_author`), até 10 itens por tipo, ordenados por `volume` desc, da semana mais recente sincronizada por tipo. Fecha um gap real: o dado já era capturado desde `foundation` (2026-07-11), mas nenhuma function/bloco o expunha — era só uma "oportunidade futura" registrada em `intelligence-center/platform-analysis.md` (2026-07-13), nunca implementada até esta auditoria. É o dado por trás de "Top Hashtags"/"Most Mentioned X Posters"/"Top Stories"/"Top Emojis" (dashboard nativo "X Themes" da Brandwatch) |
@@ -147,7 +147,7 @@ observado — **sem `query_id`** (revertido 2026-07-13, ver nota abaixo).
 > Conferido também aritmeticamente contra um export real do usuário (ex:
 > `#flaviobolsonaropresidente2026`: Posts 10 + Reposts 402 ≈ All Posts 413).
 
-## Scores de Narrativa: Sentimento, Momentum, Velocidade e Risco
+## Scores de Narrativa: Sentimento, Momentum, Tendência e Risco
 
 > ✅ Especificado 2026-07-13, a pedido do usuário, substituindo os 2
 > ⚠️ DECISÃO PENDENTE que existiam pra Sentimento/Momentum em
@@ -159,6 +159,18 @@ observado — **sem `query_id`** (revertido 2026-07-13, ver nota abaixo).
 > `narratives-exploration.md`, `electoral-themes.md`, todas via este mesmo
 > envelope) — nenhuma delas recalcula nada, só renderiza o que o bloco
 > `narratives` do envelope já traz prontinho (banda + cor + valor).
+>
+> ✅ **Velocidade → Tendência (2026-07-22, migration `20260722010000`)** —
+> pedido do usuário: "Vamos retirar a opção de velocidade em narrativas e
+> substituir por tendência, em que, baseado nos valores é calculada uma
+> tendência estatística da narrativa, se ela tende a diminuir ou a
+> aumentar. Dessa maneira os indicadores se mantém como risk_score e
+> momentum." Momentum e Risco continuam existindo como indicadores, sem
+> mudança de forma — só o quarto score (antes "Velocidade") muda de nome e
+> de método, ver "Tendência" abaixo. Todo texto desta seção foi atualizado
+> para refletir o estado atual; a subseção antiga "Velocidade" fica
+> preservada logo abaixo, marcada como histórico, para quem precisar
+> entender a mudança.
 
 ### Sentimento (já um score, não precisa de cálculo aqui)
 
@@ -170,12 +182,11 @@ já é um score, não uma contagem). Banda (7 faixas) e cor ficam em
 `intelligence-center/executive-overview.md`/`_design-tokens.md` — este
 módulo não decide cor, só entrega o número.
 
-### Função auxiliar `norm_growth` (reusada por Momentum e Velocidade)
+### Função auxiliar `norm_growth` (usada por Momentum; mesma lógica de
+### normalização reaplicada manualmente por Tendência, ver abaixo)
 
 Normaliza uma taxa de crescimento (ilimitada) pra uma escala fixa de 0 a
-100, centrada em 50 (crescimento zero = score 50; a mesma fórmula serve
-tanto pra Momentum quanto pra Velocidade, só muda o que entra como
-`current`/`previous`):
+100, centrada em 50 (crescimento zero = score 50):
 
 ```sql
 create or replace function norm_growth(current_value numeric, previous_value numeric)
@@ -224,7 +235,47 @@ ver `foundation/data-model.md`) — nenhuma chamada nova à Brandwatch.
 | 60–79 | Alto |
 | 80–100 | Explosivo |
 
-### Velocidade (0-100 + rótulo/seta) — taxa de crescimento recente, distinta de Momentum
+### Tendência (0-100 + rótulo/seta) — tendência estatística, distinta de Momentum
+
+> ✅ **Substitui "Velocidade" (2026-07-22, migration `20260722010000`)** —
+> pedido do usuário: "Vamos retirar a opção de velocidade em narrativas e
+> substituir por tendência, em que, baseado nos valores é calculada uma
+> tendência estatística da narrativa, se ela tende a diminuir ou a
+> aumentar." Diferença de desenho, não só de nome: Velocidade comparava 2
+> pontos fixos (soma das últimas 3h vs. as 3h imediatamente anteriores) —
+> um snapshot curtíssimo, sensível a ruído pontual. Tendência usa uma
+> regressão linear de verdade (agregado padrão SQL `regr_slope`) sobre a
+> série diária de `narrative_metrics.total_mentions` dos últimos 14 dias —
+> "baseado nos valores" no sentido literal do pedido (múltiplos pontos, não
+> 2), classificada em 3 estados (não mais os 5 rótulos de Velocidade).
+
+Como Momentum (mas por um motivo diferente — não é o período escolhido na
+tela, é uma janela fixa maior o bastante pra sustentar uma regressão),
+Tendência é **independente do filtro de período** — mede se a narrativa
+tende a crescer ou encolher nas últimas ~2 semanas, não no período que o
+usuário escolheu olhar:
+
+```sql
+-- regressão linear (total_mentions diário x dia) dos últimos 14 dias de
+-- narrative_metrics; variação total estimada no período (slope * n)
+-- normalizada pela própria média do período, clampada em ±100% —
+-- mesma convenção de norm_growth (50 = estável), só que aplicada a um
+-- coeficiente de regressão em vez de um par current/previous
+trend_score = 50 + clamp((slope_per_day * n_points) / avg_mentions, -1, 1) * 50
+```
+
+Exige pelo menos 4 dias de histórico na Narrativa (`n_points >= 4`) — sem
+isso, `trend_score`/`trend_label` ficam `null` ("sem histórico suficiente
+para uma tendência estatística", não um valor inventado).
+
+| Faixa | Rótulo |
+|---|---|
+| 0–39 | ↓ Tendência de queda |
+| 40–59 | → Estável |
+| 60–100 | ↑ Tendência de alta |
+
+<details>
+<summary>Histórico — "Velocidade" (fórmula usada de 2026-07-13 até 2026-07-22)</summary>
 
 > Recomendação do usuário (2026-07-13): "separar Momentum de Velocidade —
 > Momentum deveria representar a força da narrativa... Velocidade
@@ -232,9 +283,9 @@ ver `foundation/data-model.md`) — nenhuma chamada nova à Brandwatch.
 > com alto Momentum mas baixa Velocidade (já estabilizou) ser confundida
 > com uma de baixo Momentum mas alta Velocidade (tendência emergente)."
 
-Diferente de Momentum (período selecionado na tela), Velocidade é sempre
-**curto prazo e independente do filtro de período** — mede se a narrativa
-está esquentando ou esfriando *agora*, não no período que o usuário
+Diferente de Momentum (período selecionado na tela), Velocidade era sempre
+**curto prazo e independente do filtro de período** — media se a narrativa
+estava esquentando ou esfriando *agora*, não no período que o usuário
 escolheu olhar:
 
 ```sql
@@ -242,14 +293,6 @@ escolheu olhar:
 -- de bw_query_metrics_hourly (grão horário, ver foundation/data-model.md)
 velocity_score = norm_growth(total_mentions_last_3h, total_mentions_previous_3h)
 ```
-
-✅ **Resolvido (2026-07-13)** — usa grão **horário** de verdade
-(`bw_query_metrics_hourly`, mesma janela "Últimas 3h vs. 3h anteriores" já
-definida em `event-radar/detection-engine.md`, não reimplementada aqui, só
-reaproveitada). Antes desta revisão usava fallback diário (último dia vs.
-anterior) por falta de grão horário oficial — resolvido junto com o mesmo
-gap de `detection-engine.md`, ver `foundation/data-model.md`,
-`bw_query_metrics_hourly`.
 
 | Faixa | Rótulo |
 |---|---|
@@ -259,12 +302,19 @@ gap de `detection-engine.md`, ver `foundation/data-model.md`,
 | 60–79 | ↑ Crescendo |
 | 80–100 | ↗ Viralizando |
 
+Substituída em 2026-07-22 pela Tendência acima — ver justificativa
+completa lá.
+
+</details>
+
 ### Risco (0-100) — prioridade operacional
 
 "Prioridade operacional calculada pela combinação de Sentimento, Momentum,
 Velocidade, alcance, influência dos autores e impacto potencial" (definição
-do usuário). Composto, sem chamada nova à Brandwatch — reusa Momentum e
-Velocidade já calculados acima, mais 3 componentes normalizados para 0-100:
+original do usuário, 2026-07-13 — a fórmula não mudou quando Velocidade
+virou Tendência, só a fonte de um dos termos, ver nota abaixo). Composto,
+sem chamada nova à Brandwatch — reusa Momentum e Tendência já calculados
+acima, mais 3 componentes normalizados para 0-100:
 
 ```sql
 -- sentiment_risk: inverte net_sentiment (-100..100) pra uma escala de risco (0..100)
@@ -282,12 +332,24 @@ author_influence = count(*) filter (where is_influential) * 100.0 / nullif(count
 risk_score = round(
   0.25 * sentiment_risk +
   0.25 * momentum_score +
-  0.20 * velocity_score +
+  0.20 * trend_score +
   0.15 * reach_risk +
   0.10 * author_influence +
   0.05 * impact_risk
 )
 ```
+
+> ✅ **Nota sobre a troca Velocidade→Tendência (2026-07-13)**: o pedido do
+> usuário foi explícito que Risco e Momentum "se mantém" como indicadores
+> — não foi dito o que fazer com o termo de 20% que `risk_score` sempre
+> leu de `velocity_score`. Decisão tomada (a leitura mais conservadora,
+> registrada aqui por não ter sido abordada diretamente no pedido): manter
+> a forma/pesos da fórmula intactos, só trocando a fonte desse termo de
+> `velocity_score` pra `trend_score` (mesma escala 0-100, mesmo 50=neutro)
+> — `risk_score` continua sendo "Sentimento + Momentum + crescimento
+> recente + alcance + influência + impacto", só que o sinal de
+> "crescimento recente" agora vem de uma regressão de 14 dias em vez de um
+> snapshot de 3h.
 
 | Faixa | Situação | Cor |
 |---:|---|---|
@@ -297,11 +359,11 @@ risk_score = round(
 | 85–100 | Crítico | 🔴 vermelho |
 
 ⚠️ **DECISÃO PENDENTE**: a fórmula acima é uma soma ponderada simples —
-uma Narrativa com Momentum/Velocidade altos **e sentimento positivo**
+uma Narrativa com Momentum/Tendência altos **e sentimento positivo**
 (ex: um vídeo institucional viralizando de forma elogiosa) ainda soma
-pontos de risco pelos fatores de Momentum/Velocidade, mesmo não sendo
+pontos de risco pelos fatores de Momentum/Tendência, mesmo não sendo
 uma ameaça. Recomendação registrada, não implementada nesta versão: um
-termo de interação que amorteça a contribuição de Momentum/Velocidade
+termo de interação que amorteça a contribuição de Momentum/Tendência
 quando `sentiment_risk` for baixo (sentimento muito positivo). Fica como
 v1 simples (soma ponderada) até o produto confirmar se esse refinamento é
 necessário — não travar a implementação por causa disso.
@@ -311,13 +373,13 @@ necessário — não travar a implementação por causa disso.
   da tabela mostra por padrão — vira um override manual opcional que uma
   spec futura pode expor (ex: "marcar risco manualmente", sobrepondo o
   score calculado). Não removido, só não é mais a fonte primária da UI.
-- Nenhum dos 4 scores (Sentimento/Momentum/Velocidade/Risco) é
+- Nenhum dos 4 scores (Sentimento/Momentum/Tendência/Risco) é
   armazenado — todos calculados sob demanda dentro de
   `get_narratives_table`, mesmo padrão de `sov_percent`/`trend_percent` já
   existentes na view.
 - `event-radar` (quando existir, Sprint 3): `severity_score` de um evento
   ativo para a Narrativa é conceitualmente próximo de `risk_score` (pesos
-  parecidos — volume/sentimento/velocidade/alcance/autores), mas **não**
+  parecidos — volume/sentimento/tendência/alcance/autores), mas **não**
   os funde num só número — ver
   [../event-radar/severity.md](../event-radar/severity.md), "Relação com
   `risk_score`".
@@ -385,8 +447,8 @@ usuário ("variação entre vermelho, verde ou neutro").
   client que a Edge Function usa é autenticado como o usuário real, não a chave secreta — ver
   [edge-functions-per-page.md](edge-functions-per-page.md), "Autenticação do client Supabase".
 - `get_narratives_table`/`get_theme_breakdown` aceitam um filtro opcional de `pauta_id`
-  (= `narratives.id` de uma Narrativa de topo), para serem reaproveitadas tanto na página
-  Narrativas quanto no bloco "narrativas dentro da pauta" em Pautas Eleitorais.
+  (= `narratives.id` de uma Narrativa), herdado do modelo original desta spec — hoje sem
+  consumidor real (ver nota de escopo abaixo: uma pauta é sempre folha, sem filhas pra abrir).
 - ✅ **`get_narratives_table` ganhou `p_scope` (2026-07-16, migration `20260716010000`)**:
   `'roots'` (só Narrativas cuja Category é de topo) | `'leaves'` (só Narrativas-filhas/Subcategory)
   | `null` (sem restrição). Só tem efeito quando `p_pauta_id` está ausente — com
@@ -394,14 +456,40 @@ usuário ("variação entre vermelho, verde ou neutro").
   continua tendo prioridade. Ambas as functions também passaram a
   exigir `bw_categories.status = 'active'` — Narrativas cuja Category saiu do Brandwatch (ver
   `foundation/data-model.md`, "bw_categories.status") somem da listagem por padrão.
-  ✅ **Revisto (2026-07-20)**, pedido do usuário ("tanto na página de overview quanto na lista
-  de narrativas serão mostradas todas as narrativas"): Overview e a aba Narrativas passaram a usar
-  `p_scope => null` (era `'roots'`/`'leaves'` respectivamente desde 2026-07-16) — viabilizado pela
-  troca simultânea do título da Narrativa pra `"Categoria - Subcategoria"` (ver
-  `foundation/narratives.md`), que desambigua uma Subcategory mesmo listada ao lado de outras
-  Pautas na mesma tabela plana. Pautas Eleitorais (sem Pauta aberta) e Plataformas continuam em
-  `'leaves'`; Relatórios continua em `'roots'` — não fizeram parte deste pedido. Ver
-  `service-layer-aggregation.md`'s `narrativesScopeForPage()`.
+  ✅ **Revisto (2026-07-20), depois revertido no dia seguinte (2026-07-21)**: 2026-07-20 tinha
+  feito Overview/Narrativas usarem `p_scope => null` (Category+Subcategory juntas, viabilizado
+  por um título composto "Categoria - Subcategoria"). Pedido do usuário 2026-07-21: "Para
+  facilitar vamos considerar apenas as subcategorias em todas as narrativas. Retire a regra de
+  'categoria - subcategoria'." Estado atual (`narrativesScopeForPage()`, `service-layer-aggregation.md`):
+  **toda** página usa `'leaves'` (só Subcategory, nunca a Category raiz junto na mesma lista) —
+  Overview, Narrativas, Plataformas e Relatórios; `themes` (Pautas Eleitorais) usa um terceiro
+  valor, `'pautas'` — só Subcategories cuja Category-pai é especificamente a Category raiz
+  chamada "Pautas" (`pautas_root_category_id()`, migration `20260721030000`), não qualquer
+  Category raiz do Project. `'roots'` e `null` deixaram de ter qualquer chamador — mantidos na
+  function só por retrocompatibilidade de assinatura, sem uso ativo.
+- ✅ **`pautas_root_category_id(organization_id)` (2026-07-21, migration `20260721030000`)**:
+  resolve o `id` da Category raiz da organização nomeada literalmente "Pautas"
+  (`bw_categories.parent_id is null`, `lower(btrim(name)) = 'pautas'`, `status = 'active'`) —
+  convenção de nome, mesmo padrão já usado no projeto pra vincular `narratives.title` a uma
+  Category (`brandwatch-setup.md` §5), não uma coluna/flag dedicada. Retorna `null` se a
+  organização ainda não tem essa Category configurada — toda function consumidora (abaixo) trata
+  isso como "sem pautas", nunca como erro. Usada por `get_theme_breakdown`,
+  `get_narratives_table(p_scope => 'pautas')` e `get_authors_ranking(p_scope => 'pautas')`.
+- ✅ **`get_authors_ranking` ganhou `p_scope` (2026-07-21, migration `20260721030000`)**: mesmo
+  valor `'pautas'` de `get_narratives_table`, pedido do usuário ("em Autores e comunidades por
+  pauta deve aparecer apenas os autores que citaram algo relacionado às Pautas e deve ser
+  informado a que pauta ele está associado, e poderá ser mais de uma"). Quando setado, escopa
+  `bw_query_top_authors`/`bw_query_top_tweeters` às Subcategories de "Pautas" (em vez da Query
+  inteira/1 Narrativa via `filters.narratives`) e agrupa o resultado por autor — um autor pode
+  aparecer sob mais de uma pauta, então a function soma reach/engajamento entre as pautas em que
+  ele tem atividade (⚠️ pode inflar levemente se uma mesma mention estiver categorizada em mais de
+  uma pauta simultaneamente na Brandwatch — mesmo trade-off já aceito em toda soma sobre
+  agregados por-Category deste projeto) e devolve a nova coluna `narrative_labels text[]`: os
+  títulos de todas as pautas em que aquele autor apareceu no escopo pedido, sempre array (nunca
+  `null`). Fora do escopo `'pautas'`, o agrupamento por autor é inofensivo (só 1 Category pode
+  bater por vez hoje: Query inteira ou 1 Narrativa via `filters.narratives`) — nenhuma outra
+  página muda de comportamento, só passa a receber `narrative_labels` preenchido honestamente em
+  vez de nunca ter essa informação.
 - `get_dissemination_graph` é a única function que recebe um `narrative_id` obrigatório em vez
   de `filters` — ela nunca deve ser chamada para múltiplas narrativas ao mesmo tempo (grafo é
   sempre por narrativa individual, para não gerar payload gigante).
@@ -413,7 +501,9 @@ usuário ("variação entre vermelho, verde ou neutro").
 ## Dados envolvidos
 
 - **Lê**: `bw_query_metrics_daily`/`weekly`/`monthly`/`hourly` (este último só pro
-  `velocity_score` de `get_narratives_table`), `bw_query_metrics_daily_by_platform`,
+  grão `hour` de `get_volume_trend` — `get_narratives_table.trend_score` usa a
+  série diária de `narrative_metrics`, não o grão horário, ver "Tendência"
+  acima), `bw_query_metrics_daily_by_platform`,
   `bw_query_topics`, `bw_query_top_authors` (ranking de autores e, via `is_influential`, o
   componente `author_influence` de `risk_score`), `bw_query_top_tweeters`, `narratives`,
   `narrative_metrics`, `bw_categories`, `feed_events`; `mentions` só por-linha, nunca agregada

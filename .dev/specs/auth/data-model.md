@@ -2,7 +2,7 @@
 tipo: data-model
 módulo: auth
 status: implementado
-atualizado: 2026-07-13
+atualizado: 2026-07-22
 ---
 
 # Modelo de Dados — Autenticação e Administração de Usuários
@@ -37,7 +37,8 @@ esta tabela, não `auth.users` direto.
 | `full_name`   | `text`         | não         | Nome de exibição; `null` até o usuário (ou o admin, ao convidar) preencher |
 | `is_admin`    | `boolean`      | sim         | Default `false`. Concede acesso a `/admin/users` e às Edge Functions administrativas |
 | `is_principal`| `boolean`      | sim         | Default `false`. No máximo um punhado de linhas terá `true` (MVP: exatamente uma, ver seed abaixo) — marca a conta que **nunca** pode ser excluída nem perder `is_admin`, ver trigger abaixo |
-| `timezone`    | `text`         | sim         | ✅ **Adicionado 2026-07-13** (migration `20260713060000`, regra global "Fuso horário do usuário" em CLAUDE.md). Nome IANA, default `America/Sao_Paulo`. Só controla exibição no frontend — nenhuma data é armazenada em fuso local em nenhuma tabela do produto. Editável pelo próprio usuário em `/perfil`, via a Edge Function `update-my-timezone` (única escrita self-service em `user_profiles` — todas as outras são administrativas, ver `user-management.md`) |
+| `timezone`    | `text`         | sim         | ✅ **Adicionado 2026-07-13** (migration `20260713060000`, regra global "Fuso horário do usuário" em CLAUDE.md). Nome IANA, default `America/Sao_Paulo`. Só controla exibição no frontend — nenhuma data é armazenada em fuso local em nenhuma tabela do produto. Editável pelo próprio usuário em `/perfil`, via a Edge Function `update-my-timezone` (segunda escrita self-service em `user_profiles`, ver `default_organization_id` abaixo — todas as outras são administrativas, ver `user-management.md`) |
+| `default_organization_id` | `uuid` | não | ✅ **Adicionado 2026-07-22** (migration `20260722000000`, pedido do usuário: "Permitir o usuário a escolher qual organização é a default"). FK `references organizations(id) on delete set null` — `null` até o usuário escolher explicitamente (o frontend cai de volta pra primeira organização do usuário enquanto for `null`). Editável pelo próprio usuário no seletor de organização do header (`components/intelligence-center/page-header-bar.tsx`), via a Edge Function `update-my-default-organization` (terceira escrita self-service em `user_profiles`) — valida server-side que o usuário é de fato membro da organização enviada (`organization_members`) antes de gravar, nunca confia na lista já filtrada por RLS que o cliente devolve (Princípio técnico 2) |
 | `created_at`  | `timestamptz`  | sim         | `now()`                                                            |
 | `updated_at`  | `timestamptz`  | sim         | Atualizado via trigger `set_updated_at` (já definida em `foundation`) |
 
@@ -122,7 +123,7 @@ $$;
 | SELECT    | o próprio usuário                    | `id = auth.uid()`                                       |
 | SELECT    | qualquer admin                       | `is_current_user_admin()` — necessário pra popular a tabela de `/admin/users` |
 | INSERT    | ninguém via client                   | sem policy — só a Edge Function `admin-invite-user` (via `SUPABASE_SECRET_KEY`, bypassa RLS) cria linhas |
-| UPDATE    | ninguém via client                   | sem policy — só Edge Functions escrevem (via `SUPABASE_SECRET_KEY`, bypassa RLS), sempre passando pelo trigger `protect_principal_account_trigger`: `admin-set-user-role` (administrativa, qualquer linha) e ✅ `update-my-timezone` (adicionada 2026-07-13, self-service — só a própria linha, `id = auth.getUser(token).id`, nunca um `user_id` recebido no body) |
+| UPDATE    | ninguém via client                   | sem policy — só Edge Functions escrevem (via `SUPABASE_SECRET_KEY`, bypassa RLS), sempre passando pelo trigger `protect_principal_account_trigger`: `admin-set-user-role` (administrativa, qualquer linha), ✅ `update-my-timezone` (adicionada 2026-07-13, self-service — só a própria linha, `id = auth.getUser(token).id`, nunca um `user_id` recebido no body) e ✅ `update-my-default-organization` (adicionada 2026-07-22, mesmo padrão self-service, mais uma validação extra de pertencimento a `organization_members` antes de gravar) |
 | DELETE    | ninguém via client                   | sem policy — exclusão de usuário é uma operação de Admin API (`auth.admin.deleteUser`), nunca um `DELETE` direto na tabela |
 
 > Nenhuma policy de INSERT/UPDATE/DELETE para o client é proposital, não

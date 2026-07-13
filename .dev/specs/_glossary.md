@@ -1,6 +1,6 @@
 ﻿---
 tipo: glossary
-atualizado: 2026-07-06
+atualizado: 2026-07-22
 ---
 
 # Glossário de Domínio
@@ -26,11 +26,18 @@ exatos em variáveis, componentes, tabelas e comentários.
   `app_metadata.organization_id` do JWT.
 - **Tabela no banco**: `organization_members`
 - **Spec de dados**: [foundation/data-model.md](foundation/data-model.md)
-- **Nota de escopo**: ✅ **atualizada 2026-07-13** — convite de usuário e
-  associação a organizações passam a ter tela própria (admin-only), ver
-  [auth/user-management.md](auth/user-management.md). Ainda **não** existe
-  criação de organização nem troca de organização ativa pela UI — isso
-  continua fora do MVP.
+- **Nota de escopo**: ✅ **atualizada 2026-07-22** — convite de usuário e
+  associação a organizações têm tela própria (admin-only), ver
+  [auth/user-management.md](auth/user-management.md). Troca de organização
+  ativa **existe** pela UI desde o Sprint 2 (seletor no header,
+  `intelligence-center/executive-overview.md`, "Header") — o texto anterior
+  desta nota ("continua fora do MVP") ficou desatualizado assim que esse
+  seletor foi implementado e não foi corrigido até agora. Persistir qual
+  organização é a **padrão** do usuário (reaberta ao carregar a aplicação,
+  não só durante a sessão) também existe desde 2026-07-22 —
+  `user_profiles.default_organization_id`, ver
+  [auth/data-model.md](auth/data-model.md). Ainda **não** existe criação de
+  organização pela UI — isso continua fora do MVP.
 
 ### User Profile
 - **Definição**: Perfil de aplicação 1:1 com `auth.users` (Supabase Auth) —
@@ -230,8 +237,8 @@ exatos em variáveis, componentes, tabelas e comentários.
 |-----------------------|----------------------------------------------------------------------------|
 | Sentiment             | Classificação `positive`/`negative`/`neutral` de uma Mention (Brandwatch). Distinto de `net_sentiment` (score -100 a 100 da Narrativa/Query, ver abaixo). |
 | Net Sentiment (`net_sentiment`) | Score de sentimento líquido -100 a 100, agregado oficial da Brandwatch (`data/netSentiment/...`) — não é um cálculo local. 7 faixas (muito positivo → muito negativo), ver `aggregated-metrics/sql-aggregation.md` "Scores de Narrativa" e `_design-tokens.md`. |
-| Momentum / Velocidade (`momentum_score`/`velocity_score`) | Scores 0-100 calculados por `get_narratives_table()` (`aggregated-metrics/sql-aggregation.md`) — Momentum = força/relevância atual (volume+engajamento+autores+alcance, período selecionado); Velocidade = taxa de crescimento recente (curto prazo, independente do período selecionado). Indicadores distintos por pedido explícito do usuário (2026-07-13) — não confundir um pelo outro. |
-| Risco por Narrativa (`risk_score`) | Score 0-100 de prioridade operacional (`get_narratives_table()`), combina Sentimento/Momentum/Velocidade/alcance/influência de autores/impacto — ver `aggregated-metrics/sql-aggregation.md`. **Não** é o "Reputation Score composto" descartado em `_index.md` ("Fora de escopo do MVP") — aquele era um score de reputação agregado por candidato/Entity ao longo de todas as Narrativas, ainda fora de escopo; `risk_score` é por Narrativa individual, para triagem operacional (ordenar a tabela por prioridade), escopo bem mais restrito. `narratives.risk_level` (enum `low`/`medium`/`high`/`critical`) continua no schema como override manual opcional, não é mais o que a UI mostra por padrão. |
+| Momentum / Tendência (`momentum_score`/`trend_score`) | Scores 0-100 calculados por `get_narratives_table()` (`aggregated-metrics/sql-aggregation.md`) — Momentum = força/relevância atual (volume+engajamento+autores+alcance, período selecionado); Tendência = tendência estatística de crescimento/queda (regressão linear sobre 14 dias, independente do período selecionado). Indicadores distintos por pedido explícito do usuário (2026-07-13). ✅ **Tendência substitui Velocidade (2026-07-22)** — mesmo pedido do usuário, mesma distinção de Momentum, só troca o método (regressão sobre 14 dias em vez de snapshot 3h-vs-3h) e o nome (`trend_score`/`trend_label`, não mais `velocity_score`/`velocity_label`) — não confundir um pelo outro. |
+| Risco por Narrativa (`risk_score`) | Score 0-100 de prioridade operacional (`get_narratives_table()`), combina Sentimento/Momentum/Tendência/alcance/influência de autores/impacto — ver `aggregated-metrics/sql-aggregation.md`. **Não** é o "Reputation Score composto" descartado em `_index.md` ("Fora de escopo do MVP") — aquele era um score de reputação agregado por candidato/Entity ao longo de todas as Narrativas, ainda fora de escopo; `risk_score` é por Narrativa individual, para triagem operacional (ordenar a tabela por prioridade), escopo bem mais restrito. `narratives.risk_level` (enum `low`/`medium`/`high`/`critical`) continua no schema como override manual opcional, não é mais o que a UI mostra por padrão. |
 | Share of Voice (Query Group) | Comparação de volume entre Queries de um Query Group (ex: candidato vs. concorrentes) — vem direto da Brandwatch (`data/volume/queries/weeks?queryGroupId=...`), incl. `reach_estimate` desde 2026-07-11. |
 | Share of Voice (Narrativa) | Menções da Narrativa ÷ total de menções de **todas as Narrativas da mesma Query** (candidato/monitoramento) no mesmo período — ex: 200 mil menções totais, Saúde 40%/Educação 22%/Segurança 18%/Economia 12%/Mobilidade 8%. ⚠️ **Corrigido 2026-07-11** (bug real: agrupava por `organization_id` inteira, misturando Narrativas de candidatos/Queries diferentes quando o Project tem mais de uma Query) — agora agrupado por `query_id` via `narrative_metrics.query_id`. **Não** é a mesma coisa que o Share of Voice de Query Group acima; ver [foundation/data-model.md](foundation/data-model.md) "Camada de reporting". |
 | Share of Voice (plataforma) | Participação de uma Narrativa dentro de uma plataforma específica, ou mix de plataformas dentro de uma Narrativa — via `bw_query_metrics_daily_by_platform.category_id` (adicionado 2026-07-11). |

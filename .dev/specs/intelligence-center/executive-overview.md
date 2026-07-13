@@ -3,7 +3,7 @@ tipo: feature-spec
 módulo: intelligence-center
 funcionalidade: executive-overview
 status: implementado
-atualizado: 2026-07-21
+atualizado: 2026-07-22
 ---
 
 # Executive Overview
@@ -196,25 +196,25 @@ Qualquer usuário autenticado, membro de ao menos uma organização (ver
      2026-07-11, ver `foundation/data-model.md`, "Camada de reporting")
      — o usuário só vê "as narrativas da minha organização", sem
      perceber que o SOV de cada uma é calculado dentro do universo da sua
-     própria Query. ✅ **Revertido (2026-07-20)**, pedido do usuário: "tanto
-     na página de overview quanto na lista de narrativas serão mostradas
-     todas as narrativas" — esta tabela volta a mostrar **todas** as
-     Narrativas (Category de topo e Subcategory juntas), substituindo a
-     decisão de 2026-07-16 abaixo. Viabilizado pela troca simultânea do
-     título da Narrativa pra `"Categoria - Subcategoria"` (ver
-     `foundation/narratives.md`), que desambigua uma Subcategory mesmo
-     listada ao lado de outras Pautas na mesma tabela. Implementado via
-     `get_narratives_table(p_scope => null)`, ver
-     `aggregated-metrics/sql-aggregation.md`. Categories/Subcategories com
+     própria Query. ✅ **Simplificado (2026-07-21)**, pedido do usuário:
+     "Para facilitar vamos considerar apenas as subcategorias em todas as
+     narrativas. Retire a regra de 'categoria - subcategoria'." — esta
+     tabela mostra só as Narrativas-folha (Subcategory), nunca a Category
+     raiz junto — `get_narratives_table(p_scope => 'leaves')`, ver
+     `aggregated-metrics/sql-aggregation.md`. Título de volta a ser só o
+     nome da própria Subcategory (sem prefixo). Categories/Subcategories com
      `status = 'inactive'` (removidas da Brandwatch, ver
      `foundation/data-model.md`) continuam nunca aparecendo aqui.
-     > Histórico (2026-07-16, não mais em vigor nesta página): quando uma
-     > Category tinha Subcategories (a maioria — Brandwatch exige ≥1
-     > Subcategory por Category, ver `brandwatch-setup.md` §5), esta tabela
-     > mostrava só a Category de topo (`p_scope => 'roots'`), pra evitar
-     > listar Pauta + suas Narrativas-filhas juntas — a mesma preocupação
-     > que motivou isso é resolvida agora pelo título composto em vez de
-     > por filtro de granularidade.
+     > Histórico (2026-07-20, revertido no dia seguinte): "tanto na página
+     > de overview quanto na lista de narrativas serão mostradas todas as
+     > narrativas" — passou a mostrar Category de topo e Subcategory juntas
+     > (`p_scope => null`), viabilizado por um título composto "Categoria -
+     > Subcategoria" pra desambiguar. Histórico (2026-07-16, mesmo
+     > comportamento do estado atual): quando uma Category tinha
+     > Subcategories (a maioria — Brandwatch exige ≥1 Subcategory por
+     > Category, ver `brandwatch-setup.md` §5), esta tabela mostrava só a
+     > Category de topo (`p_scope => 'roots'`) — inversão completa do que
+     > está em vigor hoje (agora é sempre `'leaves'`).
 5. Usuário pode clicar "Ver" numa linha da tabela de Narrativas → navega
    para o detalhe (`/narratives/[id]`, ver
    [narratives-exploration.md](narratives-exploration.md)).
@@ -309,6 +309,21 @@ Qualquer usuário autenticado, membro de ao menos uma organização (ver
   `intelligence-center` (ver [overview.md](overview.md)), especificado uma
   vez aqui, não redescrito por página.
 
+  ✅ **Organização padrão (2026-07-22)** — pedido do usuário: "Permitir o
+  usuário a escolher qual organização é a default. Ele poderá alterar no
+  menu de seleção da organização". O seletor de organização (só visível com
+  >1 organização) ganhou um botão estrela ao lado (`☆`/`★`) — clicar grava
+  a organização atualmente ativa como padrão do usuário
+  (`user_profiles.default_organization_id`, ver
+  [../auth/data-model.md](../auth/data-model.md)), via a Edge Function
+  `update-my-default-organization`; desabilitado + "…" enquanto a chamada
+  está em voo (regra transversal de UX "botão com spinner"), toast de
+  sucesso/erro ao terminar. Ao carregar a aplicação, o header
+  (`header-context.tsx`) agora prefere a organização marcada como padrão
+  (se o usuário ainda for membro dela) antes de cair de volta para a
+  primeira organização retornada — antes desta mudança não havia
+  persistência nenhuma da organização ativa entre recarregamentos.
+
   ✅ **Seletor de período reformulado (2026-07-15, substitui "7/14/30
   dias")** — pedido do usuário a partir do protótipo real (4 botões
   "Diário/Semanal/Mensal/Personalizado" + um indicador de intervalo tipo
@@ -373,7 +388,7 @@ Qualquer usuário autenticado, membro de ao menos uma organização (ver
   duplicado — os 4 campos brutos (`sov_percent`, `net_sentiment`,
   `total_mentions` etc.) vêm de `reporting.narratives_overview`
   (`foundation/data-model.md`); os 3 scores derivados
-  (Momentum/Velocidade/Risco) são calculados por
+  (Momentum/Tendência/Risco) são calculados por
   `get_narratives_table()` (`aggregated-metrics/sql-aggregation.md`, seção
   "Scores de Narrativa") — nenhum cálculo acontece no frontend, ele só
   renderiza valor+banda+cor que o envelope já traz prontos.
@@ -381,13 +396,18 @@ Qualquer usuário autenticado, membro de ao menos uma organização (ver
   ✅ **7 colunas (2026-07-13, substitui a versão anterior de 5 colunas)** —
   resolve as 2 ⚠️ DECISÃO PENDENTE que existiam pra Sentimento/Momentum, e
   adiciona Velocidade (separada de Momentum, recomendação do usuário — ver
-  `sql-aggregation.md`) e Risco como score (antes só `risk_level` manual):
+  `sql-aggregation.md`) e Risco como score (antes só `risk_level` manual).
+  ✅ **Velocidade → Tendência (2026-07-22)**: pedido do usuário
+  de substituir o indicador de Velocidade por uma tendência estatística
+  (aumentando/diminuindo/estável) — ver `sql-aggregation.md`, "Tendência",
+  para a fórmula completa (regressão linear de 14 dias, não mais
+  snapshot 3h-vs-3h):
 
   | Coluna | Fonte | Valor exibido |
   |---|---|---|
   | Narrativa | `narratives.title` | direto |
   | SOV | `reporting.narratives_overview.sov_percent` | % — Share of Voice (Narrativa), ver `_glossary.md` |
-  | Velocidade | `get_narratives_table().velocity_score` | score 0-100 + seta/rótulo (5 faixas — ver tabela abaixo). Crescimento recente (dia atual vs. anterior), **independente** do período selecionado no header |
+  | Tendência | `get_narratives_table().trend_score` | score 0-100 + seta/rótulo (3 faixas — ver tabela abaixo). Tendência estatística dos últimos 14 dias (regressão sobre o volume diário), **independente** do período selecionado no header |
   | Sentimento | `reporting.narratives_overview.net_sentiment` | score -100 a +100 + rótulo/cor (7 faixas — ver tabela abaixo) |
   | Momentum | `get_narratives_table().momentum_score` | score 0-100 (5 faixas — ver tabela abaixo). Força/relevância atual (volume+engajamento+autores+alcance), comparando o período selecionado no header contra o período anterior de igual duração |
   | Risco | `get_narratives_table().risk_score` | score 0-100 + rótulo/cor (4 faixas — ver tabela abaixo) |
@@ -414,13 +434,11 @@ Qualquer usuário autenticado, membro de ao menos uma organização (ver
   | 60–79 | Alto |
   | 80–100 | Explosivo |
 
-  | Velocidade (score) | Rótulo |
+  | Tendência (score) | Rótulo |
   |---:|---|
-  | 0–19 | ↓ Encolhendo rapidamente |
-  | 20–39 | ↘ Diminuindo |
+  | 0–39 | ↓ Tendência de queda |
   | 40–59 | → Estável |
-  | 60–79 | ↑ Crescendo |
-  | 80–100 | ↗ Viralizando |
+  | 60–100 | ↑ Tendência de alta |
 
   | Risco (score) | Situação | Cor |
   |---:|---|---|
@@ -433,12 +451,13 @@ Qualquer usuário autenticado, membro de ao menos uma organização (ver
   continua no schema mas **não é mais** o que esta coluna mostra — vira um
   override manual opcional, sem UI própria ainda (ver `sql-aggregation.md`,
   "Scores de Narrativa"). `period` do header (7/14/30 dias) é o que
-  Momentum usa como período atual/anterior — Velocidade **não** usa esse
-  filtro, é sempre curto prazo (ver `sql-aggregation.md`).
+  Momentum usa como período atual/anterior — Tendência **não** usa esse
+  filtro, é sempre uma janela fixa de 14 dias (ver `sql-aggregation.md`).
 
-  - Sentimento e Risco renderizados como *dot*/badge colorido, Momentum e
-    Velocidade como barra de progresso + valor numérico (ex: `██████░░░░ 61`)
-    — mapeamento exato de cor em
+  - Sentimento e Risco renderizados como *dot*/badge colorido, Momentum
+    como barra de progresso + valor numérico (ex: `██████░░░░ 61`),
+    Tendência como seta+rótulo colorido (`TrendIndicator`, ver
+    `score-badges.tsx`) — mapeamento exato de cor em
     [_design-tokens.md](../_design-tokens.md).
   - Ordenação default: por `risk_score` desc, depois `total_mentions` desc
     — ✅ confirmado (2026-07-12): "esse é o padrão visual, podendo o
@@ -455,7 +474,7 @@ Qualquer usuário autenticado, membro de ao menos uma organização (ver
   de `mentions` — tudo vem pré-calculado de `bw_query_metrics_daily`/
   `narrative_metrics`/`reporting.narratives_overview` (Princípio técnico 2,
   `_index.md`: sem lógica de negócio no frontend).
-- ✅ **Resolvido (2026-07-13)**: Sentimento/Momentum/Velocidade/Risco da
+- ✅ **Resolvido (2026-07-13)**: Sentimento/Momentum/Tendência/Risco da
   tabela de Narrativas usam as fórmulas e faixas definitivas em
   [../aggregated-metrics/sql-aggregation.md](../aggregated-metrics/sql-aggregation.md),
   "Scores de Narrativa" — deixaram de ser placeholder. O frontend
@@ -508,5 +527,5 @@ Fluxos alternativos acima).
 - [../foundation/data-model.md](../foundation/data-model.md)
 - [../foundation/narratives.md](../foundation/narratives.md)
 - [../aggregated-metrics/overview.md](../aggregated-metrics/overview.md)
-- [../aggregated-metrics/sql-aggregation.md](../aggregated-metrics/sql-aggregation.md) — "Scores de Narrativa" (Sentimento/Momentum/Velocidade/Risco)
+- [../aggregated-metrics/sql-aggregation.md](../aggregated-metrics/sql-aggregation.md) — "Scores de Narrativa" (Sentimento/Momentum/Tendência/Risco)
 - [../_design-tokens.md](../_design-tokens.md)

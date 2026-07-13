@@ -1,6 +1,6 @@
 ---
 tipo: pending-tracker
-atualizado: 2026-07-22 (rev. 14)
+atualizado: 2026-07-24 (rev. 17)
 ---
 
 # Pendências — Digital Intelligent Communication
@@ -28,10 +28,46 @@ atualizado: 2026-07-22 (rev. 14)
 
 | # | Módulo | Decisão | Spec |
 |---|---|---|---|
-| 1 | `intelligence-center` | Rota de `/narratives/[id]`: página própria vs. modal (depende do roteamento geral do app) | [intelligence-center/overview.md](intelligence-center/overview.md) |
-| 3 | `aggregated-metrics` | Fórmula de `risk_score`: adicionar termo de interação pra não inflar risco quando Momentum/Velocidade altos vêm com sentimento positivo (v1 é soma simples) | [aggregated-metrics/sql-aggregation.md](aggregated-metrics/sql-aggregation.md), "Scores de Narrativa" |
-| 4 | `event-radar` | Intervalo exato do `pg_cron` do motor de detecção (15min vs. 30min) — depende de teste de carga | [event-radar/detection-engine.md](event-radar/detection-engine.md) |
+| 3 | `aggregated-metrics` | Fórmula de `risk_score`: adicionar termo de interação pra não inflar risco quando Momentum/Tendência altos vêm com sentimento positivo (v1 é soma simples) | [aggregated-metrics/sql-aggregation.md](aggregated-metrics/sql-aggregation.md), "Scores de Narrativa" |
 | 5 | `event-radar` | UI de aprovação (aceitar/rejeitar) de `cases` pendentes `high`/`critical` — ainda sem spec própria, bloqueia só esse passo específico de `schema-integration.md` | [event-radar/schema-integration.md](event-radar/schema-integration.md) |
+
+✅ **Resolvida 2026-07-24** (decisões #1 e #4, e um pedido adicional do
+mesmo turno, todos na mesma sessão do usuário): "1) faça Modal [pra
+`/narratives/[id]`] e se o usuário quiser ele irá para a tela com mais
+detalhes, deixa essa opção no modal. 2) [Intervalo do pg_cron do motor de
+detecção] Manter em 15min. 3) Vamos retirar a opção de velocidade em
+narrativas e substituir por tendência... Dessa maneira os indicadores se
+mantém como risk_score e momentum."
+- **Decisão #1 (modal)**: implementado exatamente como
+  `narratives-exploration.md` já especificava desde 2026-07-12 — parallel
+  route `@modal` + intercepting route `(.)narratives/[id]`
+  (`app/(intelligence-center)/(analytics)/@modal/(.)narratives/[id]/page.tsx`),
+  componente único (`narrative-detail-content.tsx`) reusado pela página
+  cheia e pelo modal, modal com link "Abrir página completa" (pedido
+  explícito: "deixa essa opção no modal"). Fecha também o gap técnico #16
+  abaixo (mesma pendência, listada nas duas tabelas).
+- **Decisão #4 (pg_cron)**: 15 minutos, mesmo intervalo já usado pelo
+  heartbeat de `bw-sync`. Ver `event-radar/detection-engine.md`, "Fluxo
+  principal" item 1.
+- **Velocidade → Tendência** (pedido novo, não numerado nesta tabela):
+  `get_narratives_table` (migration `20260722010000`) troca
+  `velocity_score`/`velocity_label` (snapshot 3h-vs-3h, 5 rótulos) por
+  `trend_score`/`trend_label` (regressão linear de 14 dias sobre
+  `narrative_metrics.total_mentions`, 3 rótulos —
+  decreasing/stable/increasing). `risk_score` e `momentum_score`
+  continuam exatamente como indicadores, sem mudança de forma (pedido
+  explícito do usuário) — `risk_score` só troca a *fonte* do termo de 20%
+  de "crescimento recente" (antes `velocity_score`, agora `trend_score`,
+  mesmo peso/papel na fórmula — decisão não coberta diretamente pelo
+  pedido, registrada como a leitura mais conservadora em
+  `sql-aggregation.md`, "Risco"). A decisão #3 acima (termo de interação
+  no `risk_score`) continua aberta, só com a terminologia atualizada.
+  Fecha também o gap técnico #26 abaixo (rename que tinha ficado
+  incompleto/não commitado numa sessão anterior).
+Ver `CLAUDE.md` para o detalhamento completo de cada um dos 3 itens, e
+`aggregated-metrics/sql-aggregation.md`/`intelligence-center/{executive-overview,
+narratives-exploration,electoral-themes}.md`/`_design-tokens.md`/`_glossary.md`
+para as specs atualizadas.
 
 ✅ **Resolvida 2026-07-13** (decisão #6, `auth`): implementado o reforço que
 a própria spec recomendava — `admin-revoke-user-access` agora verifica
@@ -79,6 +115,26 @@ agregado, sob risco de nunca rodar quando o orçamento de 25
 chamadas/invocação se esgotava antes — reordenado pra prioridade máxima
 logo após o loop de sentimento. Ver `CLAUDE.md`, "Alteração da lógica de
 definição da narrativa" e `foundation/narratives.md`.
+
+✅ **Resolvida 2026-07-21** (pedido do usuário, não numerada — 3 pedidos na
+mesma sessão): "1) Página Pautas Eleitorais deve focar apenas na categoria
+Pautas, análise vinda de todas as subcategorias de Pautas. 2) Autores e
+comunidades por pauta deve mostrar só autores que citaram algo relacionado
+às Pautas, com a(s) pauta(s) a que cada um está associado. 3) Para
+facilitar, considerar apenas as subcategorias em todas as narrativas — retire
+a regra de 'categoria - subcategoria'." Reverte a decisão de 2026-07-20
+logo acima (título composto, Overview/Narrativas com `p_scope => null`) e
+corrige o modelo de "Pauta" que estava em vigor desde a criação desta spec
+(qualquer Category raiz do Project contava como uma Pauta — errado, ver
+`intelligence-center/electoral-themes.md`). Migration `20260721030000`:
+`pautas_root_category_id()` (resolve a Category raiz literalmente chamada
+"Pautas" por nome), `get_theme_breakdown`/`get_narratives_table` escopados
+a Subcategories dela (`p_scope => 'pautas'`), `get_authors_ranking` ganha
+`p_scope`/`narrative_labels`. `narrativesScopeForPage()` simplificado pra
+`'leaves' | 'pautas'` (nenhuma página mais usa `'roots'`/`null`).
+`buildNarrativeTitle()` volta a devolver só o nome simples + backfill
+inverso do título. Ver `CLAUDE.md`, "Página Pautas Eleitorais: escopo
+corrigido para a categoria Pautas".
 
 ✅ Resolvidas em 2026-07-13: `net_sentiment` oficial por Narrativa/Query
 (gap técnico #1 de foundation, migration `20260713030000` — ver
@@ -154,6 +210,46 @@ as 2 dimensões permitidas) agora espalha por vários heartbeats via novo
 de frescor de 25min. Ver `CLAUDE.md`, "daily_metrics call-count reduction"
 e `foundation/sync-brandwatch.md`.
 
+✅ **Resolvida 2026-07-22** (pedido do usuário, não numerada: "Permitir o
+usuário a escolher qual organização é a default. Ele poderá alterar no
+menu de seleção da organização"). `user_profiles.default_organization_id`
+(migration `20260722000000`, nullable, `on delete set null`) + nova Edge
+Function self-service `update-my-default-organization` (terceira escrita
+self-service em `user_profiles`, valida pertencimento via
+`organization_members` antes de gravar). Botão estrela no seletor de
+organização (`page-header-bar.tsx`); `header-context.tsx` passa a preferir
+a organização padrão ao carregar, com fallback pra primeira organização
+quando nula ou quando o usuário não é mais membro dela. Corrigida de
+passagem uma nota desatualizada em `_glossary.md` ("Organization Member")
+que ainda dizia "troca de organização ativa pela UI continua fora do MVP"
+— o seletor já existe desde o Sprint 2, só a nota nunca tinha sido
+corrigida. Ver `CLAUDE.md`, "Default organization — self-service, third
+user_profiles write" e `auth/data-model.md`.
+
+✅ **Resolvida 2026-07-23** (pedido do usuário, não numerada: "Na edge
+function bw-sync as categorias não estão sendo colocadas como inativas
+quando não existem mais na brandwatch"). A lógica de desativação em si
+(migration `20260716010000`) estava correta — o bug real era em QUANDO
+ela tinha chance de rodar: `refreshMetadata()` só era chamada de dentro
+de `runMetadataStep()`, disparado só quando `sync_cursors.next_step`
+chegava na primeira fase de `SYNC_STEPS` (`"metadata"`), reavaliada de
+novo só quando um ciclo inteiro de 16 fases fecha e dá a volta. Fases
+"stale-gated" avançam no máximo 1 categoryTarget/grupo por invocação, e
+`daily_metrics` também pode se estender por várias invocações desde
+2026-07-22 (`stayOnStep`, burst de sentimento espalhado) — pra uma
+organização com Narrativas suficientes, um ciclo inteiro podia levar bem
+mais que `BW_SYNC_INTERVAL_HOURS` (3h) pra fechar, e o throttle de 1h de
+`needsMetadataRefresh()` nunca tinha chance de ser reavaliado nesse meio
+tempo. Corrigido em `bw-sync/index.ts`: a checagem (e o refresh de
+verdade, quando devido) agora roda em toda invocação do par, independente
+de qual fase está na vez — guardado por `hasBrandwatchCallBudget()` pra
+não competir com o orçamento da fase corrente. Sem migration (mudança só
+na Edge Function). Também ganhou log de sucesso
+(`refreshMetadata:categories_deactivated`) — antes não havia nenhuma
+confirmação nos logs de que a desativação rodava. Ver `CLAUDE.md`,
+"Category deactivation wasn't actually running on any predictable
+cadence" e `foundation/sync-brandwatch.md`/`data-model.md`.
+
 ## Gaps técnicos (spec pronta, sem migration/código ainda)
 
 > Diferente da lista acima — estes não são decisões em aberto, é trabalho já desenhado esperando
@@ -181,8 +277,8 @@ na época. Itens #2/#3 resolvidos na mesma data (ver acima).
 | 9 | `aggregated-metrics` | Breakdown por região/localização (`breakdowns` tipo `'region'`, pedido em `narrative_detail`/`sentiment`) — `bw_query_demographics_daily` existe (`foundation/data-model.md`) mas nenhuma function SQL do tipo `get_region_breakdown` foi especificada em `sql-aggregation.md`. `fetchOneBreakdown('region', ...)` na service layer já loga e retorna `null` (não quebra o envelope), só falta a function+wiring quando alguém confirmar o desenho (que dimensão de localização — país/estado/cidade? — e qual métrica exibir) | [aggregated-metrics/sql-aggregation.md](aggregated-metrics/sql-aggregation.md) |
 | 10 | `aggregated-metrics` | Trend "volume por plataforma ao longo do tempo" (`platforms`) e "SOV por pauta ao longo do tempo" (`themes`) — `block-mapping-per-page.md` pede os dois, mas `sql-aggregation.md`'s `get_volume_trend` só cobre volume/sentimento geral, sem quebra por plataforma/pauta ao longo de uma série temporal (só como snapshot estático via `get_platform_breakdown`/`get_theme_breakdown`). `fetchTrends()` na service layer já loga e retorna `[]` pra essas 2 páginas em vez de inventar uma série | [aggregated-metrics/sql-aggregation.md](aggregated-metrics/sql-aggregation.md) |
 | 11 | `aggregated-metrics` | `authors[].risk_level` sempre `null` — diferente de `narratives` (que tem a fórmula completa "Scores de Narrativa"), nenhuma spec define como calcular risco por autor individual. `get_authors_ranking` retorna `null` de propósito até uma spec futura definir a fórmula | [aggregated-metrics/sql-aggregation.md](aggregated-metrics/sql-aggregation.md) |
-| 16 | `intelligence-center` | `/narratives/[id]` abre como página cheia, não como modal via intercepting route — `narratives-exploration.md` já tinha decidido por modal (2026-07-12, `(.)narratives/[id]`); não é uma decisão em aberto, é uma simplificação de implementação (2026-07-15) por causa do volume de trabalho da sessão. A rota funciona e navega corretamente, só não abre sobre a lista como a spec pede | [intelligence-center/narratives-exploration.md](intelligence-center/narratives-exploration.md), "Fluxo principal" item 5 |
-| 17 | `intelligence-center` | Pautas Eleitorais (`/themes`): drill-down "narrativas dentro da pauta" (clicar numa Pauta → só as Narrativas-filhas, via `get-page-themes` com `pauta_id`) ainda não está interativo na UI. ✅ **Parcialmente resolvido (2026-07-16)**: `/themes` já lista só Narrativas-filhas sem `pauta_id`, `/overview` só Pautas (`p_scope`). ✅ **Visual alinhado ao protótipo (2026-07-13)**: "Share of Voice e sentimento por pauta" agora renderiza como grid de cards (`PautaCardGrid`, nome + barra de SOV + dot de sentimento), igual ao protótipo original, em vez da lista de score genérica. O clique continua não implementado — `get_theme_breakdown`/`BreakdownItem` não carregam um `id` de Pauta, só `label`, e não há como escopar `get-page-themes` com `pauta_id` de forma confiável a partir só desse dado; precisaria de uma function nova que devolva o `id` da Pauta junto do breakdown | [intelligence-center/electoral-themes.md](intelligence-center/electoral-themes.md) |
+| 16 | `intelligence-center` | ✅ **Fechado (2026-07-24)**: implementado como modal via intercepting route (`@modal/(.)narratives/[id]/page.tsx`), exatamente como `narratives-exploration.md` decidira em 2026-07-12 — ver decisão #1 (resolvida) acima | [intelligence-center/narratives-exploration.md](intelligence-center/narratives-exploration.md), "Fluxo principal" item 5 |
+| 17 | `intelligence-center` | ✅ **Fechado por não-aplicabilidade (2026-07-21)**: drill-down "narrativas dentro da pauta" não existe mais como conceito — o escopo de Pautas Eleitorais foi corrigido (`intelligence-center/electoral-themes.md`) pra "Pauta = Subcategory da Category raiz 'Pautas'", e uma Subcategory já é folha (a Brandwatch não suporta um 3º nível). Não há "narrativas dentro de uma pauta" pra abrir. Histórico do gap original (quando "Pauta" ainda significava "qualquer Category raiz"): `get_theme_breakdown`/`BreakdownItem` nunca carregaram um `id` de Pauta pro clique escopar `get-page-themes` com `pauta_id` — deixou de ser relevante com a correção de escopo | [intelligence-center/electoral-themes.md](intelligence-center/electoral-themes.md) |
 | 18 | `intelligence-center`/`platform-analysis` | 4 widgets de `/platforms` sem fonte de dado (nenhuma function SQL cobre): evolução do volume por plataforma ao longo do tempo, narrativas dominantes especificamente por plataforma, velocidade de propagação por plataforma (variação % entre períodos por `page_type`), conteúdos de destaque (cards de mentions individuais) — todos renderizados como `<EmptyState />` explicando o motivo, não omitidos silenciosamente. ✅ **2026-07-13**: mais 2 gaps do mesmo tipo identificados na paridade com o protótipo e também deixados como `<EmptyState />` honesto (não fabricados): "Engajamento médio por publicação" e "Autores únicos por plataforma" — o dado (`unique_authors`/`engagement_score`) já existe em `bw_query_metrics_daily_by_platform`, mas `BreakdownItem` só expõe `label`/`value`/`pct`, sem esses 2 campos; precisaria de um novo shape de breakdown ou campos extras. O widget "Sentimento por plataforma" que existia antes em `/platforms` foi removido (duplicava o mesmo widget da página `/sentiment`) e substituído por "Participação por plataforma" (barras de `pct`, sem score de sentimento), igual ao protótipo original | [intelligence-center/platform-analysis.md](platform-analysis.md) |
 | 19 | `intelligence-center`/`sentiment-analysis` | ✅ **Metade resolvida (2026-07-17)**: "Sentimento por Narrativa" agora tem function+bloco (`get_narrative_sentiment_breakdown`, breakdown `type = 'narrative'`) — o dado (`narrative_metrics.sentiment_*`) já existia, só faltava o wiring. Continua em aberto só "Menções que mais influenciaram o sentimento" (lista de mentions individuais, sem bloco correspondente no envelope) | [intelligence-center/sentiment-analysis.md](sentiment-analysis.md), [aggregated-metrics/sql-aggregation.md](aggregated-metrics/sql-aggregation.md) |
 | 20 | `intelligence-center`/`narratives-exploration` | Detalhe de Narrativa: "Menções relevantes" e "Ações e decisões" (`cases`) ficam `<EmptyState />` — a primeira por falta de bloco no envelope (nenhum dos 8 blocos padrão cobre "lista de mentions em destaque"), a segunda porque a tabela `cases` (`intelligence-center/data-model.md`) ainda não tem migration — spec já previa esse estado vazio explicitamente ("Nenhuma ação registrada ainda") enquanto `cases` não existir | [intelligence-center/narratives-exploration.md](narratives-exploration.md), "Ações e decisões" |
@@ -191,6 +287,7 @@ na época. Itens #2/#3 resolvidos na mesma data (ver acima).
 | 23 | `foundation` | `bw_query_top_authors.sentiment_positive/neutral/negative` (e o mesmo em `bw_query_top_tweeters`) — mapeamento de `d.sentiment` da resposta de `data/volume/topauthors/queries` **nunca confirmado** contra a documentação real do endpoint (diferente de todo campo vizinho na mesma tabela, que tem nota de confirmação explícita). Risco real de ser sempre `0/0/0` em produção sem erro. Achado numa auditoria de sentimento por autor (2026-07-17) — `aggregated-metrics.get_authors_ranking` foi corrigida pra não ler mais estas colunas (usa `bw_query_author_topics` em vez disso), mas as colunas em si continuam sem confirmação/uso — revisar contra logs reais antes de reativar | [foundation/data-model.md](foundation/data-model.md), "bw_query_top_authors" |
 | 24 | `aggregated-metrics` | `get_term_signals` mistura todo `topic_type` (`words`/`phrases`/`hashtags`/`entities`/`people`/`places`/`organisations`) num só ranking de "drivers" — nenhuma spec pediu filtrar só `phrases` (não é um gap de verdade), mas registrado caso o produto queira restringir no futuro | [intelligence-center/sentiment-analysis.md](sentiment-analysis.md) |
 | 25 | `foundation`/`aggregated-metrics` | "Sentimento de narrativas predominantemente neutro" reportado de novo pelo usuário em 2026-07-21, mesma queixa da sessão de 2026-07-20 (migration `20260720000000`). Reauditado função por função nesta sessão (`narratives_overview.sentiment_bucket`, ordem de chamadas de `runDailyMetricsStep`, `get_narratives_table.sentiment_label`, `get_narrative_sentiment_breakdown`) — a correção de 2026-07-20 está corretamente implementada, nenhuma causa adicional encontrada por inspeção de código. Se persistir depois deste deploy, o próximo passo precisa de logs reais de produção de `bw-sync` (não disponível em nenhuma sessão até agora) pra confirmar se `net_sentiment`/`sentiment_positive`/`negative` estão realmente chegando em `bw_query_metrics_daily` pras Narrativas afetadas — não é mais uma questão de revisão de código | [aggregated-metrics/sql-aggregation.md](aggregated-metrics/sql-aggregation.md), [foundation/data-model.md](foundation/data-model.md) |
+| 26 | `aggregated-metrics`/`intelligence-center` | ✅ **Fechado (2026-07-24)**: o rename `velocity_score`/`velocity_label` → `trend_score`/`trend_label` que tinha ficado incompleto (envelope.ts e a migration editados, consumidores não) foi terminado nesta sessão como parte da troca Velocidade→Tendência pedida pelo usuário (ver decisão resolvida acima) — todos os consumidores (`narratives/page.tsx`, `score-badges.tsx`, `narratives-table.tsx`, `narrative-detail-content.tsx`, `aggregated-metrics-service.ts`, as 6 Edge Functions `get-page-*`/`get-narrative-detail`) atualizados em conjunto. `npm run build` deve passar agora — reconfirmar antes do próximo deploy | `packages/shared-types/src/envelope.ts`, `app/(intelligence-center)/(analytics)/narratives/page.tsx` |
 
 ✅ Item #6 (`auth` — UI + Edge Functions) removido desta tabela: já estava
 `implementado` desde 2026-07-13 (ver `CLAUDE.md`, "Módulo auth (Sprint

@@ -68,6 +68,22 @@ atualizado: 2026-07-21
 >    pra rodar logo após o loop de sentimento, com prioridade sobre as
 >    demais métricas. Ver migration `20260720000000` e `CLAUDE.md`.
 
+> ⚠️ **Itens 1 e 2 acima revertidos no dia seguinte (2026-07-21)** — pedido
+> do usuário, mesma sessão que corrigiu o escopo de "Pautas Eleitorais"
+> (ver [electoral-themes.md](../intelligence-center/electoral-themes.md)):
+> "Para facilitar vamos considerar apenas as subcategorias em todas as
+> narrativas. Retire a regra de 'categoria - subcategoria'." Toda página
+> volta a listar só Narrativas-folha (Subcategory) — `narrativesScopeForPage()`
+> agora retorna `'leaves'` pra Overview/Narrativas/Plataformas/Relatórios e
+> `'pautas'` (mais restrito ainda) pra Pautas Eleitorais, nunca mais
+> `'roots'`/`null`. Sem a Category raiz misturada na mesma lista, o título
+> composto deixou de resolver alguma ambiguidade real —
+> `buildNarrativeTitle()` voltou a devolver só o nome da própria
+> Category/Subcategory, e migration `20260721030000` faz o backfill inverso
+> (título de volta ao nome simples pra toda Narrativa-Subcategory já
+> existente). Item 3 (fix de `sentiment_bucket`) continua em vigor, não foi
+> afetado.
+
 > ✅ **Cards de Narrativa redesenhados (2026-07-21)**: `get_narratives_table`
 > (migration `20260721010000`) ganhou `sentiment_positive_pct`/
 > `sentiment_neutral_pct`/`sentiment_negative_pct` (split de
@@ -104,12 +120,13 @@ CRUD de Narrativas em nenhuma versão do produto** — ver "Interface (UI)" e
    não importa mais pra decidir se auto-cria, só pra saber se é
    "Pauta" ou "Narrativa dentro da pauta" na UI, ver
    `intelligence-center/electoral-themes.md`). `bw_category_id` = a
-   Category/Subcategory. ✅ **Título alterado (2026-07-20)**: `title` = nome
-   da Category quando ela é de topo (sem pai); `"<Category> - <Subcategory>"`
-   quando é uma Subcategory (`buildNarrativeTitle()` em `bw-sync/index.ts`)
-   — desambigua a Subcategory quando Overview/Narrativas listam os dois
-   níveis juntos (ver "Alterado (2026-07-20)" acima). Idempotente (nunca
-   sobrescreve `title`/`stage`/`risk_level` de uma Narrativa já existente).
+   Category/Subcategory. `title` = sempre o próprio nome da
+   Category/Subcategory (`buildNarrativeTitle()` em `bw-sync/index.ts`) —
+   ✅ **estado atual desde 2026-07-21**, revertendo um formato composto
+   `"<Category> - <Subcategory>"` adotado brevemente em 2026-07-20 (ver
+   "Alterado (2026-07-20)"/"revertidos no dia seguinte" acima). Idempotente
+   (nunca sobrescreve `title`/`stage`/`risk_level` de uma Narrativa já
+   existente).
    **Não existe** caminho de criação fora deste — nem manual, nem por
    sinal isolado (`narrative_signals` sem `bw_category_id`), nem por UI.
    `narrative_signals` continua existindo no schema, mas só como

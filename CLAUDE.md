@@ -1327,6 +1327,54 @@ used to apply to `bw-sync`.)
   in `get-narrative-detail` already degrades gracefully on a missing
   `get_narratives_table` row, no code change needed there).
 
+- **Category deactivation wasn't actually running on any predictable
+  cadence — decoupled from the phase cycle (2026-07-23)** — user report:
+  "as categorias não estão sendo colocadas como inativas quando não
+  existem mais na brandwatch." The deactivation logic itself (above) was
+  correct — the bug was in *when it ever got a chance to run*.
+  `refreshMetadata()` only executes from inside `runMetadataStep()`,
+  called exclusively when a pair's `sync_cursors.next_step` equals
+  `"metadata"` — the *first* phase of `SYNC_STEPS`, which is only
+  re-evaluated once a full 16-phase cycle completes and wraps back around
+  (`nextSyncStep()`'s `cycleComplete`). Every "stale-gated" phase
+  (`weekly_monthly`/`topics`/`top_authors`/etc.) advances at most one
+  `categoryTarget`/group per invocation by design (see "Phased execution
+  per pair"), and since 2026-07-22 `daily_metrics` can also span several
+  invocations via `stayOnStep` to spread its Brandwatch-call burst — both
+  deliberate, accepted trade-offs for their own bugs, but their side
+  effect compounds here: for an organization with enough Narrativas, one
+  full cycle could stretch well past the nominal `BW_SYNC_INTERVAL_HOURS`
+  (3h default), and `needsMetadataRefresh()`'s 1h staleness throttle never
+  got a chance to matter, because `"metadata"` simply never came up again
+  during that whole stretch. A Category removed in Brandwatch could stay
+  `active` in Supabase for as long as one full cycle took to close —
+  potentially much longer than the 1h the throttle constant implies.
+  Fixed by decoupling the check from where the pair happens to sit in its
+  phase rotation: `runSyncInvocation()` now calls
+  `needsMetadataRefresh()`/`refreshMetadata()` unconditionally near the
+  top of *every* invocation for the pair (right after resolving
+  `organizationId`, before `fetchNarrativeCategoryIds()` — so a
+  deactivation that happens to fire this same invocation is already
+  reflected in this invocation's own `categoryTargets`), guarded by
+  `hasBrandwatchCallBudget()` so it never competes for budget ahead of
+  whatever the pair's current phase actually needs. Cheap when not due
+  (`needsMetadataRefresh()` is just 2 Postgres reads); only spends real
+  Brandwatch calls when the 1h throttle has genuinely elapsed. The
+  `"metadata"` `SYNC_STEP` itself is left in place, unmodified — it's now
+  just usually a harmless no-op (`needsMetadataRefresh()` returns `false`
+  immediately after just having run moments earlier in the same
+  invocation) — kept for backward compatibility with `next_step` values
+  already persisted in `sync_cursors`, not worth a migration to remove.
+  Separately, since there was previously **no success log at all** for the
+  deactivation `UPDATE` (only a `throw` on error — impossible to confirm
+  from Edge Function logs whether it ever ran or how many rows it
+  touched), `refreshMetadata()` now chains `.select("id")` on that update
+  and logs `refreshMetadata:categories_deactivated` with the affected
+  count and IDs — this is what should be checked in production logs after
+  a Category is removed in Brandwatch, to confirm the fix end-to-end
+  (not done this session — no live credentials, same recurring
+  limitation as every prior session without deploy access).
+
 - **Overview vs. Narrativas vs. Pautas Eleitorais: which Narrativa
   granularity each page lists by default (2026-07-16)** — same user
   request, second half: "Quando há categoria e subcategoria, o sistema
@@ -2874,6 +2922,352 @@ own `SentimentMetricCard`).
   credentials); the actual authenticated `/overview` rendering (KPI
   pending-state copy, larger chart labels, panel swap) was not visually
   confirmed in a browser.
+
+### Página Pautas Eleitorais: escopo corrigido para a categoria Pautas + simplificação global de narrativas-folha (2026-07-21)
+
+User request, 3 parts in the same session: (1) "Página Pautas Eleitorais...
+Essa página deve focar apenas na categoria Pautas. A ideia é que a análise
+que compõe essa página venha de todas as subcategorias de Pautas. Corrija
+a documentação e implementação"; (2) "em Autores e comunidades por pauta
+deve aparece apenas os autores que citaram algo relacionado as Pautas e
+deve ser informado a que pauta ele está associado, e poderá ser mais de
+uma"; (3) "Estrutura das pautas / Deve mostrar as subcategorias da
+categoria Pautas" (confirmation of (1)); mid-turn correction: "Para
+facilitar vamos considerar apenas as subcategorias em todas as narrativas.
+Retire a regra de 'categoria - subcategoria'. Em Pautas faz-se uma
+restrição de todas as subcategorias da categoria Pautas."
+
+**Root cause (1)**: `electoral-themes.md`'s original model (since
+2026-07-12) treated *any* root-level `bw_categories` row as a "Pauta" —
+its own "Achado principal" text justified this by noting the prototype's
+example pauta names (Educação, Saúde, Segurança) happened to match example
+Narrativa names elsewhere. In practice this meant `get_theme_breakdown`
+and `/themes`'s `narratives` block mixed real electoral themes with
+unrelated top-level Categories a campaign might configure for
+crisis/monitoring purposes (`brandwatch-setup.md`'s own examples:
+"Pesquisas", "Diplomacia", "Banco Master") — none of which are electoral
+themes. Corrected model: there is one specific root Category, named
+literally **"Pautas"** (by convention, same name-matching pattern already
+used elsewhere in this project — see `brandwatch-setup.md` §5, "nomear a
+Category com o mesmo texto de `narratives.title`"), and only **its**
+Subcategories (Educação, Saúde, Segurança, Transporte...) are real
+electoral themes. Migration `20260721030000` adds
+`pautas_root_category_id(organization_id)` (resolves that Category by
+`parent_id is null` + `lower(btrim(name)) = 'pautas'`, returns `null` if
+not configured — every consumer treats that as "no pautas", never an
+error) and rescopes `get_theme_breakdown` (was: `bc.parent_id is null`,
+any root; now: `bc.parent_id = pautas_root_category_id(...)`) and
+`get_narratives_table` (new `p_scope => 'pautas'` value, alongside
+existing `'roots'`/`'leaves'`). Since Brandwatch only supports 2 levels
+(Category → Subcategory, `brandwatch-setup.md` §5 — "toda Category precisa
+de ao menos 1 Subcategory", never deeper), a pauta (already a Subcategory)
+has no children of its own — the old "narrativas dentro da pauta"
+drill-down concept (`_pending.md` gap #17) doesn't apply to the corrected
+model and is closed as not-applicable rather than implemented.
+`brandwatch-setup.md` gained an explicit operational note + Definition-of-
+Ready checklist item: a client's Brandwatch Project needs a root Category
+named exactly "Pautas" with one Subcategory per real electoral theme, or
+`/themes` shows nothing.
+
+**Root cause (2)**: `get_authors_ranking`'s `fetchAuthors()` call from the
+`themes` page never passed any category-scoping filter (`ctx.filters`
+stays whatever the header's presentational-only "Filtros avançados" sends,
+normally empty) — so "Autores e comunidades por pauta" was silently
+showing the exact same generic top-authors ranking as every other page,
+with zero relation to Pautas. Fixed, same migration: `get_authors_ranking`
+gains `p_scope` (`'pautas' | null`) — when `'pautas'`, scopes
+`bw_query_top_authors`/`bw_query_top_tweeters` to the Subcategories of
+"Pautas" directly (bypassing `filters.narratives`, since this page has no
+single-Narrativa selector — it *is* the Pautas universe) instead of
+"Query inteira" (the default when no filter is set). An author can have
+activity under more than one pauta (e.g. cited both in "Saúde" and
+"Segurança"), so the function now **groups by author** (previously one row
+per matching category, silently duplicating an author if more than one
+category matched — a latent bug now fixed everywhere, not just for
+`'pautas'`) and returns a new column, `narrative_labels text[]` — every
+pauta title the author appeared under in the requested scope, always an
+array (empty when the scope has no Narrativa association, e.g. the normal
+"Query inteira" case on other pages). ⚠️ Aggregating reach/engagement by
+`sum()` across an author's matched pautas can double-count if a single
+mention is categorized under more than one pauta simultaneously in
+Brandwatch — same trade-off category already accepted project-wide for any
+sum over per-Category aggregates (not a new local-aggregation-over-
+`mentions` violation, since `bw_query_top_authors` is itself already an
+official Brandwatch aggregate, never `mentions` rows). `AuthorRow`
+(`@reputation/shared-types` + the inline Deno copy in
+`aggregated-metrics-service.ts` and all 6 deployed `get-page-*`/
+`get-narrative-detail` functions, Principle 5) gained `narrative_labels:
+string[]`; `AuthorsList` (`authors-list.tsx`) renders them as a row of
+small pill chips under the author's name, only when non-empty — harmless
+on the other pages that reuse this same component (`platforms`,
+`narrative_detail`), where the array normally has at most 1 item since
+those scopes are already "Query inteira" or "1 Narrativa".
+
+**Mid-turn simplification (3), superseding 2026-07-20's "Categoria -
+Subcategoria" decision**: while implementing the above, the user asked to
+simplify further — every page that lists Narrativas should show only
+Subcategories (never mix in the root Category), which is exactly the
+`'pautas'` scoping principle generalized to the whole product. This
+reverses 2026-07-20's "mostrar todas as narrativas" change (`p_scope =>
+null` on Overview/Narrativas, enabled by composing the Narrativa title as
+"Category - Subcategory" to disambiguate a bare Subcategory name shown
+next to its parent Pauta in the same flat list) — with the root Category
+never appearing in the list again, that disambiguation need goes away.
+`narrativesScopeForPage()` (`aggregated-metrics-service.ts` + its 6
+deployed copies) simplified from `'roots' | 'leaves' | null` to `'leaves'
+| 'pautas'` — every page now returns `'leaves'` except `themes`, which
+returns the more restrictive `'pautas'`; `'roots'`/`null` have no more
+callers (left in the SQL function's accepted values for signature
+stability, just unused). `buildNarrativeTitle()` (`bw-sync/index.ts`)
+reverted to returning just the Category/Subcategory's own name (dropped
+the parent-name-prefix composition entirely, including its now-unused
+`categoryRows` lookup parameter); migration `20260721030000` also backfills
+every existing Narrativa-Subcategory's `title` back to the plain name (same
+safety argument as 2026-07-20's original backfill in reverse: no Narrativa
+CRUD exists anywhere in the product, so `title` is 100% derived and safe
+to mass-update).
+
+**Docs**: `intelligence-center/electoral-themes.md` (full rewrite of
+"Mapeamento de conceito"/"Fluxo principal"/alt-flow table/"Interface"),
+`aggregated-metrics/sql-aggregation.md` (`pautas_root_category_id`,
+`get_theme_breakdown`, `get_narratives_table`'s `'pautas'` value,
+`get_authors_ranking`'s `p_scope`/`narrative_labels`),
+`service-layer-aggregation.md`, `narratives-exploration.md`,
+`executive-overview.md`, `foundation/narratives.md` (title-rule reversal),
+`foundation/brandwatch-setup.md` (operational note + checklist item for
+the "Pautas" root Category), `_pending.md` (new ✅ Resolvida entry; gap
+#17 closed as not-applicable to the corrected model).
+
+**Verification**: migration `20260721030000` reviewed manually, not run
+against a live database (no Supabase/Brandwatch access in this
+environment, same recurring limitation as every prior session without
+deploy credentials) — `npx tsc --noEmit`/`npm run build` should be run
+before this ships to confirm the widened `AuthorRow`/`fetchAuthors`
+signature changes compile clean across all 6 Edge Functions and the
+frontend.
+
+### Default organization — self-service, third `user_profiles` write (2026-07-22)
+
+User request: "Permitir o usuário a escolher qual organização é a default.
+Ele poderá alterar no menu de seleção da organização." No spec previously
+covered this — `_glossary.md`'s "Organization Member" scope note was, in
+fact, stale on a related point: it still said "troca de organização ativa
+pela UI... continua fora do MVP," even though the header's org `<select>`
+(`page-header-bar.tsx`) has switched the *session's* active organization
+since Sprint 2 — nobody had corrected that note when the selector shipped.
+Updated both problems at once: the note now reflects that switching
+already exists, and documents this session's actual addition, which is
+narrower — *persisting* which organization is the default across reloads,
+not switching itself.
+
+- **`user_profiles.default_organization_id`** (migration
+  `20260722000000`) — nullable `uuid references organizations(id) on
+  delete set null`. Nullable (unlike `timezone`, which has a sane default)
+  because the user may never have chosen one; the frontend falls back to
+  the first organization returned, same as before this change, whenever
+  it's `null`. No RLS UPDATE policy added — same standing rule as every
+  other `user_profiles` column (`auth/data-model.md`, "Nenhuma policy de
+  INSERT/UPDATE/DELETE para o client é proposital"): the client can only
+  read its own row; writing goes through a dedicated Edge Function.
+- **`update-my-default-organization`** (new Edge Function, third
+  self-service write to `user_profiles` after `update-my-timezone`) —
+  copies that function's exact auth/error-handling template (Bearer token
+  → `supabaseAdmin.auth.getUser(token)` → generic 500 on any Postgres
+  error, never leak `error.message`). One real validation step beyond the
+  timezone function's: it checks `organization_members` server-side
+  (`user_id = caller`, `organization_id = <requested>`) and 403s if no row
+  exists, rather than trusting the `organizations` list the client already
+  has (Principle 2 — that list is RLS-scoped correctly today, but the
+  Edge Function must not assume the client can't send back an arbitrary
+  ID; the frontend never gets to be the source of truth for "is this user
+  actually a member").
+- **`useUserProfile()`** (`hooks/use-user-profile.ts`) gained
+  `defaultOrganizationId: string | null` — added to `UserProfile`, the
+  `.select(...)` string, `FALLBACK_PROFILE`, and the loaded-state mapping.
+  Its existing `retry()` (already there for the 3-state loading pattern)
+  is what lets the header refresh its view of `default_organization_id`
+  right after a successful save, with no full page reload needed.
+- **`header-context.tsx`**: the mount-time effect that used to
+  unconditionally pick `organizations[0]` now prefers
+  `defaultOrganizationId` first (only if the user is still a member of
+  that organization — `organizations.find(...)`, so a since-revoked
+  membership degrades to the old first-org fallback rather than dead-ending
+  on an ID that's no longer in the list) before falling back to
+  `organizations[0]`. New `setCurrentOrganizationAsDefault()` action
+  (exposed via context) calls the Edge Function for the *currently active*
+  organization and calls `retryUserProfile()` on success — deliberately
+  lets its own error propagate to the caller (doesn't swallow it) so
+  `PageHeaderBar` can show a real error toast rather than failing silently.
+  Note this file's own long-standing "sem persistência entre reloads"
+  comment was correct when written (2026-07-15) but is now only true for
+  *period*, not organization — updated in place rather than left stale
+  like the `_glossary.md` note above.
+- **UI** (`page-header-bar.tsx`): a star toggle (`☆`/`★`) next to the
+  existing organization `<select>` — only rendered alongside it (i.e. only
+  when the user has >1 organization, same condition the select already
+  uses). Filled + disabled when the active organization is already the
+  default (nothing to do); outline + clickable otherwise. Follows every
+  relevant Cross-cutting UX rule already established in this file: shows
+  "…" and disables itself while the call is in flight (rule 5), and always
+  ends in a toast (rule 3) — reused the exact local-state
+  `Toast`/`setTimeout(4000)` pattern already used in
+  `users-admin-view.tsx`, since this component had no toast plumbing of
+  its own yet.
+- **Deliberately not built**: no way to *unset* a default once chosen (no
+  product ask for it), and no reconciliation if a user's membership in
+  their current default organization is later revoked by an admin — the
+  column just keeps pointing at an org they're no longer in, silently
+  falls back to first-org behavior next time they load the app (the
+  `organizations.find(...)` guard in `header-context.tsx` already handles
+  that gracefully, it's just never explicitly cleared server-side). Not
+  flagged as a gap needing a fix — low-value edge case (self-corrects on
+  next load) versus the complexity of doing it from the membership-removal
+  side, which is a different, currently-unbuilt admin flow.
+
+**Verification**: `npx tsc --noEmit` passes clean. `npm run build` was
+**not** confirmed clean this session — it currently fails on an unrelated,
+pre-existing issue found in the working tree at the start of this session:
+`app/(intelligence-center)/(analytics)/narratives/page.tsx` still
+references `NarrativeRow.velocity_score`/`velocity_label`, which
+`packages/shared-types/src/envelope.ts` no longer has (already renamed,
+uncommitted, to `trend_score`/`trend_label` — `NarrativeTrendLabel`, dated
+2026-07-13 in its own code comment) alongside an uncommitted migration
+`20260722010000_velocity_to_statistical_trend.sql`. Neither of those files
+was touched by this session's work and this session has no context on
+that rename's intended final shape across every consumer — left
+untouched rather than guessed at. Whoever picks this up next should finish
+that rename (or revert it) before `npm run build` will pass again; it is
+unrelated to the default-organization feature, which type-checks and
+builds correctly in isolation. ✅ **Resolvido 2026-07-24** — ver "Velocidade
+→ Tendência..." abaixo: a mesma migration foi completada (era de fato o
+que essa migration/rename pendente estava fazendo) e todo consumidor
+atualizado em conjunto.
+
+### Velocidade → Tendência, modal de Detalhe de Narrativa, e cadência do event-radar (2026-07-24)
+
+User request, 3 itens na mesma sessão: "1) Rota de `/narratives/[id]`:
+página própria vs. modal... faça Modal e se o usuário quiser ele irá para
+a tela com mais detalhes, deixa essa opção no modal. 2) Intervalo exato do
+pg_cron do motor de detecção (15min vs. 30min) — Manter em 15min. 3) Vamos
+retirar a opção de velocidade em narrativas e substituir por tendência, em
+que, baseado nos valores é calculada uma tendência estatística da
+narrativa, se ela tente a diminuir ou a aumentar. Dessa maneira os
+indicadores de risco se mantém como risk_score e momentum." All three were
+open items in `_pending.md` (decisions #1/#4) or an entirely new ask
+(Velocity→Trend) — all three closed this session.
+
+- **Modal for `/narratives/[id]`** — this picks up exactly where the
+  2026-07-22 "Default organization" session above left off: the modal
+  decision (`narratives-exploration.md`, "Fluxo principal" item 5) had
+  been specified since 2026-07-12 but only ever shipped as a full page
+  (`_pending.md` gap #16). Implemented as originally specced: Next.js
+  parallel route `@modal` on `app/(intelligence-center)/(analytics)/layout.tsx`
+  (new `default.tsx` returning `null` for every non-intercepted route) +
+  intercepting route
+  `app/(intelligence-center)/(analytics)/@modal/(.)narratives/[id]/page.tsx`.
+  The loaded-state body of the old `narratives/[id]/page.tsx` was
+  extracted into `components/intelligence-center/narrative-detail-content.tsx`
+  (`NarrativeDetailContent`, an `isModal` prop toggles whether it renders
+  its own `PageHeaderBar` and whether the top link is "← Voltar para
+  Narrativas" or "Abrir página completa ↗") — the same component now
+  backs both the full page (`narratives/[id]/page.tsx`, now a ~12-line
+  wrapper) and the modal (`narrative-detail-modal.tsx`, the overlay/close
+  chrome — `router.back()` on the ✕ button, backdrop click, and Esc). Per
+  the user's explicit ask ("deixa essa opção no modal"), the modal's
+  "Abrir página completa" is a plain `<a>`, not `next/link` — a
+  client-side navigation to the same `/narratives/[id]` URL would just be
+  re-intercepted by the same modal (Next.js interception is keyed off
+  *how* the navigation happens, not the URL), so escaping it for real
+  requires a hard/document navigation, which a native anchor forces.
+  Because `@modal` is declared once on the shared `(analytics)` layout
+  (not scoped to `/narratives` specifically), this interception fires for
+  a click from **any** page under `(analytics)` — Overview's "Top 3
+  Narrativas" cards, the shared `NarrativesTable` on `/platforms`/`/themes`,
+  not just `/narratives` itself — since all of those already link to
+  `/narratives/[id]` via the same `NarrativeCard`/`NarrativesTable`
+  components. Direct/shared-link access to `/narratives/[id]` (or a hard
+  reload) is unaffected — Next.js only renders the intercepted view for
+  soft client-side navigations, so a fresh document load always resolves
+  to the real, non-modal page. First use of both parallel routes and
+  intercepting routes in this codebase.
+- **`event-radar` pg_cron interval** — set to 15 minutes
+  (`event-radar/detection-engine.md`, "Fluxo principal" item 1), same
+  cadence already used by `bw-sync-heartbeat`. `event-radar` itself is
+  still `rascunho`/unimplemented (Sprint 3) — this only closes the open
+  product decision in the spec text, no code/migration involved (there's
+  no `pg_cron.schedule(...)` call to write yet, the module has no
+  tables).
+- **Velocidade → Tendência** (migration `20260722010000_velocity_to_statistical_trend.sql`
+  — this is the exact migration the 2026-07-22 session above found
+  already created, uncommitted, with `envelope.ts` half-renamed and no
+  consumers updated; this session is what actually built it out, not a
+  coincidence of timestamp): `get_narratives_table` drops
+  `velocity_score`/`velocity_label` (soma de `bw_query_metrics_hourly`
+  últimas-3h vs. 3h-anteriores, 5 rótulos) for `trend_score`/`trend_label`
+  — a real statistical trend, Postgres's built-in `regr_slope` (linear
+  regression, standard SQL aggregate) over the last 14 days of
+  `narrative_metrics.total_mentions`, normalized to 0-100 (50 = stable)
+  the same way `norm_growth` normalizes a growth ratio, clamped at ±100%
+  of the period's own average. Requires ≥4 daily data points to compute a
+  regression at all (`null`/"sem histórico suficiente" otherwise, same
+  treatment as every other score's missing-history case) — 3 labels
+  (`decreasing`/`stable`/`increasing`) replace Velocity's 5
+  (`shrinking_fast`/`declining`/`stable`/`growing`/`viral`). Independent
+  of the header's selected period, same as Velocity was — just a fixed
+  14-day window instead of a 3h/3h snapshot, deliberately less noisy.
+  Function signature required a `drop function` before `create or
+  replace` (same lesson as `20260721010000` — Postgres won't let you
+  rename a return-table column via bare `create or replace`).
+  `risk_score`'s formula/weights are **unchanged in shape** — Momentum and
+  Risk explicitly "stay as indicators" per the user's own wording — only
+  the *source* of the 20%-weighted "recent growth" term switches from
+  `velocity_score` to `trend_score`; this specific substitution wasn't
+  addressed directly by the request, so it's flagged as the conservative
+  reading in `sql-aggregation.md`, "Risco", rather than silently assumed.
+  The still-open ⚠️ DECISÃO PENDENTE about an interaction term (dampening
+  Momentum/Trend's contribution to risk when sentiment is very positive)
+  is untouched, just reworded.
+  Propagated everywhere the old field names lived, since Principle 5 means
+  there's no single source of truth on the Deno side: `packages/shared-types/src/envelope.ts`
+  (`VelocityLabel` → `NarrativeTrendLabel`, deliberately not named `Trend`
+  — that name is already taken by the unrelated time-series chart type
+  `Trend`/`TrendPoint`, `PageEnvelope.trends`), the canonical Deno copy
+  (`supabase/functions-shared-source/aggregated-metrics-service.ts`), and
+  all 6 deployed Edge Functions' own inline copies
+  (`get-page-{overview,narratives,sentiment,platforms,themes}`,
+  `get-narrative-detail` — the latter also has a `NarrativeSummary`-shaped
+  extra in `ui_meta.narrative` with its own copy of the same 2 fields).
+  Frontend: `score-badges.tsx`'s `VelocityIndicator`/`VELOCITY_META` →
+  `TrendIndicator`/`TREND_META` (3 entries now, not 5 — arrows
+  ↓/→/↑, reusing the existing `intensity-2/3/4` tokens rather than
+  inventing new colors), `narratives-table.tsx`'s "Velocidade" column →
+  "Tendência" (tooltip rewritten to describe the regression), the
+  row-selection summary panel and `narrative-detail-content.tsx`'s header
+  badge. `_design-tokens.md` gained a dedicated "Tendência (3 faixas)"
+  table (was folded into a shared "Momentum e Velocidade" table before —
+  split apart since the two no longer share the same band boundaries),
+  with the old 5-band table kept as a collapsed "Histórico" `<details>`
+  rather than deleted outright. `NarrativeCard` (the redesigned card from
+  2026-07-21) never showed a Velocity badge to begin with, so it's
+  unaffected — the divergence between it and `narratives-exploration.md`'s
+  card description (which still says "SOV, momentum, velocidade") predates
+  this session and wasn't introduced by it, just left with a note pointing
+  at the pre-existing gap instead of silently perpetuating it.
+  `event-radar/severity.md`'s own unrelated "Velocidade" weight (20% of
+  `severity_score`, a still-undesigned per-*event* escalation-speed
+  factor, not the per-*narrative* indicator) was deliberately **not**
+  renamed in lockstep — flagged inline as a distinct, still-`rascunho`
+  concept instead, since renaming it would have implied it now reuses the
+  14-day regression, which was never decided.
+- **Verification**: `npx tsc --noEmit` and `npm run build` both confirmed
+  clean this session (resolving the build breakage the 2026-07-22 session
+  had flagged and left open). No live Supabase access — migration
+  `20260722010000` reviewed manually, not run against a real database,
+  same recurring limitation as every migration-only session in this file
+  without deploy credentials. No browser automation available — the modal
+  overlay's actual rendering (backdrop, close affordances, responsive
+  width) was not visually confirmed in a browser, same standing limitation
+  noted throughout this file's `intelligence-center` sessions.
 
 ## Directory structure
 

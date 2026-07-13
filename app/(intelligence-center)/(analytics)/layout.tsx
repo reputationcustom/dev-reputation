@@ -10,7 +10,20 @@ import { EmptyState } from "@/components/ui/empty-state";
 // só se aplica às 5 páginas de análise (organização/período fazem parte
 // do escopo delas), não a /admin/users nem /perfil, que ficam no layout
 // pai (`(intelligence-center)/layout.tsx`) sem este gate.
-export default function AnalyticsLayout({ children }: { children: React.ReactNode }) {
+//
+// `modal` é o slot paralelo `@modal` (ver `@modal/default.tsx` e
+// `@modal/(.)narratives/[id]/page.tsx`) — implementa o modal de Detalhe de
+// Narrativa via intercepting route (2026-07-22, narratives-exploration.md,
+// "Fluxo principal" item 5). Renderizado ao lado de `children`, não em vez
+// dele — a página por trás continua montada, o modal só sobrepõe (`fixed
+// inset-0`, ver narrative-detail-modal.tsx).
+export default function AnalyticsLayout({
+  children,
+  modal,
+}: {
+  children: React.ReactNode;
+  modal: React.ReactNode;
+}) {
   const { organizationsStatus, organizations, retryOrganizations, organizationId } = useIntelligenceCenterHeader();
 
   if (organizationsStatus === "loading") {
@@ -51,5 +64,10 @@ export default function AnalyticsLayout({ children }: { children: React.ReactNod
     );
   }
 
-  return <>{children}</>;
+  return (
+    <>
+      {children}
+      {modal}
+    </>
+  );
 }
