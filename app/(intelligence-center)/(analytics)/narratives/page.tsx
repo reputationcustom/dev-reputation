@@ -6,6 +6,7 @@ import { PageHeaderBar } from "@/components/intelligence-center/page-header-bar"
 import { WidgetCard } from "@/components/intelligence-center/widget-card";
 import { NarrativesTable } from "@/components/intelligence-center/narratives-table";
 import { NarrativeCard } from "@/components/intelligence-center/narrative-card";
+import { NarrativeCategoryLanes } from "@/components/intelligence-center/narrative-category-lanes";
 
 // Exploração de Narrativas — lista (`/narratives`,
 // intelligence-center/narratives-exploration.md). Clique numa linha abre um
@@ -46,13 +47,9 @@ export default function NarrativesListPage() {
           </div>
         )}
 
-        {!selected && rows.length > 0 && (
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3">
-            {rows.map((row) => (
-              <NarrativeCard key={row.id} narrative={row} />
-            ))}
-          </div>
-        )}
+        {/* Cards agrupados por categoria (raia por Category-pai) —
+            pedido do usuário 2026-07-25, ver narrative-category-lanes.tsx. */}
+        {!selected && rows.length > 0 && <NarrativeCategoryLanes rows={rows} />}
       </div>
     </>
   );

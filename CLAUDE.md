@@ -3379,6 +3379,57 @@ in this environment — migration reviewed manually, not run against a real
 database, same recurring limitation as every migration-only session in
 this file without deploy credentials.
 
+### Narrative cards on `/narratives` grouped by category (2026-07-25)
+
+User request: "os cards que ficam abaixo [na página de Narrativas], devem
+ser organizados pela categoria. Podemos utilizar raia ou outro componente
+que achar mais apropriado para facilitar o agrupamento e localização da
+narrativa."
+
+- **Backend**: `get_narratives_table` gained `category_label` (migration
+  `20260725050000`, required a `drop function` first — same recurring
+  Postgres constraint as every prior column addition to this function,
+  see `20260721010000`/`20260725000000`). Value = the parent Category's
+  name (`bw_categories.parent_id`, resolved in the `scope` CTE via
+  `coalesce(parent_bc.name, bc.name)`) — the same relationship
+  `pautas_root_category_id()` and the `'leaves'`/`'pautas'` scope filters
+  already use, no new data, just never returned before. Falls back to the
+  Category's own name for a `'roots'`-scope row (no parent) — never
+  `null`, always a valid grouping key.
+- **Propagation** (Principle 5 — no shared import for Edge Functions):
+  `NarrativeRow`/`NarrativeTableRow` in `packages/shared-types/src/envelope.ts`,
+  the canonical `supabase/functions-shared-source/aggregated-metrics-service.ts`,
+  and all 6 deployed `get-page-*`/`get-narrative-detail` inline copies all
+  gained the same `category_label: string` field — pure passthrough, no
+  mapping code needed (`fetchNarratives`'s `{ ...row, tags: ... }` spread
+  already carries any RPC column through).
+- **Frontend**: new `components/intelligence-center/narrative-category-lanes.tsx`
+  (`NarrativeCategoryLanes`) replaces the flat `grid-cols-1 sm:grid-cols-2
+  md:grid-cols-3` card grid on `/narratives`' "no row selected" state
+  (`app/(intelligence-center)/(analytics)/narratives/page.tsx`) — groups
+  rows by `category_label` into sections, each with a header (category
+  name + count) followed by that category's own grid of the same
+  `NarrativeCard`s as before. Categories sorted alphabetically
+  (`localeCompare('pt-BR')`) — the goal is finding a Narrativa quickly
+  ("localização"), not re-ranking by risk (the interactive table above the
+  cards already covers prioritization); within a category, the original
+  risk-desc order from `get_narratives_table` is preserved.
+- **Design call**: chose stacked sections with a wrapping grid per
+  category over a literal horizontal-scroll swimlane ("raia" in the
+  Kanban/roadmap sense). Reasoning: this app has no horizontal-scroll
+  card-carousel pattern anywhere else (every list in `intelligence-center`
+  wraps into a responsive grid), and a wrapping grid stays fully scannable
+  without requiring drag/scroll — a better fit for "localização" than
+  introducing a new interaction paradigm for one page. Documented as a
+  design decision, not a closed product decision — revisit if the user
+  specifically wants the horizontal-lane look.
+- **Verification**: `npx tsc --noEmit` passes clean. No live Supabase
+  access in this environment — migration reviewed manually, not run
+  against a real database, same recurring limitation as every
+  migration-only session in this file without deploy credentials. No
+  browser automation available — the grouped layout's actual rendering
+  was not visually confirmed in a browser.
+
 ## Directory structure
 
 ```

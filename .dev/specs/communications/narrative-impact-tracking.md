@@ -31,7 +31,7 @@ identifica qual é qual — ver "Interface (UI)").
 ## Conceito: janelas de comparação
 
 Para um registro com `occurred_at = D`, com uma janela de `N` dias
-(padrão proposto: **7**, ver "⚠️ Decisão pendente" abaixo):
+(✅ **default definitivo: 7**, ver decisão abaixo):
 
 - **Janela "antes"**: `[D - N dias, D)` — sempre completa (dado já
   sincronizado/histórico).
@@ -49,12 +49,16 @@ sistemático a favor de "diminuiu". Os scores 0-100 (Momentum/Tendência/
 Risco) e o `net_sentiment` (-100 a 100) já são normalizados por definição
 — não precisam desse ajuste.
 
-⚠️ **DECISÃO PENDENTE**: tamanho padrão da janela (`N`). Proposta: **7
-dias**, mesma granularidade já usada nos atalhos de período do produto
-(Diário/Semanal/Mensal). Sugestão de UX: um seletor 3/7/14 dias na própria
-tela, para o usuário ajustar a sensibilidade da comparação sem exigir uma
-nova migration — confirmar se o padrão de 7 dias está correto antes da
-implementação.
+✅ **Decidido (2026-07-25)**: "Seguir o recomendado" — tamanho padrão da
+janela (`N`) é **7 dias**, mesma granularidade já usada nos atalhos de
+período do produto (Diário/Semanal/Mensal), com um **seletor 3/7/14 dias
+na própria tela** (`/communications/[narrativeId]`, "Fluxo principal"
+item 2) para o usuário ajustar a sensibilidade da comparação sem exigir
+nova migration ou parâmetro adicional no envelope — `p_window_days` já é
+parâmetro de `get_communication_impact`/`get_narrative_communication_timeline`
+(ver "Dependências técnicas" abaixo), então os 3 valores já são
+suportados pela mesma function, só a UI escolhe qual passar. `7` é usado
+sempre que o usuário não trocar o seletor manualmente.
 
 ## Regras de negócio
 
@@ -93,8 +97,8 @@ implementação.
    "Ver impacto" na lista de comunicações, do link "Ver linha do tempo
    completa" no resumo do detalhe de Narrativa
    (`intelligence-center/narratives-exploration.md`), ou navegando direto.
-2. Cabeçalho: nome da Narrativa, seletor de janela (3/7/14 dias, ver ⚠️
-   decisão pendente acima), botão **"+ Registrar"** (mesmo
+2. Cabeçalho: nome da Narrativa, seletor de janela (3/7/14 dias, default
+   7 — ver "Conceito: janelas de comparação" acima), botão **"+ Registrar"** (mesmo
    `CommunicationFormModal` de
    [communication-registration.md](communication-registration.md),
    "Entrada rápida a partir de uma Narrativa" — Narrativa pré-preenchida e

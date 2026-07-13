@@ -483,6 +483,23 @@ paleta nova. A borda esquerda do card usa só 3 estados (verde/vermelho/
 neutro, não as 7 faixas finas de `sentiment_label`) — pedido explícito do
 usuário ("variação entre vermelho, verde ou neutro").
 
+✅ **`category_label` adicionado (2026-07-25, migration `20260725050000`)**
+— pedido do usuário: "os cards que ficam abaixo [na página de Narrativas],
+devem ser organizados pela categoria." `get_narratives_table` ganhou mais
+uma coluna de saída, `category_label` (`text`, nunca `null`): o nome da
+Category-pai da Subcategory (`bw_categories.parent_id` — a Pauta/tema a
+que a Narrativa pertence), resolvida via a mesma tabela/coluna já usada
+por `pautas_root_category_id()` e pelos escopos `'leaves'`/`'pautas'`
+desta função — nenhum dado novo, só nunca tinha sido devolvido por esta
+function. Para uma linha de escopo `'roots'` (Category de topo, sem pai —
+não usado por `/narratives` hoje, mas possível para outras páginas), cai
+no próprio nome da Category. Consumido pelo frontend
+(`NarrativeCategoryLanes`, ver `intelligence-center/narratives-exploration.md`,
+"Interface (UI)") para agrupar os cards da lista de Narrativas por
+categoria — nenhum outro consumidor lê este campo hoje (a tabela
+interativa de Narrativas continua sem coluna de categoria, fora de
+escopo deste pedido).
+
 ## Regras de negócio
 
 - Granularidade automática da série temporal (`get_volume_trend`): reusa a mesma regra já

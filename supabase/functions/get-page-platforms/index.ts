@@ -116,6 +116,9 @@ export interface Trend {
 export interface NarrativeRow {
   id: string
   title: string
+  // Nome da Category-pai (Pauta/tema da Subcategory) - get_narratives_table
+  // (20260725050000), usado pro frontend agrupar os cards por categoria.
+  category_label: string
   sov_pct: number | null
   total_mentions: number
   net_sentiment: number | null
@@ -360,6 +363,7 @@ interface VolumeTrendRow {
 interface NarrativeTableRow {
   id: string
   title: string
+  category_label: string
   sov_pct: number | null
   total_mentions: number
   net_sentiment: number | null

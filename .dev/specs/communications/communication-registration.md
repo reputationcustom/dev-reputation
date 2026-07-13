@@ -205,8 +205,10 @@ Narrativa, já vendo o registro novo refletido.
   constraint do banco, ver `data-model.md`).
 - Sem workflow/aprovação — qualquer membro da organização pode registrar,
   editar ou excluir qualquer Comunicação ou Decisão (ver `data-model.md`,
-  "Políticas RLS" e a ⚠️ decisão pendente sobre restringir por
-  papel/criador).
+  "Políticas RLS"). ✅ **Decidido (2026-07-25)**: sem restrição por
+  perfil/criador nesta versão — restrição por perfis fica para uma versão
+  futura do produto, quando um sistema de perfis existir (ver
+  `data-model.md`).
 
 ## Dados envolvidos
 
@@ -229,7 +231,7 @@ Narrativa, já vendo o registro novo refletido.
 |---|---|
 | Acessar `/communications` | qualquer usuário autenticado, membro de ao menos uma organização |
 | Registrar Comunicação ou Decisão | membro da organização ativa |
-| Editar/excluir Comunicação ou Decisão | membro da organização ativa (qualquer uma, não só a que criou — ver ⚠️ decisão pendente) |
+| Editar/excluir Comunicação ou Decisão | membro da organização ativa (qualquer uma, não só a que criou — sem restrição por perfil nesta versão, ver `data-model.md`) |
 
 ## Notificações / Feedback ao usuário
 

@@ -67,7 +67,11 @@ membro de ao menos uma organização.
    de Narrativa", não mostra um badge de Tendência dedicado hoje — mostra
    Risco+Momentum no cabeçalho — mesma divergência de card/spec já
    registrada antes da troca Velocidade→Tendência, não introduzida por
-   ela.)
+   ela.) ✅ **Agrupado por categoria (2026-07-25)**: pedido do usuário
+   ("os cards que ficam abaixo, devem ser organizados pela categoria")
+   — os cards deixam de ser uma grade única e passam a ser organizados em
+   uma "raia" por Category-pai (`NarrativeCategoryLanes`, ver "Interface
+   (UI)" abaixo).
 5. "Ver página completa" (no painel de resumo) ou "Explorar narrativa" (no
    card) → abre o detalhe. ✅ **Decidido (2026-07-12), implementado
    (2026-07-22)**: modal sobre a lista (mantém contexto/filtros da lista,
@@ -126,6 +130,31 @@ reusado pelo widget "Top 3 Narrativas" da Visão Geral (`executive-overview.md`)
 Ver `aggregated-metrics/sql-aggregation.md`, "Campos do card de Narrativa",
 para de onde vem cada campo novo (`sentiment_positive_pct`/`summary`/`tags`
 em `get_narratives_table`).
+
+✅ **Cards agrupados por categoria (2026-07-25)**, pedido do usuário: "os
+cards que ficam abaixo, devem ser organizados pela categoria. Podemos
+utilizar raia ou outro componente que achar mais apropriado para facilitar
+o agrupamento e localização da narrativa." O grid único de
+`NarrativeCard`s (item 4 do "Fluxo principal") foi substituído por
+`NarrativeCategoryLanes` (`components/intelligence-center/
+narrative-category-lanes.tsx`): uma "raia" (seção) por Category-pai da
+Narrativa (`NarrativeRow.category_label`, novo campo em
+`get_narratives_table`, migration `20260725050000` — ver
+`sql-aggregation.md`, "Campos do card de Narrativa") — cabeçalho com o
+nome da categoria + contagem de Narrativas, seguido da mesma grade
+responsiva de `NarrativeCard`s de antes (`grid-cols-1 sm:grid-cols-2
+md:grid-cols-3`), agora escopada àquela categoria. Categorias ordenadas
+alfabeticamente (pt-BR, `localeCompare`) — o objetivo é achar uma
+Narrativa rapidamente ("localização"), não repriorizar por risco (a
+tabela interativa acima já cobre priorização); dentro de cada categoria, a
+ordem original de `get_narratives_table` (risco desc) é preservada.
+⚠️ **Decisão de design, não uma decisão de produto em aberto**: optado por
+seções empilhadas verticalmente (grid que quebra linha) em vez de uma raia
+com rolagem horizontal estilo Kanban — este produto não usa esse padrão de
+interação em nenhuma outra tela, e uma grade que quebra linha é 100%
+escaneável sem exigir arrastar/rolar lateralmente, mais alinhado ao
+"localização" pedido. Revisitar se o usuário preferir explicitamente o
+padrão de rolagem horizontal.
 
 ### Detalhe (`/narratives/[id]`)
 

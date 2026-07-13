@@ -139,12 +139,23 @@ autenticada nova, não recriado por módulo.
 
 ## Decisões pendentes deste módulo
 
-| Onde | Decisão |
-|---|---|
-| [data-model.md](data-model.md) | Permissão de CRUD restrita por papel/criador vs. qualquer membro da organização |
-| [narrative-impact-tracking.md](narrative-impact-tracking.md) | Tamanho padrão da janela antes/depois (proposta: 7 dias, configurável) |
+Nenhuma decisão de produto pendente aberta — todas resolvidas em
+2026-07-25 (ver lista abaixo).
 
 ✅ **Decisões resolvidas (2026-07-25, pedidos do usuário na mesma sessão)**:
+- **Permissão de CRUD sem restrição por enquanto** — qualquer membro da
+  organização pode registrar/editar/excluir qualquer Comunicação ou
+  Decisão. "Versões mais adiante será restrito por perfis" — evolução
+  futura já anunciada pelo usuário, sem sistema de perfis definido ainda
+  no produto para modelar agora (ver [data-model.md](data-model.md),
+  "Políticas RLS").
+- **Janela padrão de comparação antes/depois: 7 dias**, com seletor
+  3/7/14 na tela (`p_window_days` já é parâmetro das functions, os 3
+  valores já suportados) — ver [narrative-impact-tracking.md](narrative-impact-tracking.md),
+  "Conceito: janelas de comparação".
+- **Tipo de comunicação vira tabela, não enum** — `communication_types`
+  (ver [data-model.md](data-model.md)): "a lógica do módulo pega dela",
+  extensível por `INSERT`, sem `ALTER TYPE`.
 - **Tipo de comunicação vira tabela, não enum** — `communication_types`
   (ver [data-model.md](data-model.md)): "a lógica do módulo pega dela",
   extensível por `INSERT`, sem `ALTER TYPE`.

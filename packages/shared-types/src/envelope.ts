@@ -125,6 +125,12 @@ export interface Trend {
 export interface NarrativeRow {
   id: string;
   title: string;
+  // Nome da Category-pai (a Pauta/tema a que a Subcategory pertence) —
+  // bw_categories.parent_id, get_narratives_table (20260725050000). Nunca
+  // null: para uma linha de escopo 'roots' (sem pai) cai no próprio nome
+  // da Category. Usado pra agrupar os cards da lista de Narrativas por
+  // categoria (narratives/page.tsx).
+  category_label: string;
   sov_pct: number;
   total_mentions: number;
   net_sentiment: number;

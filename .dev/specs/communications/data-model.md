@@ -181,15 +181,21 @@ alter table communications add constraint communications_record_type_fields_chec
 | UPDATE | membro da organização | `using`/`with check`: `organization_id in (select auth_organization_ids())` |
 | DELETE | membro da organização | `using`: `organization_id in (select auth_organization_ids())` |
 
-✅ **Sem restrição por papel/usuário além de pertencer à organização** —
-qualquer membro pode registrar, editar ou excluir uma comunicação de
-qualquer colega, mesma granularidade de permissão já existente no produto
-hoje (não há um papel "equipe de comunicação" distinto de "membro da
-organização" — só existe `is_admin`, que é **global de plataforma**, não
-por organização, ver `auth/data-model.md`). ⚠️ **DECISÃO PENDENTE**: se o
-volume de uso mostrar necessidade de restringir edição/exclusão a quem
-criou o registro (ou a um admin), isso é uma extensão aditiva da policy —
-não modelar preventivamente agora.
+✅ **Decidido (2026-07-25)**: "Permissão de CRUD de communications sem
+restrição por enquanto, versões mais adiante será restrito por perfis" —
+qualquer membro pode registrar, editar ou excluir uma Comunicação/Decisão
+de qualquer colega, mesma granularidade de permissão já existente no
+produto hoje (não há um papel "equipe de comunicação" distinto de "membro
+da organização" — só existe `is_admin`, que é **global de plataforma**,
+não por organização, ver `auth/data-model.md`). **Decisão deliberada, não
+uma omissão** — confirmado explicitamente pelo usuário como o
+comportamento correto para esta versão. Evolução futura já anunciada,
+não modelada agora (sem um sistema de perfis/papéis por organização
+definido ainda no produto — `is_admin` sozinho não seria granular o
+bastante para "quem pode editar Comunicações desta organização"): quando
+um sistema de perfis existir, restringir edição/exclusão por perfil (ou a
+quem criou o registro) vira uma extensão aditiva da policy acima, sem
+mudança de schema.
 
 ## Trigger: `set_communication_organization` (BEFORE INSERT)
 
@@ -255,11 +261,14 @@ user_profiles ──< communications.created_by (nullable)
 
 ## ⚠️ Pendências
 
-1. Permissão de CRUD restrita por papel/criador (ver acima) — hoje aberta para qualquer membro da organização.
-
-✅ Duas pendências anteriores desta seção foram resolvidas em 2026-07-25:
-"Lista final de `communication_type`" deixou de bloquear a migration —
-virou tabela (`communication_types`), então adicionar/corrigir um tipo é
-um `INSERT`, não uma decisão de schema; "vínculo automático com
-`mentions`" foi confirmado como manual, definitivamente (ver
-`bw_resource_id` acima) — nenhuma automação de matching está planejada.
+Nenhuma pendência de decisão de produto aberta neste arquivo — as 3 que
+existiam foram todas resolvidas em 2026-07-25: "Lista final de
+`communication_type`" deixou de bloquear a migration — virou tabela
+(`communication_types`), então adicionar/corrigir um tipo é um `INSERT`,
+não uma decisão de schema; "vínculo automático com `mentions`" foi
+confirmado como manual, definitivamente (ver `bw_resource_id` acima) —
+nenhuma automação de matching está planejada; "permissão de CRUD restrita
+por papel/criador" foi confirmada como **sem restrição por enquanto**,
+com evolução futura por perfis já anunciada (ver "Políticas RLS" acima) —
+não é mais uma pendência, é uma decisão deliberada com um roadmap
+conhecido.
