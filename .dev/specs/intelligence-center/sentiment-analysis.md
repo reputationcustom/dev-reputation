@@ -122,11 +122,18 @@ Mesmo público das demais páginas deste módulo.
 - **Sentimento por pauta**: depende de `electoral-themes.md` (Pauta =
   Narrativa de topo) — mesmo dado de "Sentimento por Narrativa" acima
   (split completo, sem a limitação de `net_sentiment`), sem gap adicional.
-- **Sentimento por localização**: ✅ **Resolvido (2026-07-12, mesma
+- **Sentimento por localização**: ✅ **Dado capturado (2026-07-12, mesma
   migration)** — `bw_query_demographics_daily.net_sentiment`, via
   `data/netSentiment/{countries,continents,cities,regions}/days`, só para
   os 4 `dimension_type` de localização. Mesma limitação de score único do
-  item acima.
+  item acima. ✅ **Bloco exposto como "Sentimento por estado" (2026-07-25,
+  pedido do usuário: "breakdown por estado brasileiro")** —
+  `get_region_breakdown` (`sql-aggregation.md`) lê `dimension_type =
+  'region'` (a divisão administrativa por estado, dentro da hierarquia
+  geográfica da Brandwatch), não mais `'country'` (decisão de escopo
+  anterior, de baixo valor pra uma plataforma 100% de campanhas
+  brasileiras). ⚠️ Mapeamento exato de `regions` → UF brasileira nunca
+  confirmado contra um payload real, ver `foundation/data-model.md`.
 
 ## Dados envolvidos
 

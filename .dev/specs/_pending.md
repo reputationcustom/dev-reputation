@@ -1,6 +1,6 @@
 ---
 tipo: pending-tracker
-atualizado: 2026-07-25 (rev. 23)
+atualizado: 2026-07-25 (rev. 25)
 ---
 
 # Pendências — Digital Intelligent Communication
@@ -29,8 +29,23 @@ atualizado: 2026-07-25 (rev. 23)
 | # | Módulo | Decisão | Spec |
 |---|---|---|---|
 | 5 | `event-radar` | UI de aprovação (aceitar/rejeitar) de `cases` pendentes `high`/`critical` — ainda sem spec própria, bloqueia só esse passo específico de `schema-integration.md` | [event-radar/schema-integration.md](event-radar/schema-integration.md) |
-| 28 | `communications` | Permissão de CRUD de `communications` restrita por papel/criador vs. aberta a qualquer membro da organização (proposta atual: aberta) | [communications/data-model.md](communications/data-model.md) |
-| 30 | `communications` | Tamanho padrão da janela de comparação antes/depois no acompanhamento de impacto (proposta: 7 dias, configurável 3/7/14) | [communications/narrative-impact-tracking.md](communications/narrative-impact-tracking.md) |
+
+✅ **Resolvidas 2026-07-25** (decisões #28 e #30, `communications`, mesma
+sessão, dois pedidos do usuário): "1) Permissão de CRUD de communications
+sem restrição por enquanto, versões mais adiante será restrito por
+perfis. 2) Tamanho padrão da janela de comparação antes/depois no
+acompanhamento de impacto (proposta: 7 dias, configurável 3/7/14). Seguir
+o recomendado." Decisão #28: sem restrição de papel/criador nesta
+versão — qualquer membro da organização pode registrar/editar/excluir
+qualquer Comunicação/Decisão; restrição por perfis fica como evolução
+futura explícita, sem sistema de perfis definido ainda no produto pra
+modelar agora (ver `communications/data-model.md`, "Políticas RLS").
+Decisão #30: janela padrão de **7 dias**, com seletor 3/7/14 na tela —
+`p_window_days` já é parâmetro das 2 functions propostas
+(`get_communication_impact`/`get_narrative_communication_timeline`), os 3
+valores já suportados sem mudança de schema (ver
+`communications/narrative-impact-tracking.md`, "Conceito: janelas de
+comparação").
 
 ✅ **Bug corrigido 2026-07-25** (`auth`/`intelligence-center`, report do
 usuário: "Sempre que utilizo ctrl+r ele vai para a última organização
@@ -65,14 +80,26 @@ do usuário: "Implementar agora: país + net_sentiment" / "Trend de
 plataforma/pauta ao longo do tempo" / "Cache de página (TTL 5min)" / "
 Camada 0 de ai-synthesis (recomendado)"):
 - **#9 (breakdown de região)**: `get_region_breakdown` (migration
-  `20260725010000`), fonte `bw_query_demographics_daily`
-  (`dimension_type='country'`), `value`=`net_sentiment` médio ponderado,
-  `pct`=participação de menções, top 15 países. ⚠️ Limitação real: essa
+  `20260725010000`), fonte `bw_query_demographics_daily`, `value`=`net_sentiment`
+  médio ponderado, `pct`=participação de menções. ⚠️ Limitação real: essa
   tabela nunca teve `category_id` — só cobre o escopo "Query inteira",
   nunca uma Narrativa específica (`narrative_detail` sempre recebe vazio
   de propósito, não o dado errado mascarado). Frontend: widget "Sentimento
   por localização" em `/sentiment` trocado de `EmptyState` pra
-  `BreakdownPanel` real.
+  `BreakdownPanel` real. ✅ **Repivotado no mesmo dia (migration
+  `20260725060000`)**: pedido do usuário "Precisamos de um breakdown por
+  estado brasileiro" — checado contra `foundation`, que já sincroniza o
+  dado necessário sem nenhuma mudança em `bw-sync`
+  (`bw_query_demographics_daily.dimension_type='region'`, uma das 4
+  dimensões de localização capturadas desde `20260711070000`, nunca antes
+  exposta por function/bloco nenhum). `get_region_breakdown` passou a ler
+  `dimension_type='region'` (estado) em vez de `'country'` — país deixou
+  de ser exposto (baixo valor pra uma plataforma 100% de campanhas
+  brasileiras). Widget renomeado pra "Sentimento por estado". ⚠️ Mesma
+  ressalva desde que essa dimensão foi implementada: mapeamento exato de
+  `regions` (dimensão de chart da Brandwatch) → UF brasileira nunca
+  confirmado contra um payload real — revisar contra logs de produção
+  quando houver acesso.
 - **#10 (trend de plataforma/pauta ao longo do tempo)**:
   `get_platform_volume_trend`/`get_theme_sov_trend` (migration
   `20260725030000`), reagrupados localmente em semana/mês quando o

@@ -67,10 +67,13 @@ export default function SentimentPage() {
           />
         </WidgetCard>
 
-        <WidgetCard title="Sentimento por localização" status={status} onRetry={retry}>
+        {/* ✅ Repivotado 2026-07-25 (pedido do usuário: "breakdown por
+            estado brasileiro") — get_region_breakdown lê dimension_type='region'
+            (estado), não mais 'country'. Ver sql-aggregation.md. */}
+        <WidgetCard title="Sentimento por estado" status={status} onRetry={retry}>
           <BreakdownPanel
             breakdown={envelope?.breakdowns.find((b) => b.type === "region")}
-            emptyMessage="Nenhum dado de localização ainda."
+            emptyMessage="Nenhum dado por estado ainda."
           />
         </WidgetCard>
 
