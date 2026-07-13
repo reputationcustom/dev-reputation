@@ -150,6 +150,19 @@ protótipo real — cobrem todo gráfico/tabela das 5 páginas deste módulo
 2. **Tooltip ao passar o mouse** sobre qualquer ponto/segmento de
    gráfico — mostra o valor exato + rótulo (data, categoria) daquele
    ponto especificamente. Nenhum gráfico tem isso hoje.
+
+   ✅ **Resolvido, definitivo (2026-07-13)**: a regra 1 acima já pedia
+   rótulo "nos pontos/segmentos" — em `TrendLineChart` isso significa o
+   valor aparecendo desenhado junto ao ponto sob o cursor, não só num
+   painel abaixo do gráfico. Esse rótulo foi implementado (2026-07-12),
+   removido numa revisão seguinte (2026-07-19) por avaliação de que
+   duplicava o painel abaixo, e o usuário pediu de volta explicitamente
+   (2026-07-13, mesma frase da primeira vez: "rótulos... para que o
+   usuário veja os valores das linhas ao mover o mouse sobre o gráfico").
+   **Não remover de novo** sem confirmar antes — os dois existem juntos e
+   não são redundantes: o rótulo no ponto (`charts/trend-line-chart.tsx`)
+   é o requisito explícito desta regra; o painel abaixo continua útil pra
+   comparar todas as séries de uma vez quando há mais de uma linha.
 3. **Página Visão Geral permanece como no protótipo**: organização
    (seletor, se houver mais de uma), e os filtros rápidos de período
    Diário/Semanal/Mensal/Personalizado (com intervalo customizado via 2

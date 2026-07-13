@@ -1,6 +1,6 @@
 ---
 tipo: pending-tracker
-atualizado: 2026-07-17 (rev. 10)
+atualizado: 2026-07-20 (rev. 11)
 ---
 
 # Pendências — Digital Intelligent Communication
@@ -58,6 +58,27 @@ Eleitorais", e item #17 abaixo (parcialmente resolvido pelo mesmo
 trabalho). Mesma sessão também corrigiu um bug de produção real de
 rate-limit cross-invocation em `bw-sync` (migration `20260716020000`) —
 ver `CLAUDE.md`, "bw-sync rate limit cross-invocation backoff".
+
+✅ **Resolvida 2026-07-20** (pedido do usuário, não numerada): "1) O nome
+da narrativa será composto por 'categoria - subcategoria'. 2) Tanto na
+página de overview quanto na lista de narrativas serão mostradas todas as
+narrativas. 3) Revise se os valores de sentimento por narrativa estão
+corretos, no Frontend está tudo neutro, não corresponde a realidade."
+Reverte a decisão de 2026-07-16 logo acima só pras páginas Overview/
+Narrativas (`platforms`/`themes`/`reports` continuam em `'leaves'`/`'roots'`).
+Título composto: `ensureNarrativesFromCategories()` (`bw-sync/index.ts`,
+`buildNarrativeTitle()`) + backfill de todo `title` existente (migration
+`20260720000000`). Bug de sentimento real encontrado e corrigido: o
+fallback local de `sentiment_bucket` (`public.narratives_overview`, usado
+só enquanto `net_sentiment` oficial não sincronizou) dividia por
+`total_mentions` em vez de `(sentiment_positive + sentiment_negative)`,
+enviesando o resultado pra 'neutral' sempre que havia uma fatia relevante
+de mentions neutras/factuais; e `runDailyMetricsStep()` fazia as 2
+chamadas de `net_sentiment` por último entre 10 chamadas fixas de
+agregado, sob risco de nunca rodar quando o orçamento de 25
+chamadas/invocação se esgotava antes — reordenado pra prioridade máxima
+logo após o loop de sentimento. Ver `CLAUDE.md`, "Alteração da lógica de
+definição da narrativa" e `foundation/narratives.md`.
 
 ✅ Resolvidas em 2026-07-13: `net_sentiment` oficial por Narrativa/Query
 (gap técnico #1 de foundation, migration `20260713030000` — ver

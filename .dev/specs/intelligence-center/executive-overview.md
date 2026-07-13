@@ -3,10 +3,40 @@ tipo: feature-spec
 módulo: intelligence-center
 funcionalidade: executive-overview
 status: implementado
-atualizado: 2026-07-12
+atualizado: 2026-07-20
 ---
 
 # Executive Overview
+
+> ✅ **Segunda leva de ajustes de UI (2026-07-13)**: 5 pedidos do usuário,
+> ver `CLAUDE.md`, "UI polish pass" (seção estendida) pra detalhamento
+> completo:
+> 1. **Tooltips nas colunas da tabela de Narrativas** (`narratives-table.tsx`)
+>    — mesmo ícone "?"/componente `Tooltip` já usado nos KPIs, agora também
+>    em SOV/Velocidade/Sentimento/Momentum/Risco (cabeçalho de coluna).
+>    `Tooltip` ganhou uma prop `position="bottom"` pra esse uso — abrindo
+>    pra cima a partir do cabeçalho, o tooltip seria cortado pelo
+>    `overflow-x-auto` que envolve a tabela.
+> 2. **Legenda (`ScoreLegend`) movida pra logo abaixo da própria tabela** —
+>    antes ficava solta no fim da página, depois do painel de Insights,
+>    longe dos badges de Risco/Momentum que ela explica.
+> 3. **Títulos de widget, rótulos de KPI e cabeçalhos de coluna em negrito**
+>    (`font-bold`, eram `font-semibold`/`font-medium`) — `WidgetCard`,
+>    `MetricCard`/`SentimentMetricCard`, `NarrativesTable` são todos
+>    componentes compartilhados pelas 6 páginas, então o ajuste vale pra
+>    todo o módulo, não só esta página.
+> 4. **Rótulo de valor no ponto do gráfico de linha, de volta** — tinha sido
+>    removido numa revisão anterior (achando que duplicava o painel abaixo
+>    do gráfico); o usuário pediu de volta com a mesma frase da primeira
+>    vez que pediu. Ver `overview.md`, "Premissas de visualização de
+>    dados" regra 2, pra o registro completo — tratado como definitivo,
+>    não remover de novo sem confirmar antes.
+> 5. Ver `CLAUDE.md` pras 4 regras novas adicionadas a "Cross-cutting UX
+>    rules" a partir deste pedido (negrito em título/KPI/coluna, tooltip em
+>    coluna de tabela com métrica não-óbvia, legenda de badges sempre junto
+>    da tabela, rótulo no ponto do gráfico não removido sem confirmação) —
+>    é o pedido explícito do usuário de "documentar para não voltar a
+>    acontecer".
 
 > ✅ **Ajustes de UI (2026-07-12, sessão de polish pedida pelo usuário)**:
 > 4 mudanças nesta página, nenhuma de backend além de um fix pontual em
@@ -166,18 +196,25 @@ Qualquer usuário autenticado, membro de ao menos uma organização (ver
      2026-07-11, ver `foundation/data-model.md`, "Camada de reporting")
      — o usuário só vê "as narrativas da minha organização", sem
      perceber que o SOV de cada uma é calculado dentro do universo da sua
-     própria Query. ✅ **Decidido (2026-07-16)**: quando uma Category tem
-     Subcategories (a maioria — Brandwatch exige ≥1 Subcategory por
-     Category, ver `brandwatch-setup.md` §5), esta tabela mostra **só a
-     Category de topo** ("a categoria"), não cada Subcategory como linha
-     separada — evita listar Pauta + suas Narrativas-filhas juntas na
-     mesma tabela agregada. Granularidade de Subcategory fica pra
-     [narratives-exploration.md](narratives-exploration.md) ("aba de
-     narrativas"). Implementado via `get_narratives_table(p_scope =>
-     'roots')`, ver `aggregated-metrics/sql-aggregation.md` e
-     `foundation/narratives.md`. Categories/Subcategories com `status =
-     'inactive'` (removidas da Brandwatch, ver `foundation/data-model.md`)
-     nunca aparecem aqui, em nenhum dos dois escopos.
+     própria Query. ✅ **Revertido (2026-07-20)**, pedido do usuário: "tanto
+     na página de overview quanto na lista de narrativas serão mostradas
+     todas as narrativas" — esta tabela volta a mostrar **todas** as
+     Narrativas (Category de topo e Subcategory juntas), substituindo a
+     decisão de 2026-07-16 abaixo. Viabilizado pela troca simultânea do
+     título da Narrativa pra `"Categoria - Subcategoria"` (ver
+     `foundation/narratives.md`), que desambigua uma Subcategory mesmo
+     listada ao lado de outras Pautas na mesma tabela. Implementado via
+     `get_narratives_table(p_scope => null)`, ver
+     `aggregated-metrics/sql-aggregation.md`. Categories/Subcategories com
+     `status = 'inactive'` (removidas da Brandwatch, ver
+     `foundation/data-model.md`) continuam nunca aparecendo aqui.
+     > Histórico (2026-07-16, não mais em vigor nesta página): quando uma
+     > Category tinha Subcategories (a maioria — Brandwatch exige ≥1
+     > Subcategory por Category, ver `brandwatch-setup.md` §5), esta tabela
+     > mostrava só a Category de topo (`p_scope => 'roots'`), pra evitar
+     > listar Pauta + suas Narrativas-filhas juntas — a mesma preocupação
+     > que motivou isso é resolvida agora pelo título composto em vez de
+     > por filtro de granularidade.
 5. Usuário pode clicar "Ver" numa linha da tabela de Narrativas → navega
    para o detalhe (`/narratives/[id]`, ver
    [narratives-exploration.md](narratives-exploration.md)).

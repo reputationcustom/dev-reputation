@@ -3,7 +3,7 @@ tipo: feature-spec
 módulo: intelligence-center
 funcionalidade: narratives-exploration
 status: pronto
-atualizado: 2026-07-16
+atualizado: 2026-07-20
 ---
 
 # Exploração de Narrativas (lista + detalhe)
@@ -40,14 +40,20 @@ membro de ao menos uma organização.
    Sentimento, Momentum, Risco, Ação — ordenação personalizada (ver
    [executive-overview.md](executive-overview.md), "Tabela interativa de
    Narrativas", já especificada lá; esta página reusa o mesmo componente,
-   sem duplicar regra). ✅ **Decidido (2026-07-16)**: diferente do
-   Executive Overview (que mostra só a Category de topo quando ela tem
-   Subcategories), esta página lista as **Subcategories** — a granularidade
-   mais específica, "as narrativas dentro de cada categoria". Implementado
-   via `get_narratives_table(p_scope => 'leaves')`, ver
+   sem duplicar regra). ✅ **Revertido (2026-07-20)**, pedido do usuário:
+   esta página volta a listar **todas** as Narrativas (Category de topo e
+   Subcategory juntas), igual ao Executive Overview agora — substitui a
+   decisão de 2026-07-16 abaixo. Viabilizado pela troca simultânea do
+   título da Narrativa pra `"Categoria - Subcategoria"`, que desambigua uma
+   Subcategory mesmo listada ao lado da Pauta a que pertence. Implementado
+   via `get_narratives_table(p_scope => null)`, ver
    `aggregated-metrics/sql-aggregation.md` e `foundation/narratives.md`.
    Narrativas cuja Category está `status = 'inactive'` (removida da
-   Brandwatch) não aparecem.
+   Brandwatch) continuam não aparecendo.
+   > Histórico (2026-07-16, não mais em vigor): diferente do Executive
+   > Overview (que na época mostrava só a Category de topo), esta página
+   > listava só as Subcategories (`p_scope => 'leaves'`) — "a granularidade
+   > mais específica, as narrativas dentro de cada categoria".
 3. Clique numa linha → painel de resumo abaixo da tabela (nome, resumo,
    indicadores-chave, mix de plataformas) sem navegar de página —
    equivalente ao estado `hasSelection` do protótipo.

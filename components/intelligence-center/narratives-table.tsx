@@ -4,17 +4,45 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import type { NarrativeRow } from "@reputation/shared-types";
 import { EmptyState } from "@/components/ui/empty-state";
+import { Tooltip } from "@/components/ui/tooltip";
 import { SentimentBadge, RiskBadge, VelocityIndicator, ScoreBar } from "./score-badges";
 
 type SortKey = "title" | "sov_pct" | "velocity_score" | "net_sentiment" | "momentum_score" | "risk_score";
 
-const COLUMNS: { key: SortKey; label: string }[] = [
+// Tooltips por coluna (pedido do usuário 2026-07-13) — mesmo padrão/
+// componente já usado nos 5 KPIs da Visão Geral (metric-card.tsx). Como
+// esta tabela é reusada por Visão Geral/Narrativas/Plataformas/Pautas
+// (ver comentário abaixo), as definições explicam a coluna também. "Narrativa"
+// e "Ação" ficam sem tooltip — autoexplicativas.
+const COLUMNS: { key: SortKey; label: string; tooltip?: string }[] = [
   { key: "title", label: "Narrativa" },
-  { key: "sov_pct", label: "SOV" },
-  { key: "velocity_score", label: "Velocidade" },
-  { key: "net_sentiment", label: "Sentimento" },
-  { key: "momentum_score", label: "Momentum" },
-  { key: "risk_score", label: "Risco" },
+  {
+    key: "sov_pct",
+    label: "SOV",
+    tooltip: "Share of Voice — participação desta Narrativa no total de menções da Query em que ela está.",
+  },
+  {
+    key: "velocity_score",
+    label: "Velocidade",
+    tooltip:
+      "Ritmo de crescimento recente (hoje vs. ontem) — mostra se a Narrativa está ganhando ou perdendo força rapidamente, independente do período selecionado no topo da página.",
+  },
+  {
+    key: "net_sentiment",
+    label: "Sentimento",
+    tooltip: "Resumo do tom das menções desta Narrativa: predominantemente positivo, neutro ou negativo.",
+  },
+  {
+    key: "momentum_score",
+    label: "Momentum",
+    tooltip:
+      "Força atual da Narrativa (volume, engajamento, autores e alcance), comparando o período selecionado com o período anterior de mesma duração.",
+  },
+  {
+    key: "risk_score",
+    label: "Risco",
+    tooltip: "Nível de risco reputacional, calculado a partir do sentimento, alcance e Momentum/Velocidade da Narrativa.",
+  },
 ];
 
 // Tabela interativa de Narrativas — 7 colunas (Narrativa/SOV/Velocidade/
@@ -69,18 +97,31 @@ export function NarrativesTable({
         <thead>
           <tr className="border-b border-border-subtle text-xs uppercase tracking-wide text-text-tertiary">
             {COLUMNS.map((column) => (
-              <th key={column.key} className="px-4 py-3 font-medium">
-                <button
-                  type="button"
-                  onClick={() => handleSort(column.key)}
-                  className="flex items-center gap-1 hover:text-text-primary"
-                >
-                  {column.label}
-                  {sort?.key === column.key && <span aria-hidden>{sort.direction === "desc" ? "↓" : "↑"}</span>}
-                </button>
+              <th key={column.key} className="px-4 py-3 font-bold">
+                <span className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => handleSort(column.key)}
+                    className="flex items-center gap-1 hover:text-text-primary"
+                  >
+                    {column.label}
+                    {sort?.key === column.key && <span aria-hidden>{sort.direction === "desc" ? "↓" : "↑"}</span>}
+                  </button>
+                  {column.tooltip && (
+                    <Tooltip text={column.tooltip} position="bottom">
+                      <span
+                        tabIndex={0}
+                        aria-label={`O que é ${column.label}`}
+                        className="flex h-3.5 w-3.5 flex-shrink-0 cursor-help items-center justify-center rounded-full border border-text-tertiary text-[9px] font-bold normal-case text-text-tertiary outline-none focus-visible:border-accent-blue focus-visible:text-accent-blue"
+                      >
+                        ?
+                      </span>
+                    </Tooltip>
+                  )}
+                </span>
               </th>
             ))}
-            <th className="px-4 py-3 font-medium">Ação</th>
+            <th className="px-4 py-3 font-bold">Ação</th>
           </tr>
         </thead>
         <tbody>

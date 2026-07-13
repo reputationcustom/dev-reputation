@@ -253,23 +253,33 @@ const PAGE_BREAKDOWN_TYPES: Partial<Record<PageKey, Breakdown['type'][]>> = {
   reports: ['sentiment'],
 }
 
-// Pedido do usuário (2026-07-16): "Quando há categoria e subcategoria, o
-// sistema deve considerar na página de overview apenas a categoria, porém
-// na aba de narrativas considera-se as subcategorias." — 'roots' = só
-// Narrativas cuja Category é de topo (bw_categories.parent_id is null,
-// mesma definição de "Pauta" de electoral-themes.md); 'leaves' = só
-// Narrativas-filhas (Subcategory). get_narratives_table (migration
-// 20260716010000) só aplica p_scope quando p_pauta_id está ausente — a
-// página `themes` continua usando p_pauta_id (ctx.pautaId) pra "todas as
-// subcategorias da categoria Pauta" quando uma Pauta específica é aberta;
-// sem pautaId, cai no default 'leaves' abaixo (todas as Narrativas-filhas
-// de todas as Pautas, mesmo escopo de granularidade de `narratives`).
+// ✅ Revisto 2026-07-20 (pedido do usuário: "Tanto na página de overview
+// quanto na lista de narrativas serão mostradas todas as narrativas") —
+// substitui a decisão de 2026-07-16 abaixo só pras duas páginas citadas.
+// Motivo do usuário: overview/narrativas devem listar Category (Pauta) e
+// Subcategory juntas, sem esconder nenhum nível — viabilizado pela troca
+// simultânea do título da Narrativa pra "Categoria - Subcategoria" (ver
+// bw-sync/index.ts, buildNarrativeTitle()), que desambigua uma Subcategory
+// mesmo fora do contexto da sua Pauta na mesma lista plana.
+//
+// Histórico (2026-07-16): "Quando há categoria e subcategoria, o sistema
+// deve considerar na página de overview apenas a categoria, porém na aba
+// de narrativas considera-se as subcategorias." — 'roots' = só Narrativas
+// cuja Category é de topo (bw_categories.parent_id is null, mesma
+// definição de "Pauta" de electoral-themes.md); 'leaves' = só
+// Narrativas-filhas (Subcategory). `platforms`/`reports` continuam nesse
+// escopo original (não fizeram parte do novo pedido). get_narratives_table
+// (migration 20260716010000) só aplica p_scope quando p_pauta_id está
+// ausente — a página `themes` continua usando p_pauta_id (ctx.pautaId)
+// pra "todas as subcategorias da categoria Pauta" quando uma Pauta
+// específica é aberta; sem pautaId, cai no default 'leaves' abaixo (todas
+// as Narrativas-filhas de todas as Pautas).
 // Páginas fora deste mapa (narrative_detail, authors, alerts) não usam o
 // bloco `narratives` via PAGE_BLOCKS — narrative_detail busca uma única
 // Narrativa à parte, via ui_meta.narrative (ver get-narrative-detail).
 function narrativesScopeForPage(page: PageKey): 'roots' | 'leaves' | null {
-  if (page === 'overview' || page === 'reports') return 'roots'
-  if (page === 'narratives' || page === 'platforms' || page === 'themes') return 'leaves'
+  if (page === 'reports') return 'roots'
+  if (page === 'platforms' || page === 'themes') return 'leaves'
   return null
 }
 

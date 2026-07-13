@@ -22,7 +22,7 @@ export function WidgetCard({
 }) {
   return (
     <div className="rounded-xl border border-border-default bg-bg-card p-5">
-      <h2 className="text-sm font-semibold text-text-primary">{title}</h2>
+      <h2 className="text-sm font-bold text-text-primary">{title}</h2>
       <div className="mt-4">
         {status === "loading" && (
           <div className="flex flex-col gap-2">

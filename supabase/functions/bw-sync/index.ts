@@ -609,6 +609,27 @@ async function refreshMetadata(
 // em `narratives` — ver electoral-themes.md, "Pauta" = Narrativa cuja
 // Category tem `parent_id is null`, Narrativa-filha = Category com
 // `parent_id` apontando pra ela).
+// ✅ Alteração 2026-07-20 (pedido do usuário: "O nome da narrativa será
+// composto por 'categoria - subcategoria'"). Motivo: desde a mesma sessão,
+// Overview e a aba Narrativas passaram a listar Category (Pauta) e
+// Subcategory juntas na mesma tabela plana (ver
+// narrativesScopeForPage() em aggregated-metrics-service.ts, p_scope
+// agora null pras duas páginas) — um título de Subcategory sozinho (ex.
+// "Vacinação") fica ambíguo sem saber a qual Pauta ele pertence quando
+// visto ao lado de outras Pautas/Subcategories na mesma lista. Category de
+// topo continua só com o próprio nome (não tem pai pra compor).
+function buildNarrativeTitle(
+  category: Record<string, unknown>,
+  categoryRows: Record<string, unknown>[],
+): string {
+  const parentId = category.parent_id as number | null;
+  const name = category.name as string;
+  if (parentId === null) return name;
+  const parent = categoryRows.find((c) => (c.id as number) === parentId);
+  const parentName = (parent?.name as string | undefined) ?? null;
+  return parentName ? `${parentName} - ${name}` : name;
+}
+
 async function ensureNarrativesFromCategories(
   supabase: SupabaseClient,
   organizationId: string,
@@ -632,7 +653,7 @@ async function ensureNarrativesFromCategories(
     missing.map((c) => ({
       organization_id: organizationId,
       bw_category_id: c.id,
-      title: c.name,
+      title: buildNarrativeTitle(c, categoryRows),
     })),
   );
   if (insertError) throw new Error(`Erro criando narratives a partir de bw_categories: ${insertError.message}`);
@@ -2832,6 +2853,31 @@ async function runDailyMetricsStep(
     if (!hasBrandwatchCallBudget()) return { didWork: true };
     await syncSentimentMetrics(supabase, token, "days", projectId, queryId, categoryId, metricsStartDate, now);
   }
+  // ✅ Reordenado 2026-07-20 (pedido do usuário: "revise se os valores de
+  // sentimento por narrativa estão corretos, no Frontend está tudo
+  // neutro"). Achado: net_sentiment por Narrativa (dimensão `categories`)
+  // e por Query inteira (dimensão `queries`) eram as ÚLTIMAS das 10
+  // chamadas fixas de agregado desta fase (depois de reachEstimate/
+  // engagementScore/authors/impressions × categories+queries) — em
+  // qualquer invocação com Narrativas suficientes pro budget de 25 chamadas
+  // se esgotar antes de chegar nelas (loop de sentimento acima já consome 1
+  // chamada por categoryTarget), `narrative_metrics.net_sentiment` nunca
+  // sincronizava pra essas Narrativas, e `public.narratives_overview.
+  // sentiment_bucket` caía pro fallback local (ver migration
+  // 20260720000000) com muito mais frequência do que deveria — sintoma
+  // batendo com o relatado ("está tudo neutro"). As duas chamadas de
+  // netSentiment agora rodam logo após o loop de sentimento, antes de
+  // qualquer outro agregado (reach/engajamento/autores/impressões), pra
+  // sobreviver ao corte de orçamento com prioridade sobre métricas menos
+  // centrais a este indicador.
+  if (!hasBrandwatchCallBudget()) return { didWork: true };
+  await syncCategoryDailyAggregate(
+    supabase, token, projectId, queryId, "netSentiment", "net_sentiment", metricsStartDate, now,
+  );
+  if (!hasBrandwatchCallBudget()) return { didWork: true };
+  await syncQueryDailyAggregate(
+    supabase, token, projectId, queryId, "netSentiment", "net_sentiment", metricsStartDate, now,
+  );
   // Reach/engajamento/autores únicos por Narrativa não amostrados: 3
   // chamadas cobrindo TODAS as Categories de uma vez (dimensão
   // `categories`) — é aqui que a resposta de ~4825 linhas observada no
@@ -2859,16 +2905,6 @@ async function runDailyMetricsStep(
   await syncCategoryDailyAggregate(
     supabase, token, projectId, queryId, "impressions", "impressions", metricsStartDate, now,
   );
-  // Gap de foundation #1 (2026-07-13): net_sentiment por Narrativa/Query
-  // inteira — já existia por plataforma (syncPlatformAggregate acima) e
-  // por localização (bw_query_demographics_daily), nunca aqui, que é o
-  // que a tabela interativa de Narrativas (indicador Sentimento, 7
-  // faixas) realmente lê. Mesmo aggregate/dimensão de reach/engagement/
-  // authors/impressions acima.
-  if (!hasBrandwatchCallBudget()) return { didWork: true };
-  await syncCategoryDailyAggregate(
-    supabase, token, projectId, queryId, "netSentiment", "net_sentiment", metricsStartDate, now,
-  );
   // Corrige gap 2026-07-12: reach_estimate/engagement_score nunca tinham
   // sido populados para category_id is null (dimensão `categories` nunca
   // inclui a Query inteira) — mesma correção cobre a captura nova de
@@ -2888,10 +2924,6 @@ async function runDailyMetricsStep(
   if (!hasBrandwatchCallBudget()) return { didWork: true };
   await syncQueryDailyAggregate(
     supabase, token, projectId, queryId, "impressions", "impressions", metricsStartDate, now,
-  );
-  if (!hasBrandwatchCallBudget()) return { didWork: true };
-  await syncQueryDailyAggregate(
-    supabase, token, projectId, queryId, "netSentiment", "net_sentiment", metricsStartDate, now,
   );
   // Breakdown de plataforma — sempre roda, query inteira (sem quebra por
   // Narrativa).

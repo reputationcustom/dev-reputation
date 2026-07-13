@@ -61,9 +61,17 @@ export default function OverviewPage() {
         {/* Narrativas acima de Insights (pedido do usuário 2026-07-12) —
             prioriza a tabela acionável antes do painel de insights, que
             hoje sempre renderiza vazio (event-radar/ai-synthesis ainda não
-            implementados, ver _pending.md). */}
+            implementados, ver _pending.md). Legenda logo abaixo da própria
+            tabela (pedido do usuário 2026-07-13) — antes ficava solta no
+            fim da página, depois do Insights, longe dos badges que ela
+            explica. */}
         <WidgetCard title="Narrativas" status={status} onRetry={retry}>
-          <NarrativesTable rows={(envelope?.narratives ?? []).slice(0, 10)} />
+          <div className="flex flex-col gap-4">
+            <NarrativesTable rows={(envelope?.narratives ?? []).slice(0, 10)} />
+            <div className="border-t border-border-subtle pt-4">
+              <ScoreLegend />
+            </div>
+          </div>
         </WidgetCard>
 
         <WidgetCard title="Insights" status={status} onRetry={retry}>
@@ -72,8 +80,6 @@ export default function OverviewPage() {
             <HighlightsPanel highlights={envelope?.highlights ?? []} />
           </div>
         </WidgetCard>
-
-        <ScoreLegend />
       </div>
     </>
   );

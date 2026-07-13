@@ -3,7 +3,7 @@ tipo: feature-spec
 módulo: foundation
 funcionalidade: narratives
 status: implementado
-atualizado: 2026-07-16
+atualizado: 2026-07-20
 ---
 
 # Narratives
@@ -31,6 +31,43 @@ atualizado: 2026-07-16
 > Narrativas = as Subcategories) — ver CLAUDE.md "Category/Subcategory
 > status tracking + página-escopo raiz/subcategoria".
 
+> ✅ **Alterado (2026-07-20)**, pedido do usuário — 3 mudanças:
+> 1. **Título passa a ser "Categoria - Subcategoria"**: `ensureNarrativesFromCategories()`
+>    (`bw-sync/index.ts`, `buildNarrativeTitle()`) compõe o título de toda
+>    Narrativa nova cuja Category tem `parent_id` como
+>    `"<nome da Category-pai> - <nome da Subcategory>"`; Category de topo
+>    continua só com o próprio nome (não tem pai pra compor). Migration
+>    `20260720000000` fez o backfill do título de toda Narrativa já
+>    existente pro novo formato — seguro porque não há CRUD de Narrativas em
+>    nenhuma camada do produto (ver "Interface (UI)" abaixo), então todo
+>    `title` em produção é 100% derivado, nunca editado manualmente.
+> 2. **Overview e a aba Narrativas voltam a listar todas as Narrativas**
+>    (Category de topo e Subcategory juntas, não mais só um nível cada) —
+>    reverte a decisão de 2026-07-16 citada acima só pra essas duas páginas
+>    (`platforms`/`themes`/`reports` continuam no escopo raiz/folha
+>    original). Viabilizado pela mudança de título acima: uma Subcategory
+>    (`"Vacinação"`) sozinha ficaria ambígua ao lado de outras Pautas na
+>    mesma lista plana; com o novo formato ela aparece como
+>    `"Saúde - Vacinação"`. Ver
+>    [narratives-exploration.md](../intelligence-center/narratives-exploration.md)/
+>    [executive-overview.md](../intelligence-center/executive-overview.md) e
+>    `aggregated-metrics/sql-aggregation.md`/`service-layer-aggregation.md`.
+> 3. **Bug real corrigido em `sentiment_bucket`** ("no Frontend está tudo
+>    neutro"): o fallback local de `public.narratives_overview` (usado só
+>    enquanto `net_sentiment`, a fonte oficial, ainda não sincronizou pra
+>    aquele dia/Narrativa) dividia `(sentiment_positive - sentiment_negative)`
+>    pelo **total** de mentions (incluindo as neutras), o que dilui o
+>    resultado sempre que há uma fatia relevante de mentions neutras/factuais
+>    — exigindo um desequilíbrio grande demais pra sair de 'neutral'.
+>    Corrigido pra normalizar por `(sentiment_positive + sentiment_negative)`,
+>    mesma definição usada por `net_sentiment`. Separadamente,
+>    `runDailyMetricsStep()` (bw-sync) fazia as chamadas de `net_sentiment`
+>    por Narrativa/Query inteira por **último** entre as 10 chamadas fixas
+>    de agregado da fase, sob risco de ficarem de fora quando o orçamento de
+>    25 chamadas/invocação se esgotava antes de chegar nelas — reordenado
+>    pra rodar logo após o loop de sentimento, com prioridade sobre as
+>    demais métricas. Ver migration `20260720000000` e `CLAUDE.md`.
+
 ## Objetivo
 
 Manter Narrativas como entidades vivas e mensuráveis — com sinais de
@@ -56,7 +93,11 @@ CRUD de Narrativas em nenhuma versão do produto** — ver "Interface (UI)" e
    não importa mais pra decidir se auto-cria, só pra saber se é
    "Pauta" ou "Narrativa dentro da pauta" na UI, ver
    `intelligence-center/electoral-themes.md`). `bw_category_id` = a
-   Category/Subcategory, `title` = nome dela. Idempotente (nunca
+   Category/Subcategory. ✅ **Título alterado (2026-07-20)**: `title` = nome
+   da Category quando ela é de topo (sem pai); `"<Category> - <Subcategory>"`
+   quando é uma Subcategory (`buildNarrativeTitle()` em `bw-sync/index.ts`)
+   — desambigua a Subcategory quando Overview/Narrativas listam os dois
+   níveis juntos (ver "Alterado (2026-07-20)" acima). Idempotente (nunca
    sobrescreve `title`/`stage`/`risk_level` de uma Narrativa já existente).
    **Não existe** caminho de criação fora deste — nem manual, nem por
    sinal isolado (`narrative_signals` sem `bw_category_id`), nem por UI.

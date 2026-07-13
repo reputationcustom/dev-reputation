@@ -38,7 +38,7 @@ export function MetricCard({ metric }: { metric: MetricCardData }) {
 
   return (
     <div className="rounded-xl border border-border-default bg-bg-card p-5">
-      <p className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-text-tertiary">
+      <p className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-text-tertiary">
         {metric.label}
         {tooltipText && (
           <Tooltip text={tooltipText}>
@@ -110,7 +110,7 @@ export function SentimentMetricCard({ breakdown }: { breakdown: Breakdown | unde
 
   return (
     <div className="rounded-xl border border-border-default bg-bg-card p-5">
-      <p className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-text-tertiary">
+      <p className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-text-tertiary">
         Sentimento geral
         <Tooltip text={SENTIMENT_TOOLTIP}>
           <span

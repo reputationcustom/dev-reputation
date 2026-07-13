@@ -3,7 +3,7 @@ tipo: feature-spec
 módulo: intelligence-center
 funcionalidade: electoral-themes
 status: pronto
-atualizado: 2026-07-16
+atualizado: 2026-07-20
 ---
 
 # Pautas Eleitorais
@@ -75,12 +75,16 @@ Mesmo público das demais páginas deste módulo.
    específica aberta (`pauta_id`), as Subcategories **daquela** Pauta
    (`get_narratives_table(p_pauta_id => ...)`, comportamento já existente);
    sem uma Pauta aberta, as Subcategories de **todas** as Pautas
-   (`get_narratives_table(p_scope => 'leaves')`, mesma granularidade de
-   [narratives-exploration.md](narratives-exploration.md)) — a lista de
-   Pautas em si vem do bloco `breakdowns` (`get_theme_breakdown`, sempre
-   Category de topo). Categories/Subcategories `status = 'inactive'`
-   (removidas da Brandwatch, ver `foundation/data-model.md`) nunca
-   aparecem em nenhum dos dois blocos.
+   (`get_narratives_table(p_scope => 'leaves')`) — a lista de Pautas em si
+   vem do bloco `breakdowns` (`get_theme_breakdown`, sempre Category de
+   topo). Categories/Subcategories `status = 'inactive'` (removidas da
+   Brandwatch, ver `foundation/data-model.md`) nunca aparecem em nenhum dos
+   dois blocos. ⚠️ **Nota (2026-07-20)**: esta página não entrou no pedido
+   do usuário de mostrar "todas as narrativas" em Overview/aba Narrativas —
+   `themes` continua usando `p_scope => 'leaves'` sem Pauta aberta,
+   comportamento inalterado (só deixou de valer a comparação com
+   `narratives-exploration.md` acima, que agora usa `p_scope => null` —
+   ver `foundation/narratives.md`).
 4. Comparação entre períodos (ex: "Segurança perdeu 4 pontos de
    participação, enquanto saúde ganhou 7 pontos na última semana") — cálculo
    simples de diferença de SOV entre dois períodos já agregados

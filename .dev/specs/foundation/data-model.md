@@ -2,7 +2,7 @@
 tipo: data-model
 módulo: foundation
 status: implementado
-atualizado: 2026-07-16
+atualizado: 2026-07-20
 ---
 
 > ✅ **Status corrigido 2026-07-14** (premissa do projeto, ver CLAUDE.md
@@ -1685,6 +1685,18 @@ with daily as (
   select narrative_id, query_id, metric_date, total_mentions,
          sentiment_positive, sentiment_neutral, sentiment_negative,
          net_sentiment, reach_estimated, engagement_total, unique_authors,
+         -- ✅ Corrigido 2026-07-20 (bug real: "sentimento por narrativa
+         -- sempre neutro" — dividir por total_mentions dilui o resultado
+         -- sempre que há mentions neutras, exigindo desequilíbrio grande
+         -- demais pra sair de 'neutral'). Normaliza por
+         -- (sentiment_positive + sentiment_negative), mesma base usada por
+         -- net_sentiment, em vez de total_mentions (que inclui neutras).
+         case
+           when coalesce(sentiment_positive, 0) + coalesce(sentiment_negative, 0) > 0
+           then (sentiment_positive - sentiment_negative)::numeric * 100.0
+                / (sentiment_positive + sentiment_negative)
+           else null
+         end as local_net_sentiment,
          lag(total_mentions) over (partition by narrative_id order by metric_date) as prev_total_mentions
   from narrative_metrics
   where period = 'daily'
@@ -1722,12 +1734,18 @@ select
     end,
     -- fallback só enquanto net_sentiment ainda não sincronizou pra essa linha
     -- (histórico pré-20260713010000, ou sync ainda não passou por essa Narrativa/dia) —
-    -- mesma escala de bucket, aproximada a partir de sentiment_positive/negative
-    -- (já oficiais/não amostrados, só não é o score nativo netSentiment)
+    -- mesma escala de bucket de net_sentiment, aplicada a local_net_sentiment
+    -- (mesma definição/base de net_sentiment: positivo/(positivo+negativo),
+    -- só que calculada localmente sobre sentiment_positive/negative já
+    -- oficiais/não amostrados — corrigido 2026-07-20, ver nota na CTE `daily`)
     case
-      when d.total_mentions = 0 then 'neutral'
-      when (d.sentiment_positive - d.sentiment_negative)::numeric / d.total_mentions > 0.2 then 'positive'
-      when (d.sentiment_positive - d.sentiment_negative)::numeric / d.total_mentions < -0.2 then 'negative'
+      when d.local_net_sentiment >= 50 then 'very_positive'
+      when d.local_net_sentiment >= 20 then 'positive'
+      when d.local_net_sentiment >= 5 then 'slightly_positive'
+      when d.local_net_sentiment >= -4 then 'neutral'
+      when d.local_net_sentiment >= -19 then 'slightly_negative'
+      when d.local_net_sentiment >= -49 then 'negative'
+      when d.local_net_sentiment is not null then 'very_negative'
       else 'neutral'
     end
   ) as sentiment_bucket

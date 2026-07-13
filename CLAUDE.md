@@ -263,6 +263,49 @@ Added 2026-07-13, apply to every page/component going forward, not just
    `admin-list-users` result; a list backed by a paginated query instead
    would page at the query level, but the constant/component are the
    same).
+7. **Widget titles, KPI labels, and table column headers all render
+   `font-bold`**, never `font-medium`/`font-semibold` — user feedback
+   2026-07-13 ("não está bom de ler"). `WidgetCard`'s `<h2>`,
+   `MetricCard`/`SentimentMetricCard`'s label `<p>`, and
+   `NarrativesTable`'s `<th>` are the 3 shared components this applies to;
+   since all 3 are reused across every page in `intelligence-center`, a
+   fix in the shared component is a fix everywhere — don't override back
+   to a lighter weight in a specific page.
+8. **A table column with a non-obvious/computed meaning (a score, a
+   formula-derived metric) gets a hover tooltip**, same treatment as the
+   Executive Overview KPI cards — small "?" icon,
+   `components/ui/tooltip.tsx`, plain-language definition. See
+   `narratives-table.tsx`'s SOV/Velocidade/Sentimento/Momentum/Risco
+   headers for the pattern. `Tooltip` takes a `position` prop
+   (`"top"`/`"bottom"`) — use `"bottom"` when the trigger sits inside (or
+   near the top of) a horizontally-scrolling container
+   (`overflow-x-auto`), since `"top"` would be clipped by that container
+   forcing `overflow-y: auto` too.
+9. **Any table that renders color-coded score badges (Sentiment/Risk/
+   Momentum/Velocity) shows the legend for those badges directly below
+   that same table**, not detached elsewhere on the page. `ScoreLegend`
+   (`score-badges.tsx`) is the shared legend component — see `/overview`
+   for the reference placement (inside the same `WidgetCard`, right after
+   `<NarrativesTable />`, separated by a `border-t`). The other 3 pages
+   that also render `NarrativesTable` (`/narratives`, `/platforms`,
+   `/themes`) don't have the legend yet as of 2026-07-13 — apply this rule
+   there the next time one of those pages is touched, rather than as a
+   standalone follow-up no one asked for yet.
+10. **A chart interaction pattern that was explicitly requested by the
+    user is not removed later just because it looks redundant with
+    another pattern already on the page** — concrete instance: the
+    `TrendLineChart` on-hover value label drawn directly on the line
+    point was added 2026-07-12 (user request), removed in a later revision
+    that judged it redundant with the value panel below the chart (citing
+    general dataviz guidance), and the user then asked for it back
+    2026-07-13, with the same wording as the first request. Both now
+    render together — see `trend-line-chart.tsx`'s comment at the label
+    block and `intelligence-center/overview.md`, "Premissas de
+    visualização de dados" rule 2. If a future cleanup pass wants to
+    simplify a chart's interaction affordances, check whether the pattern
+    being removed traces back to an explicit user request in `CLAUDE.md`/
+    a spec note first — don't rely on general best-practice judgment alone
+    to override a specific, already-settled product decision.
 
 ## Backend communication failures
 
@@ -2231,6 +2274,153 @@ were genuinely redundant — the HTML tooltip panel directly below the
 chart already lists every series' value at the same X on hover, in
 properly-sized, non-scaling text. The crosshair line + point markers on
 hover are unchanged; only the floating numbers were removed.
+
+> ⚠️ **Reversed the next day (2026-07-13)** — the user asked for the
+> on-point label back, verbatim the same request as 2026-07-12. See the
+> "Second round of `/overview` UI polish" section below and Cross-cutting
+> UX rule 10: a general best-practice judgment call (however well-reasoned
+> the dataviz-skill citation above was) doesn't override a specific,
+> already-settled product request without checking first. Both the
+> on-point label and the below-chart panel render together now,
+> permanently — treat this as closed, not something to re-simplify later
+> without asking.
+
+### Second round of `/overview` UI polish — table tooltips, legend placement, bold typography, chart label restored (2026-07-13)
+
+User request, 5 items, all `/overview`-scoped except the 3 shared-component
+changes (which necessarily affect every page that reuses those
+components):
+
+- **Tooltips on `NarrativesTable` column headers** — SOV, Velocidade,
+  Sentimento, Momentum, Risco each get the same "?"/`Tooltip` affordance
+  already used on the KPI cards, with a plain-language definition of what
+  the score means. `Narrativa`/`Ação` stay without a tooltip (self-
+  explanatory). `Tooltip` (`components/ui/tooltip.tsx`) gained a
+  `position` prop (`"top"` default, `"bottom"` new) — a column-header
+  tooltip opening upward would be clipped by the table's own
+  `overflow-x-auto` wrapper (setting `overflow-x` alone forces
+  `overflow-y: auto` too, per the CSS spec, so anything positioned outside
+  the wrapper's vertical bounds gets cut off); table headers pass
+  `position="bottom"` to open down into the table body instead, where
+  there's no clipping boundary.
+- **`ScoreLegend` moved to directly below the table it explains** — on
+  `/overview`, it now renders inside the same `WidgetCard` as
+  `NarrativesTable`, separated by a `border-t`, instead of sitting alone at
+  the very bottom of the page past the Insights panel. Cross-cutting UX
+  rule 9 (above) generalizes this — the other 3 pages that also render
+  `NarrativesTable` (`/narratives`, `/platforms`, `/themes`) don't have the
+  legend at all yet; out of scope for this request (`/overview`-only), left
+  as a note for whenever one of those pages is next touched rather than
+  built speculatively now.
+- **Widget titles / KPI labels / table column headers switched to
+  `font-bold`** (were `font-semibold`/`font-medium`) — `WidgetCard`,
+  `MetricCard`/`SentimentMetricCard`, `NarrativesTable` are shared by all 6
+  pages, so this one component-level change fixes legibility everywhere,
+  not just `/overview`. Cross-cutting UX rule 7 (above).
+- **`TrendLineChart`'s on-point hover value label restored** — see the
+  callout just above: removed the day before, user asked for it back with
+  the same wording as the original request. Kept the harmonized sizing
+  from that removal's stated concern (9px/weight 600/2px halo, well under
+  the now-correctly-scaling 10px axis labels) so it doesn't reintroduce the
+  "too big" problem — just no longer deleted outright. Renders alongside
+  the below-chart panel, not instead of it; the code comment at the label
+  block spells out why both stay.
+- Documentation: this section, `intelligence-center/executive-overview.md`
+  (new dated note), `intelligence-center/overview.md` ("Premissas de
+  visualização de dados" rule 2, closed as definitive), and Cross-cutting
+  UX rules 7–10 above — the user's 5th ask this round was explicitly
+  "document so these problems stop recurring," which rule 10 in particular
+  is written to satisfy (the on-point label had already been added,
+  removed, and re-requested once by this point).
+
+### Narrative naming/scope change + a real sentiment bug fix (2026-07-20)
+
+User request: "1) O nome da narrativa será composto por 'categoria -
+subcategoria'. 2) Tanto na página de overview quanto na lista de
+narrativas serão mostradas todas as narrativas. 3) Revise se os valores de
+sentimento por narrativa estão corretos, no Frontend está tudo neutro, não
+corresponde a realidade." All three closed this session, migration
+`20260720000000`.
+
+**1) Compound title.** `ensureNarrativesFromCategories()` (`bw-sync/index.ts`)
+used to set `title = category.name` unconditionally — a Subcategory's
+title was just its own name, with no indication of which Category (Pauta)
+it belonged to. New `buildNarrativeTitle()` composes
+`"<Category-pai> - <Subcategory>"` for any Category with a `parent_id`;
+top-level Categories keep just their own name (no parent to compose).
+Applies going forward for new Narrativas (still idempotent — never
+overwrites an existing `title`, per `foundation/narratives.md`'s no-CRUD
+rule); migration `20260720000000` backfills every existing Narrativa's
+`title` to the new format in one `update` — safe because there is no
+Narrativa CRUD anywhere in the product (decision closed 2026-07-13), so
+every `title` in production is 100% derived from `bw_categories`, never
+hand-edited.
+
+**2) Overview + Narrativas show every Narrativa again.** Reverts the
+2026-07-16 decision ("Overview vs. Narrativas vs. Pautas Eleitorais" —
+Overview = root Categories only, Narrativas tab = Subcategories only) for
+exactly these two pages — `platforms`/`themes` (still `'leaves'`) and
+`reports` (still `'roots'`) are unchanged, they weren't part of this
+request. `narrativesScopeForPage()` (`aggregated-metrics-service.ts` +
+its 6 deployed copies, Principle 5) now returns `null` (no scope filter)
+for `overview`/`narratives` instead of `'roots'`/`'leaves'` —
+`get_narratives_table`'s `p_scope => null` branch already existed
+(migration `20260716010000`) and needed no SQL change, just the two
+service-layer call sites. This is what makes the compound title from (1)
+load-bearing rather than cosmetic: with Category and Subcategory rows now
+mixed in the same flat table again, a bare Subcategory name would be
+ambiguous about which Pauta it belongs to — the "Categoria - Subcategoria"
+format resolves that inline, without adding a separate "parent" column to
+the table/envelope.
+
+**3) Sentiment-always-neutral bug — two real, independent causes found
+and fixed**, no Brandwatch access needed to diagnose since both were
+visible from code inspection (`public.narratives_overview` +
+`runDailyMetricsStep`):
+
+- **Fallback formula was mathematically biased toward 'neutral'.**
+  `sentiment_bucket` prefers `net_sentiment` (official Brandwatch score,
+  7 bands, migration `20260713030000`) and only falls back to a locally
+  computed bucket for rows where `net_sentiment` hasn't synced yet. That
+  fallback computed `(sentiment_positive - sentiment_negative) /
+  total_mentions` against a fixed ±20% threshold — dividing by the
+  **total** mention count, which includes neutral/factual mentions,
+  systematically dilutes the ratio. Political coverage routinely has a
+  large neutral/factual share, so even a real, meaningful skew between
+  positive and negative mentions could easily stay under ±20% once
+  diluted by the neutral denominator — landing on 'neutral' far more
+  often than the actual sentiment split would suggest. Fixed: the
+  fallback now normalizes by `(sentiment_positive + sentiment_negative)`
+  instead — the same base `net_sentiment` itself uses — and reuses the
+  same 7-band thresholds as the primary score, only falling to
+  `'neutral'` when there's truly no classified signal (positive + negative
+  = 0, i.e. every mention that day genuinely is neutral).
+- **`net_sentiment` sync was budget-starved for Narrativa-heavy orgs.**
+  `runDailyMetricsStep()`'s `daily_metrics` phase made the 2 `netSentiment`
+  calls (categories dimension = all Narrativas in one call, queries
+  dimension = whole-query row) **last** among its 10 fixed aggregate
+  calls — after `reachEstimate`/`engagementScore`/`authors`/`impressions`
+  × categories+queries. With `BRANDWATCH_CALL_BUDGET = 25` and the
+  sentiment loop alone already spending 1 call per `categoryTarget`
+  (Narrativa count + 1), any org with enough Narrativas could exhaust the
+  budget before ever reaching `netSentiment` — meaning
+  `narrative_metrics.net_sentiment` would stay `null` indefinitely for
+  those rows on every invocation (deterministic call order → same
+  starvation every time, not an occasional miss), forcing the diluted
+  fallback above on every read. Fixed by moving both `netSentiment` calls
+  to run immediately after the sentiment loop, before any of the other 8
+  aggregate calls in this phase — same total call count, just reordered
+  so the metric this bug report is actually about survives budget
+  pressure first.
+
+Both fixes ship in the same migration/PR since they compound the same
+symptom (a starved primary source falling back to a biased fallback) —
+either alone would have improved the picture, but only together do they
+close the gap end-to-end. Not verified against a live production sync
+this session (no DB/log access, same limitation as prior sessions) — the
+starvation math is derived from the fixed call sequence and
+`BRANDWATCH_CALL_BUDGET`, not from an observed log line; revisit if a
+future session has log access and Narrativa counts to confirm.
 
 ## Directory structure
 

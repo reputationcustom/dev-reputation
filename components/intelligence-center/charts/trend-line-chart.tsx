@@ -223,13 +223,49 @@ export function TrendLineChart({ trend, emptyMessage }: { trend: Trend | undefin
               />
             );
           })}
+
+        {/* Rótulo do valor direto no ponto, ao passar o mouse — pedido
+            explícito e repetido do usuário (2026-07-12 e novamente
+            2026-07-13: "para que o usuário veja os valores das linhas ao
+            mover o mouse sobre o gráfico"). Uma revisão anterior (2026-07-19)
+            tinha removido este rótulo em favor de só mostrar o valor no
+            painel abaixo do gráfico, citando a diretriz genérica de "não
+            duplicar o mesmo número" — mas overview.md, "Premissas de
+            visualização de dados" regra 1, já pede rótulo "nos
+            pontos/segmentos" literalmente, e o usuário confirmou 2x que
+            quer o valor visível no próprio gráfico, não só abaixo dele.
+            Tratar como definitivo — não remover de novo sem confirmar com o
+            usuário primeiro. Tamanho/peso reduzidos (9px/600/halo 2px) pra
+            não destoar do resto da página (harmonização 2026-07-12). */}
+        {hoverIndex !== null &&
+          groups.map((group) => {
+            const point = group.series[hoverIndex];
+            if (!point) return null;
+            const x = xForIndex(hoverIndex, pointCount, width);
+            const y = Math.max(yForValue(point.value, maxValue) - 10, PADDING_TOP + 8);
+            return (
+              <text
+                key={`label-${group.group}`}
+                x={x}
+                y={y}
+                textAnchor="middle"
+                fontSize={9}
+                fontWeight={600}
+                fill={GROUP_COLORS[group.group] ?? "#9aa0ab"}
+                stroke="#ffffff"
+                strokeWidth={2}
+                paintOrder="stroke"
+              >
+                {new Intl.NumberFormat("pt-BR", { notation: "compact" }).format(point.value)}
+              </text>
+            );
+          })}
       </svg>
 
-      {/* Valores no hover ficam só aqui, nunca duplicados como texto solto
-          dentro do SVG (removido 2026-07-19) — o crosshair já aponta o X, e
-          "um tooltip com todas as séries" é o padrão pra esse caso (skill de
-          dataviz, "Interação"), em vez de repetir o mesmo número flutuando
-          perto de cada linha. */}
+      {/* Painel com todas as séries do ponto sob o cursor — complementa (não
+          substitui) o rótulo no próprio gráfico acima: bom pra comparar
+          várias séries de uma vez, o rótulo no ponto é bom pra ver o valor
+          sem tirar o olho da linha. */}
       {hoverIndex !== null ? (
         <div className="mt-1 flex flex-wrap items-center gap-3 rounded-md border border-border-default bg-bg-card px-3 py-2 text-xs">
           <span className="font-semibold text-text-primary">

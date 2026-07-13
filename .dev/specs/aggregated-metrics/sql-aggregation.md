@@ -3,7 +3,7 @@ tipo: feature-spec
 módulo: aggregated-metrics
 funcionalidade: sql-aggregation
 status: pronto
-atualizado: 2026-07-18
+atualizado: 2026-07-20
 ---
 
 # Camada SQL de Agregação
@@ -297,14 +297,19 @@ necessário — não travar a implementação por causa disso.
   Narrativas quanto no bloco "narrativas dentro da pauta" em Pautas Eleitorais.
 - ✅ **`get_narratives_table` ganhou `p_scope` (2026-07-16, migration `20260716010000`)**:
   `'roots'` (só Narrativas cuja Category é de topo) | `'leaves'` (só Narrativas-filhas/Subcategory)
-  | `null` (sem restrição, default). Só tem efeito quando `p_pauta_id` está ausente — com
+  | `null` (sem restrição). Só tem efeito quando `p_pauta_id` está ausente — com
   `p_pauta_id` setado, o comportamento existente (Narrativas-filhas daquela Pauta específica)
-  continua tendo prioridade. Resolve o pedido do usuário: Overview usa `'roots'` ("só a
-  categoria"), a aba Narrativas e a lista de Pautas Eleitorais (sem uma Pauta específica aberta)
-  usam `'leaves'` ("considera-se as subcategorias") — ver `service-layer-aggregation.md`'s
-  `narrativesScopeForPage()` e `foundation/narratives.md`. Ambas as functions também passaram a
+  continua tendo prioridade. Ambas as functions também passaram a
   exigir `bw_categories.status = 'active'` — Narrativas cuja Category saiu do Brandwatch (ver
   `foundation/data-model.md`, "bw_categories.status") somem da listagem por padrão.
+  ✅ **Revisto (2026-07-20)**, pedido do usuário ("tanto na página de overview quanto na lista
+  de narrativas serão mostradas todas as narrativas"): Overview e a aba Narrativas passaram a usar
+  `p_scope => null` (era `'roots'`/`'leaves'` respectivamente desde 2026-07-16) — viabilizado pela
+  troca simultânea do título da Narrativa pra `"Categoria - Subcategoria"` (ver
+  `foundation/narratives.md`), que desambigua uma Subcategory mesmo listada ao lado de outras
+  Pautas na mesma tabela plana. Pautas Eleitorais (sem Pauta aberta) e Plataformas continuam em
+  `'leaves'`; Relatórios continua em `'roots'` — não fizeram parte deste pedido. Ver
+  `service-layer-aggregation.md`'s `narrativesScopeForPage()`.
 - `get_dissemination_graph` é a única function que recebe um `narrative_id` obrigatório em vez
   de `filters` — ela nunca deve ser chamada para múltiplas narrativas ao mesmo tempo (grafo é
   sempre por narrativa individual, para não gerar payload gigante).
