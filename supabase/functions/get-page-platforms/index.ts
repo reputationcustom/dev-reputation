@@ -242,7 +242,11 @@ export const PAGE_BLOCKS: Record<PageKey, BlockKey[]> = {
 // _pending.md) — fetchBreakdown() loga e retorna null pra esse tipo, o
 // bloco só fica sem aquele item, nunca quebra o envelope inteiro.
 const PAGE_BREAKDOWN_TYPES: Partial<Record<PageKey, Breakdown['type'][]>> = {
-  overview: ['sentiment'],
+  // 'narrative' adicionado 2026-07-13 (paridade com protótipo, "Top 3
+  // Narrativas" — cards com split positivo/neutro/negativo por Narrativa,
+  // reaproveita get_narrative_sentiment_breakdown já usado por
+  // `sentiment`, nenhuma function nova).
+  overview: ['sentiment', 'narrative'],
   narrative_detail: ['sentiment', 'platform', 'region'],
   sentiment: ['sentiment', 'platform', 'theme', 'narrative', 'region'],
   platforms: ['platform'],

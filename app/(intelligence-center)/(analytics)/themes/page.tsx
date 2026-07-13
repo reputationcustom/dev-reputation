@@ -3,11 +3,12 @@
 import { usePageEnvelope } from "@/hooks/use-page-envelope";
 import { PageHeaderBar } from "@/components/intelligence-center/page-header-bar";
 import { WidgetCard } from "@/components/intelligence-center/widget-card";
-import { BreakdownPanel } from "@/components/intelligence-center/charts/breakdown-panel";
+import { PautaCardGrid } from "@/components/intelligence-center/pauta-cards";
 import { NarrativesTable } from "@/components/intelligence-center/narratives-table";
 import { AuthorsList } from "@/components/intelligence-center/authors-list";
 import { TermSignalsList } from "@/components/intelligence-center/term-signals-list";
 import { HighlightsPanel, NarrativeTextPanel } from "@/components/intelligence-center/insights-panel";
+import { EmptyState } from "@/components/ui/empty-state";
 
 // Pautas Eleitorais (`/themes`, intelligence-center/electoral-themes.md).
 // "Pauta" = Narrativa cujo bw_category_id aponta a uma Category raiz — não
@@ -21,17 +22,34 @@ import { HighlightsPanel, NarrativeTextPanel } from "@/components/intelligence-c
 // com `pauta_id`) fica para uma sessão futura.
 export default function ThemesPage() {
   const { status, envelope, retry } = usePageEnvelope("get-page-themes");
+  const themeBreakdown = envelope?.breakdowns.find((b) => b.type === "theme");
 
   return (
     <>
       <PageHeaderBar title="Pautas Eleitorais" subtitle="O que está sendo discutido, por tema político." />
 
       <div className="flex flex-col gap-6 p-8">
+        {/* "Estrutura das pautas" — mesmos rótulos do card grid abaixo, só
+            como chips soltos (protótipo original: `pautasChips`). */}
+        <WidgetCard title="Estrutura das pautas" status={status} onRetry={retry}>
+          {themeBreakdown && themeBreakdown.items.length > 0 ? (
+            <div className="flex flex-wrap gap-2">
+              {themeBreakdown.items.map((item) => (
+                <span
+                  key={item.label}
+                  className="rounded-full bg-bg-page px-3 py-1.5 text-xs font-semibold text-text-secondary"
+                >
+                  {item.label}
+                </span>
+              ))}
+            </div>
+          ) : (
+            <EmptyState message="Nenhuma Pauta em monitoramento ainda." />
+          )}
+        </WidgetCard>
+
         <WidgetCard title="Share of Voice e sentimento por pauta" status={status} onRetry={retry}>
-          <BreakdownPanel
-            breakdown={envelope?.breakdowns.find((b) => b.type === "theme")}
-            emptyMessage="Nenhuma Pauta em monitoramento ainda."
-          />
+          <PautaCardGrid breakdown={themeBreakdown} emptyMessage="Nenhuma Pauta em monitoramento ainda." />
         </WidgetCard>
 
         <WidgetCard title="Narrativas" status={status} onRetry={retry}>
@@ -49,6 +67,14 @@ export default function ThemesPage() {
             <TermSignalsList signals={envelope?.term_signals ?? []} />
           </WidgetCard>
         </div>
+
+        {/* "Comparação entre períodos" (protótipo: callout textual, ex.
+            "Segurança perdeu 4 pontos..."). Depende de síntese narrativa
+            (ai-synthesis, não implementado) — mesmo padrão do resto do
+            produto, EmptyState honesto em vez de inventar o texto. */}
+        <WidgetCard title="Comparação entre períodos" status={status} onRetry={retry}>
+          <EmptyState message="Comparação textual entre períodos ainda não implementada — depende de síntese narrativa (ai-synthesis, ver _pending.md)." />
+        </WidgetCard>
 
         <WidgetCard title="Insights" status={status} onRetry={retry}>
           <div className="flex flex-col gap-4">

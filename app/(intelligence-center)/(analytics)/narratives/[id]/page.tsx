@@ -147,28 +147,34 @@ export default function NarrativeDetailPage() {
         />
       </WidgetCard>
 
-      <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
-        <WidgetCard title="Sentimento e plataforma" status={status} onRetry={retry}>
-          <div className="flex flex-col gap-4">
-            <BreakdownPanel
-              breakdown={envelope?.breakdowns.find((b) => b.type === "sentiment")}
-              emptyMessage="Nenhum dado de sentimento ainda."
-            />
-            <BreakdownPanel
-              breakdown={envelope?.breakdowns.find((b) => b.type === "platform")}
-              emptyMessage="Nenhum dado de plataforma ainda."
-            />
-          </div>
-        </WidgetCard>
+      {/* Extra além do protótipo (que não tem essa seção na página de
+          detalhe) — dado real já disponível (mesmas breakdowns de
+          Sentimento), não fabricado, mantido como valor agregado. */}
+      <WidgetCard title="Sentimento e plataforma" status={status} onRetry={retry}>
+        <div className="flex flex-col gap-4">
+          <BreakdownPanel
+            breakdown={envelope?.breakdowns.find((b) => b.type === "sentiment")}
+            emptyMessage="Nenhum dado de sentimento ainda."
+          />
+          <BreakdownPanel
+            breakdown={envelope?.breakdowns.find((b) => b.type === "platform")}
+            emptyMessage="Nenhum dado de plataforma ainda."
+          />
+        </div>
+      </WidgetCard>
 
+      {/* Lado a lado, mesma organização do protótipo original: "Formação e
+          propagação" (disseminadores) + "Grafo de disseminação
+          simplificado". */}
+      <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
         <WidgetCard title="Formação e propagação — principais disseminadores" status={status} onRetry={retry}>
           <AuthorsList authors={envelope?.authors ?? []} />
         </WidgetCard>
-      </div>
 
-      <WidgetCard title="Grafo de disseminação simplificado" status={status} onRetry={retry}>
-        <DisseminationGraphPanel graph={envelope?.graph ?? null} />
-      </WidgetCard>
+        <WidgetCard title="Grafo de disseminação simplificado" status={status} onRetry={retry}>
+          <DisseminationGraphPanel graph={envelope?.graph ?? null} />
+        </WidgetCard>
+      </div>
 
       <WidgetCard title="Menções relevantes" status={status} onRetry={retry}>
         <EmptyState message="Lista de menções relevantes ainda não implementada — sem bloco correspondente no envelope atual." />

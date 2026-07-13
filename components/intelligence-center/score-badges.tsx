@@ -83,6 +83,27 @@ export function VelocityIndicator({ score, label }: { score: number | null; labe
   );
 }
 
+// Bucket de `net_sentiment` (score bruto -100..100, breakdown
+// type='platform'/'theme') pras mesmas 7 faixas de SENTIMENT_META — usado
+// onde só o score existe, sem um `*_label` pronto do envelope (ex: cards
+// de Pauta em themes/page.tsx). Mesmo precedente de `momentumBand` acima:
+// mapeamento de apresentação sobre faixas já fechadas em
+// _design-tokens.md, não um cálculo novo (Princípio técnico 2).
+function sentimentBucketFromScore(score: number): keyof typeof SENTIMENT_META {
+  if (score >= 50) return "very_positive";
+  if (score >= 20) return "positive";
+  if (score >= 5) return "slightly_positive";
+  if (score >= -4) return "neutral";
+  if (score >= -19) return "slightly_negative";
+  if (score >= -49) return "negative";
+  return "very_negative";
+}
+
+export function NetSentimentDot({ value }: { value: number }) {
+  const meta = SENTIMENT_META[sentimentBucketFromScore(value)];
+  return <span className={`inline-block h-2.5 w-2.5 rounded-full ${meta.text.replace("text-", "bg-")}`} title={meta.label} />;
+}
+
 export function ScoreBar({ score }: { score: number | null }) {
   if (score === null) return <span className="text-sm text-text-tertiary">—</span>;
   const band = momentumBand(score);

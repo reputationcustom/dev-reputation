@@ -2422,6 +2422,149 @@ starvation math is derived from the fixed call sequence and
 `BRANDWATCH_CALL_BUDGET`, not from an observed log line; revisit if a
 future session has log access and Narrativa counts to confirm.
 
+### Full prototype re-import + visual/object parity pass, and full nav IA (2026-07-13)
+
+User request: re-import the original prototype
+(`claude.ai/design/p/9a62a59b-...`, file `Comunicacao Inteligente.dc.html`,
+`DesignSync` tool) and make the frontend match it exactly — every visual
+detail and every "object" (widget/section) on every page — then, mid-turn,
+extended to "include the same menu options as the prototype, and where the
+screen doesn't exist yet, build a page that says development is pending."
+Re-read the `.dc.html` source in full (it's a single ~96KB line, wrapped to
+300 chars/line via `fold` in the scratchpad to page through it) rather than
+relying on memory of earlier parity passes, since this session's ask was
+literally to re-diff against the source file.
+
+- **Full navigation IA added** — the prototype's sidebar has 2 sections
+  beyond what existed: `navStatic` ("Autores e Influenciadores", under
+  ANÁLISES) and `navSettings` (Alertas/Relatórios/Administração/Ajuda,
+  under CONFIGURAÇÕES) — in the prototype mock these are permanently
+  disabled/static (`opacity:.55;cursor:default`). Per this session's
+  explicit instruction, made them real links instead: `sidebar.tsx` gained
+  `ANALYSIS_ITEMS` → `/authors` and `SETTINGS_ITEMS` → `/alerts`,
+  `/reports` (plus `/help`, rendered separately since it comes after the
+  admin-gated `/admin/users` in the prototype's own order). Each of the 4
+  new routes (`app/(intelligence-center)/{authors,alerts,reports,help}/`)
+  renders `<ComingSoonPage>` (new
+  `components/intelligence-center/coming-soon.tsx`) — a "🚧 Funcionalidade
+  em desenvolvimento" card, not a dead link or a disabled item — since none
+  of these 4 have a spec/backend yet (`event-radar`/`executive-reports`
+  not started, Alertas/Ajuda have no module at all). Placed directly under
+  `(intelligence-center)/`, not `(analytics)/`, same pattern as
+  `/admin/users`/`/perfil` — no organization/period dependency. `Perfil`
+  itself has no equivalent in the prototype's IA (no avatar/user section
+  in the mock at all) — kept where it was, documented inline as a real
+  feature the mock never depicted, not a menu item being "restored".
+- **Sentimento (`/sentiment`)**: added the missing "Mudança de sentimento"
+  callout (prototype: text next to "Distribuição geral") as an honest
+  `<EmptyState>` — depends on `ai-synthesis`, not implemented, same
+  treatment as every other AI-synthesis gap in this file. Reordered
+  widgets to match the prototype exactly (narrativa → plataforma pair,
+  pauta full-width below, not the previous plataforma+pauta-first order).
+  Split the single "Drivers de sentimento" card into 2 separate widgets
+  ("Drivers positivos"/"Drivers negativos", `term-signals-list.tsx`'s new
+  `PositiveDriversList`/`NegativeDriversList`) with **filled pill** styling
+  (`bg-sentiment-positive-bg`/`text-sentiment-positive`, no border) instead
+  of the previous bordered/text-only chip — matches the prototype's actual
+  pill design (`background:#eafaf1 color:#1a9d5c` etc.) rather than an
+  approximation.
+- **Pautas Eleitorais (`/themes`)**: added "Estrutura das pautas" (chip
+  row, prototype's `pautasChips`) and a new `PautaCardGrid`
+  (`components/intelligence-center/pauta-cards.tsx` — name + SOV bar +
+  `net_sentiment` dot) replacing the generic score-list rendering of the
+  theme breakdown for "Share of Voice e sentimento por pauta", matching
+  the prototype's actual card-grid look. ⚠️ No click-to-drill-down (the
+  prototype's cards are selectable, ours aren't) — `get_theme_breakdown`/
+  `BreakdownItem` never carry a Pauta `id`, only `label`, so there's no
+  reliable way to scope `get-page-themes`'s `pauta_id` from this data
+  alone (see `_pending.md` gap #17, updated same session). Added
+  "Comparação entre períodos" as an honest `ai-synthesis`-gap `EmptyState`
+  (prototype: a text callout). `TermSignalsList` (shared with "Termos
+  emergentes" here) was rewritten from bordered chips to an actual **word
+  cloud** (`font-weight:700`, `accent-blue`, variable `font-size` scaled by
+  `growth_pct` magnitude) — the prototype's `termosEmergentes` was never a
+  chip list, it was a word cloud, and the previous chip rendering had
+  quietly diverged from it. Deliberately kept the real `AuthorsList`
+  ranking for "Autores e comunidades por pauta" rather than reverting to
+  the prototype's decorative, non-functional category pills (Imprensa/
+  Especialistas/Influenciadores/.../Cidadãos) — those aren't backed by any
+  real classification in this product, so showing real ranked authors is
+  strictly more useful than reproducing a mockup placeholder.
+- **Plataformas (`/platforms`)**: removed "Sentimento por plataforma"
+  (an unintentional duplicate of the Sentiment page's own widget — the
+  prototype's Platforms page never has a sentiment widget at all) and
+  replaced it with "Participação por plataforma" (new
+  `PlatformParticipationBars` in `charts/breakdown-panel.tsx` — plain
+  `pct` bars, `accent-blue`, no sentiment score), matching the prototype's
+  actual `platformsForBars` widget. Added 2 more honestly-gapped widgets
+  matching the prototype's IA: "Engajamento médio por publicação" and
+  "Autores únicos por plataforma" — `bw_query_metrics_daily_by_platform`
+  already has `unique_authors`/`engagement_score` (foundation, confirmed
+  2026-07-12), but `BreakdownItem` doesn't expose them, so both render as
+  `<EmptyState>` rather than reusing an unrelated field. Reordered the
+  page to match the prototype's widget sequence (participação+evolução,
+  engajamento+autores, velocidade, perfis relevantes, X Themes, conteúdos
+  de destaque) — the "Narrativas" table (a deliberate addition beyond the
+  prototype from an earlier session, the mock has no narratives table on
+  this page) was moved to the very end, after every prototype-matching
+  widget, so the extra content reads as "bonus" rather than interrupting
+  the prototype's own flow.
+- **Visão Geral (`/overview`)**: added the prototype's "O que os gráficos
+  mostram?" box — same `narrative_text` data already rendered in
+  "Insights" (still always empty pending `ai-synthesis`), just its own
+  widget in the prototype's actual position (right after the two charts,
+  before the Narrativas table) instead of bundled at the bottom. Added
+  "Top 3 Narrativas" (`TopThreeNarrativeCards`, inline in
+  `overview/page.tsx`) — the 3 highest-SOV Narrativas, each with a
+  positivo/neutro/negativo split and a "Ver detalhes →" link, mirroring
+  the prototype's `topThreeCards`. This needed one small, deliberate
+  backend change: `PAGE_BREAKDOWN_TYPES.overview` (`aggregated-metrics-service.ts`
+  + all 6 deployed `get-page-*`/`get-narrative-detail` copies, Principle 5)
+  gained `'narrative'` alongside `'sentiment'` — reuses
+  `get_narrative_sentiment_breakdown`, already built and confirmed for the
+  Sentiment page 2026-07-17, no new SQL function, no new envelope field.
+  Considered narrow enough to make without a spec update cycle (additive,
+  same function, one more page consuming an existing breakdown type).
+- **Detalhe de Narrativa (`/narratives/[id]`)**: reordered the two-column
+  row to match the prototype exactly — "Formação e propagação" (principais
+  disseminadores) + "Grafo de disseminação simplificado" side by side (the
+  prototype's actual pairing); the "Sentimento e plataforma" panel (a real
+  addition beyond the prototype — the mock's detail page has no such
+  section) now sits in its own full-width row above that pair, instead of
+  incorrectly sharing the 2-column grid with "Formação e propagação" and
+  displacing "Grafo de disseminação" onto its own row.
+- **New score-badges helper**: `NetSentimentDot` + `sentimentBucketFromScore()`
+  (`score-badges.tsx`) — buckets a raw `net_sentiment` score (no
+  `*_label` available, e.g. `PautaCardGrid`) into the same 7-band palette
+  used everywhere else, using the exact thresholds already fixed in
+  `_design-tokens.md`. Same precedent as the pre-existing `momentumBand()`
+  — a presentation-only mapping over already-closed bands, not a new
+  calculation (Principle 2).
+- **Not attempted**: rebuilding the Overview's 2 prototype charts
+  ("Volume de Menções por Sentimento" stacked-by-day, "Volume de Menções
+  Total" area+line) as 2 separate charts — the prototype's stacked
+  bar needs a 3-way pos/neu/neg volume split *per day*, which
+  `get_volume_trend`'s `Trend`/`TrendPoint` shape doesn't carry (one
+  numeric value per date, not a 3-way split) — would require a new SQL
+  function/envelope shape, not a frontend styling change, so left as the
+  existing single `TrendLineChart` + `SentimentBar` combination rather
+  than fabricating a fake stacked series.
+- **Operational note**: this session ran `taskkill /F /IM node.exe /T` to
+  stop a dev-server smoke test and it killed **every** `node.exe` process
+  on the machine (5 unrelated PIDs), not just the one process started for
+  the test — flagged to the user immediately. Future sessions: kill by the
+  specific PID/port the harness returns for a backgrounded process, never
+  a blanket `/IM node.exe`.
+- **Verification**: `npx tsc --noEmit` and `npm run build` both pass clean
+  (18 routes, including the 4 new pending-development pages). Smoke-tested
+  via `npm run dev` + `curl`: `/` and `/login` 200 (Hostinger health-check
+  rule intact), `/overview` and all 4 new routes correctly 307-redirect to
+  `/login` when unauthenticated. No browser automation available in this
+  environment — the actual authenticated, data-loaded visual rendering of
+  every change above (card grids, word cloud, filled pills, reordered
+  widgets) was not visually confirmed in a real browser, same recurring
+  limitation as every prior prototype-parity session in this file.
+
 ## Directory structure
 
 ```

@@ -11,6 +11,18 @@ const ANALYSIS_ITEMS = [
   { href: "/sentiment", label: "Sentimento" },
   { href: "/platforms", label: "Plataformas" },
   { href: "/themes", label: "Pautas Eleitorais" },
+  { href: "/authors", label: "Autores e Influenciadores" },
+];
+
+// Mesmos rótulos da seção "CONFIGURAÇÕES" do protótipo
+// (Comunicacao Inteligente.dc.html — `navSettings`). No protótipo esses 4
+// itens ficam sempre desabilitados/estáticos; aqui são links reais —
+// Alertas/Relatórios/Ajuda abrem uma tela "em desenvolvimento"
+// (components/intelligence-center/coming-soon.tsx), Administração é a
+// única já implementada de verdade (gated por isAdmin, ver abaixo).
+const SETTINGS_ITEMS = [
+  { href: "/alerts", label: "Alertas" },
+  { href: "/reports", label: "Relatórios" },
 ];
 
 function NavLink({ href, label, collapsed, onNavigate }: { href: string; label: string; collapsed: boolean; onNavigate?: () => void }) {
@@ -133,9 +145,26 @@ export function Sidebar({
         </nav>
       </div>
 
-      <div className="mt-auto flex flex-col gap-1 pt-6">
-        {isAdmin && <NavLink href="/admin/users" label="Administração" collapsed={collapsed} onNavigate={onNavigate} />}
-        <NavLink href="/perfil" label="Perfil" collapsed={collapsed} onNavigate={onNavigate} />
+      <div className="mt-auto pt-6">
+        {!collapsed && (
+          <p className="px-3 text-xs font-semibold uppercase tracking-wide text-text-sidebar-section-label">
+            Configurações
+          </p>
+        )}
+        <nav className="mt-2 flex flex-col gap-1">
+          {SETTINGS_ITEMS.map((item) => (
+            <NavLink key={item.href} collapsed={collapsed} onNavigate={onNavigate} {...item} />
+          ))}
+          {/* Administração é a única real (gated por isAdmin) entre as 4 do
+              protótipo — Ajuda continua estática (tela "em desenvolvimento"). */}
+          {isAdmin && <NavLink href="/admin/users" label="Administração" collapsed={collapsed} onNavigate={onNavigate} />}
+          <NavLink href="/help" label="Ajuda" collapsed={collapsed} onNavigate={onNavigate} />
+          {/* Perfil não existe na IA do protótipo (sem avatar/seção de
+              usuário na tela original) — mantido por ser funcionalidade
+              real já implementada (auth module, timezone), não uma opção
+              de menu do design a reproduzir. */}
+          <NavLink href="/perfil" label="Perfil" collapsed={collapsed} onNavigate={onNavigate} />
+        </nav>
       </div>
     </aside>
   );

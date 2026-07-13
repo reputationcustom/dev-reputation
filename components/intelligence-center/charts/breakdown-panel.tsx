@@ -126,6 +126,35 @@ function ScoreList({ breakdown }: { breakdown: Breakdown }) {
   );
 }
 
+// "Participação por plataforma" (Plataformas, protótipo original
+// `platformsForBars`) — barra horizontal proporcional ao `pct` (SOV/
+// participação), cor accent-blue fixa (não é sentimento). Distinto de
+// `ScoreList` acima (que mistura `pct` + `value`/net_sentiment): esse
+// widget no protótipo não mostra sentimento nenhum, só participação —
+// "Sentimento por plataforma" já existe como widget próprio na página de
+// Sentimento, não deveria se repetir aqui.
+export function PlatformParticipationBars({ breakdown, emptyMessage }: { breakdown: Breakdown | undefined; emptyMessage: string }) {
+  const items = (breakdown?.items ?? []).filter((item) => item.pct > 0);
+
+  if (items.length === 0) {
+    return <EmptyState message={emptyMessage} />;
+  }
+
+  return (
+    <div className="flex flex-col gap-2.5">
+      {items.map((item) => (
+        <div key={item.label} className="flex items-center gap-2.5">
+          <span className="w-20 flex-none truncate text-sm font-medium text-text-primary">{item.label}</span>
+          <div className="h-2.5 flex-1 overflow-hidden rounded-md bg-bg-page">
+            <div className="h-full bg-accent-blue" style={{ width: `${Math.max(0, Math.min(100, item.pct))}%` }} />
+          </div>
+          <span className="w-10 flex-none text-right text-sm font-semibold text-text-secondary">{item.pct}%</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function BreakdownPanel({ breakdown, emptyMessage }: { breakdown: Breakdown | undefined; emptyMessage: string }) {
   if (!breakdown || breakdown.items.length === 0) {
     return <EmptyState message={emptyMessage} />;
