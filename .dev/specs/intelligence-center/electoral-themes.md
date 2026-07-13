@@ -3,7 +3,7 @@ tipo: feature-spec
 módulo: intelligence-center
 funcionalidade: electoral-themes
 status: pronto
-atualizado: 2026-07-12
+atualizado: 2026-07-16
 ---
 
 # Pautas Eleitorais
@@ -69,6 +69,18 @@ Mesmo público das demais páginas deste módulo.
    `narratives-exploration.md`, sem duplicar.
 3. Ao expandir uma pauta, mostrar (se existirem) as Narrativas-filhas
    (Subcategories curadas como `narratives`) — ver decisão pendente acima.
+   ✅ **Decidido (2026-07-16)**: "considerar todas as subcategorias da
+   categoria Pauta" — o bloco `narratives` desta página sempre lista
+   Subcategories, nunca a Pauta (Category de topo) em si: com uma Pauta
+   específica aberta (`pauta_id`), as Subcategories **daquela** Pauta
+   (`get_narratives_table(p_pauta_id => ...)`, comportamento já existente);
+   sem uma Pauta aberta, as Subcategories de **todas** as Pautas
+   (`get_narratives_table(p_scope => 'leaves')`, mesma granularidade de
+   [narratives-exploration.md](narratives-exploration.md)) — a lista de
+   Pautas em si vem do bloco `breakdowns` (`get_theme_breakdown`, sempre
+   Category de topo). Categories/Subcategories `status = 'inactive'`
+   (removidas da Brandwatch, ver `foundation/data-model.md`) nunca
+   aparecem em nenhum dos dois blocos.
 4. Comparação entre períodos (ex: "Segurança perdeu 4 pontos de
    participação, enquanto saúde ganhou 7 pontos na última semana") — cálculo
    simples de diferença de SOV entre dois períodos já agregados

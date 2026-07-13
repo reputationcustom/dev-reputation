@@ -3,7 +3,7 @@ tipo: feature-spec
 módulo: foundation
 funcionalidade: narratives
 status: implementado
-atualizado: 2026-07-14
+atualizado: 2026-07-16
 ---
 
 # Narratives
@@ -13,6 +13,23 @@ atualizado: 2026-07-14
 > 2026-07-10 (auto-seed de Category/Subcategory de topo), métricas via
 > `refresh_narrative_metrics()` agendada por `pg_cron` — ver `CLAUDE.md`,
 > "Brandwatch sync model", pro histórico completo.
+
+> ✅ **Implementado (2026-07-16)**: `bw_categories.status` (migration
+> `20260716010000`) — uma Narrativa cuja Category/Subcategory saiu do
+> `GET /rulecategories` da Brandwatch (renomeada/excluída lá) não é
+> deletada, mas para de aparecer em `get_narratives_table`/
+> `get_theme_breakdown` (aggregated-metrics exige `bc.status = 'active'`) e
+> `bw-sync` para de gastar orçamento sincronizando novo dado pra ela
+> (`fetchNarrativeCategoryIds()`). Dado histórico já sincronizado
+> (`narrative_metrics`, `bw_query_metrics_daily`) permanece intacto — só a
+> listagem/score em telas fica escondida por padrão. Mesma sessão também
+> resolveu, no lado de `intelligence-center` (ver
+> [narratives-exploration.md](../intelligence-center/narratives-exploration.md)/
+> [executive-overview.md](../intelligence-center/executive-overview.md)),
+> qual granularidade de Narrativa cada página lista por padrão quando uma
+> Category tem Subcategories (Overview = só a Category de topo; aba
+> Narrativas = as Subcategories) — ver CLAUDE.md "Category/Subcategory
+> status tracking + página-escopo raiz/subcategoria".
 
 ## Objetivo
 

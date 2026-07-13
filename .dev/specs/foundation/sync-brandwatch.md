@@ -3,7 +3,7 @@ tipo: feature-spec
 módulo: foundation
 funcionalidade: sync-brandwatch
 status: implementado
-atualizado: 2026-07-14
+atualizado: 2026-07-16
 ---
 
 # Sync Brandwatch
@@ -295,6 +295,14 @@ própria `platform_by_narrative` (passo 6.3c abaixo) — ver `data-model.md`
    Brandwatch. Isso é o que torna o "a cada 3 horas" um parâmetro de
    ambiente de verdade — mudar `BW_SYNC_INTERVAL_HOURS` (`supabase secrets
    set`) muda o comportamento na invocação seguinte, sem nova migration.
+0.5c. **Gate de rate limit** (✅ adicionado 2026-07-16, correção de bug de
+   produção — ver item 8 abaixo). Roda depois do gate 0.5b e antes do
+   lock 0.5 (mesma ordem em código: checagem barata, sem chamar a
+   Brandwatch). Lê `bw_sync_lock.rate_limited_until` — se estiver no
+   futuro (setado por `mark_bw_rate_limited()` numa invocação anterior que
+   esgotou retry num `429`), a invocação encerra imediatamente (`HTTP 200,
+   ok: true, skipped: true, reason: "brandwatch_rate_limited"`) sem mintar
+   token nem reivindicar o lock.
 1. `pg_cron` invoca a Edge Function `bw-sync` a cada **15 minutos** — um
    heartbeat fixo e barato (cadência de infraestrutura, não o parâmetro de
    negócio; só precisa ser frequente o bastante relativo aos
@@ -400,7 +408,17 @@ própria `platform_by_narrative` (passo 6.3c abaixo) — ver `data-model.md`
    cascade` (a deleção falharia com violação de FK se a Category já virou
    Narrativa). Uma Category removida/renomeada na Brandwatch fica órfã em
    `bw_categories` até limpeza manual — mais seguro que apagar dado
-   histórico às cegas.
+   histórico às cegas. ✅ **`status` implementado (2026-07-16, migration
+   `20260716010000`)**: em vez de só ficar "órfã" silenciosamente, toda
+   Category/Subcategory do Project que não veio no `rulecategories` desta
+   checagem (a cada refresh de metadata, mesmo throttle de 1h acima) é
+   marcada `status = 'inactive'` — ainda não deletada (mesmos motivos de
+   FK/histórico acima), mas para de contar como "ativa" pro resto do
+   sistema: `fetchNarrativeCategoryIds()` (passo 6 abaixo) para de
+   sincronizar novo dado pra ela, e `get_narratives_table`/
+   `get_theme_breakdown` (aggregated-metrics) param de listá-la. Reaparece
+   automaticamente como `active` se a Category voltar a existir num
+   `rulecategories` futuro.
 5. Busca mentions daquele par — **sempre** com `startDate`/`endDate` (⚠️
    correção 2026-07-07, encontrado em teste real: a Brandwatch rejeita
    `/data/mentions` sem `startDate`, mesmo no polling, apesar do exemplo de
@@ -901,13 +919,24 @@ própria `platform_by_narrative` (passo 6.3c abaixo) — ver `data-model.md`
    `sync_cursors.status = 'error'` + `last_error` e `sync_log.status = 'error'`
    — a Edge Function sempre responde HTTP 200 mesmo em erro (o erro fica no
    corpo da resposta), para uma eventual invocação futura via `pg_cron` não
-   ser interpretada como falha de infraestrutura.
+   ser interpretada como falha de infraestrutura. ✅ **Correção de bug de
+   produção (2026-07-16, migration `20260716020000`)**: esgotar as 3
+   tentativas também grava `bw_sync_lock.rate_limited_until = now() +
+   10min` (`mark_bw_rate_limited()`) — a janela real do rate limit da
+   Brandwatch (30 chamadas/10min por Client, não por par/invocação). Sem
+   isso, uma invocação nova começava com seu orçamento local
+   (`hasBrandwatchCallBudget()`) "cheio" e tomava 429 já na primeira
+   chamada, porque esse orçamento não tem memória de quanto invocações
+   anteriores recentes já gastaram do teto real. Ver o novo passo 0.5c
+   acima — checa `rate_limited_until` antes de mintar token ou
+   reivindicar o lock do passo 0.5, e sai cedo (mesmo padrão do gate de
+   `BW_SYNC_INTERVAL_HOURS`) se o backoff ainda está ativo.
 
 ## Fluxos alternativos e erros
 
 | Situação | Comportamento esperado |
 |---|---|
-| `HTTP 429` da Brandwatch | Backoff (ver best practices da skill `brandwatch-api`), até 3 tentativas; se esgotar, marca erro e tenta o próximo par na invocação seguinte — não trava a fila inteira |
+| `HTTP 429` da Brandwatch | Backoff (ver best practices da skill `brandwatch-api`), até 3 tentativas; se esgotar, marca erro, grava `rate_limited_until` (10min, ver passo 8/0.5c) e tenta o próximo par na invocação seguinte — não trava a fila inteira |
 | Token expirado/inválido | `sync_cursors.status = 'error'`, `last_error` com mensagem; **não** derruba a Edge Function para outros pares — cada par falha isoladamente |
 | Query removida/pausada na Brandwatch | Mantida em `bw_queries` (histórico), mas sem novo `sync_cursors` de mentions; o refresh periódico de metadados (passo 4) reflete o estado atual |
 | Project sem Query Group configurado (⚠️ correção 2026-07-07, encontrado em teste real) | `GET /projects/{id}/query-groups` responde `404` em vez de `{results: []}` quando não há nenhum grupo — tratado como "nenhum grupo" (loga e segue o bootstrap normalmente), não como falha; passo 6.2 (SOV) simplesmente não roda para aquele Project. Query Group é opcional por design (só necessário pro card de SOV, ver `brandwatch-setup.md` §4) |

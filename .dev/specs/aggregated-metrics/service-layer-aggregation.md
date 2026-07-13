@@ -3,7 +3,7 @@ tipo: feature-spec
 módulo: aggregated-metrics
 funcionalidade: service-layer-aggregation
 status: pronto
-atualizado: 2026-07-12
+atualizado: 2026-07-16
 ---
 
 # Service Layer de Agregação (TypeScript)
@@ -31,6 +31,11 @@ concentra o reaproveitamento de código entre páginas.
 
 - Cada `fetchX` desta camada corresponde 1:1 a uma function SQL — esta camada não deve conter
   lógica de agregação própria, apenas chamada + normalização de tipos (datas, números).
+- ✅ **`fetchNarratives` recebe `page` (2026-07-16)**: `narrativesScopeForPage(page)` resolve
+  `'roots' | 'leaves' | null` e é repassado como `get_narratives_table`'s novo parâmetro
+  `p_scope` (ver `sql-aggregation.md`) — Overview/Relatórios pedem `'roots'`, Narrativas/
+  Plataformas/Pautas pedem `'leaves'`. É a única `fetchX` que precisa saber qual página a chamou;
+  as demais continuam recebendo só `(supabase, ctx)`.
 - `PAGE_BLOCKS` deve ser uma constante única, tipada, espelhando exatamente a tabela de
   [block-mapping-per-page.md](block-mapping-per-page.md). Se a tabela mudar, esta
   constante deve ser atualizada junto — o Claude Code deve tratar os dois como uma coisa só.

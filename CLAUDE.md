@@ -1085,6 +1085,131 @@ used to apply to `bw-sync`.)
     whatever's left is picked up on the next full cycle through this same
     phase (idempotent upserts, no data lost, just delayed).
 
+- **bw-sync rate limit cross-invocation backoff (2026-07-16, migration
+  `20260716020000`)** — user-reported production log: `429` on
+  `data/volume/sentiment/days` (the `daily_metrics` phase), 3 retries
+  exhausted, right after `mintBrandwatchAccessToken:success` — i.e. the
+  *very first* Brandwatch call of the invocation already failed. This
+  looked at first like a repeat of the 2026-07-13 `daily_metrics` budget
+  bug above, but that fix (`hasBrandwatchCallBudget()` on every call in
+  the phase) was already in place and irrelevant here: the local
+  25-call-per-invocation budget was still "full" (this was the first call
+  attempted), so the guard had nothing to catch. Real cause: that local
+  counter (`brandwatchCallCount`, reset to `0` at the top of every
+  `Deno.serve` invocation) has zero memory of what *previous* invocations
+  already spent against Brandwatch's real, server-side 30-calls/10min
+  ceiling (per Client, not per invocation, not per pair — same fact
+  `bw_sync_lock`'s concurrency lock was built around on 2026-07-11, just a
+  different failure shape: sequential invocations exhausting the shared
+  window over time, not concurrent ones racing for it). A fresh invocation
+  can start with a "full" local budget and still take a `429` on its first
+  call if the Client-wide window was already close to saturated —
+  plausible during backfill/testing (manual Dashboard "Invoke" clicks
+  layered on top of the 15-minute heartbeat, already flagged as a real
+  scenario in the `bw_sync_lock` write-up). The existing retry/backoff
+  behavior itself (`sync-brandwatch.md` step 8: up to 3 local attempts,
+  `retry-after` or 20s fallback, then mark `sync_cursors.status = 'error'`
+  and move on) already degraded reasonably — no crash, HTTP 200 always
+  returned, lock released in `finally` — but every subsequent 15-minute
+  heartbeat just repeated the exact same doomed call, since nothing
+  persisted the fact that the Client-wide window was still hot. Fixed by
+  giving that fact a home: `bw_sync_lock` (the existing single-row
+  concurrency-lock table) gained `rate_limited_until` — `callBrandwatch()`
+  now throws a typed `BrandwatchApiError(429, ...)` instead of a generic
+  `Error` when the 3 local retries exhaust (same retry policy, just a
+  typed failure), and `runSyncInvocation()`'s top-level catch calls the
+  new `mark_bw_rate_limited(p_seconds default 600)` RPC (600s = the
+  documented real window, used as a fixed conservative floor rather than
+  trying to parse a meaningful reset time out of Brandwatch's `retry-after`
+  headers during sustained exhaustion, which the project has no confirmed
+  example of). A new gate at the very top of the handler (step "0.5c" in
+  `sync-brandwatch.md`, between the existing `BW_SYNC_INTERVAL_HOURS` gate
+  and the concurrency-lock acquisition) reads that column first and exits
+  early (`ok: true, skipped: true, reason: "brandwatch_rate_limited"`,
+  same shape as the other early-exit gates) without minting a token or
+  touching Brandwatch at all if the backoff is still active — so the next
+  9-or-so heartbeats after a real `429` become free no-ops instead of
+  repeating the failure and re-writing the same error every 15 minutes.
+
+- **`bw_categories.status` — Category/Subcategory removed from Brandwatch
+  no longer used by the system (2026-07-16, migration `20260716010000`)**
+  — user request: "as categorias permanecem mesmo quando excluídas da
+  brandwatch. Inclua uma coluna de status, se ela não existir na
+  brandwatch, ela não mais será utilizada no sistema... a cada nova busca
+  de dados essa verificação deve ser realizada no endpoint de categorias e
+  subcategorias." `bw_categories` never deleted a row that disappeared
+  from Brandwatch (by design — cascading FKs from `bw_query_metrics_daily`/
+  `bw_query_topics`/`bw_query_top_authors` would lose metric history, and
+  `narratives.bw_category_id` has no cascade at all), but it also never
+  signalled that a Category had stopped existing on the Brandwatch side —
+  a rename/removal there left the row looking permanently "current" in
+  Supabase. New `status` column (`active` | `inactive`, default `active`).
+  `refreshMetadata()` (`bw-sync/index.ts`) now diffs every `GET
+  /rulecategories` response (this already ran on every metadata
+  refresh — see "`bw_categories` staleness reduced 24h → 1h" above, so
+  this check runs at the same 1h/on-demand cadence, no new Brandwatch
+  call) against what's locally known for the Project: anything upserted
+  this round is (re)stamped `active`; anything previously `active` that
+  wasn't in this round's response gets flipped to `inactive` via a single
+  `UPDATE ... WHERE project_id = ... AND status = 'active' AND id NOT IN
+  (...)` (an empty result set from Brandwatch — genuinely zero Categories
+  configured — correctly flips everything to `inactive`, using an
+  unreachable placeholder id so the `NOT IN` filter stays valid
+  PostgREST syntax). Reactivation is automatic and needs no special-casing
+  — if a Category reappears in a future sync, the same upsert already
+  writes `status: 'active'` again.
+  Effect downstream, per the user's "não mais será utilizada no sistema":
+  `fetchNarrativeCategoryIds()` (bw-sync) now filters to `status =
+  'active'`, so `bw-sync` stops spending Brandwatch rate-limit budget
+  syncing new aggregate data for a Narrativa whose Category is gone;
+  `get_narratives_table`/`get_theme_breakdown` (aggregated-metrics,
+  same migration) now require `bw_categories.status = 'active'` too, so
+  an inactive Narrativa drops out of every listing/score by default.
+  Nothing is deleted — `narrative_metrics`/`bw_query_metrics_daily`
+  history for an inactive Category stays exactly as synced, just no
+  longer surfaced by these two functions (a bookmarked `/narratives/[id]`
+  link to an inactive Narrativa still renders its title/description from
+  `narratives` directly, just with empty score badges — `fetchNarrativeSummary()`
+  in `get-narrative-detail` already degrades gracefully on a missing
+  `get_narratives_table` row, no code change needed there).
+
+- **Overview vs. Narrativas vs. Pautas Eleitorais: which Narrativa
+  granularity each page lists by default (2026-07-16)** — same user
+  request, second half: "Quando há categoria e subcategoria, o sistema
+  deve considerar na página de overview apenas a categoria, porém na aba
+  de narrativas considera-se as subcategorias. No caso de Pauta
+  Eleitorais, considerar todas as subcategorias da categoria Pauta."
+  Brandwatch requires every Category to have ≥1 Subcategory
+  (`brandwatch-setup.md` §5), and since 2026-07-12
+  `ensureNarrativesFromCategories()` auto-seeds a `narratives` row for
+  **both** levels (Category and Subcategory, see "Narratives auto-seed
+  from top-level Categories" above) — so every root-level Narrativa
+  ("Pauta") always has ≥1 child Narrativa ("Narrativa dentro da pauta"),
+  and before this fix `get_narratives_table` (no `p_pauta_id`) returned
+  both levels mixed into one flat list on every page that reads the
+  `narratives` block (Overview, Narrativas, Platforms, Themes) — a Pauta
+  and its own children appeared as unrelated sibling rows in the same
+  table. `get_narratives_table` gained `p_scope` (`'roots'` | `'leaves'` |
+  `null`, only applied when `p_pauta_id` is absent — the existing
+  "children of one specific Pauta" behavior keeps priority when
+  `p_pauta_id` is set, same migration `20260716010000`). Service layer
+  (`supabase/functions-shared-source/aggregated-metrics-service.ts` +
+  identical copies in all 6 deployed `get-page-*`/`get-narrative-detail`
+  functions, per Principle 5 — `narrativesScopeForPage(page)`): Overview
+  and Reports pass `'roots'` (only the top-level Category — "apenas a
+  categoria"); Narrativas and Platforms pass `'leaves'` (only
+  Subcategories — "considera-se as subcategorias"); Themes passes
+  `'leaves'` too when no specific Pauta is open (all Subcategories across
+  all Pautas — "todas as subcategorias da categoria Pauta", generalized
+  to every Pauta when none is singled out), falling back to the existing
+  `p_pauta_id`-scoped children query once a specific Pauta is opened.
+  `get_theme_breakdown` (the Pautas list itself, `breakdowns` block) was
+  already root-only by design since it shipped (2026-07-12) — untouched
+  except for the same `status = 'active'` filter added above. Updated
+  `executive-overview.md`/`narratives-exploration.md`/`electoral-themes.md`/
+  `sql-aggregation.md`/`service-layer-aggregation.md` to document this as
+  a settled decision, not an open question.
+
 ### Reporting/BI split
 
 `reporting.narratives_overview` and `reporting.mentions_daily` exist for
@@ -1625,6 +1750,64 @@ browser. Confirmed via `curl` against `npm run dev` that public routes (`/`,
 any of the 6 changed routes. A follow-up session with either browser
 automation or test credentials should do a real visual pass before this is
 considered fully verified.
+
+### Follow-up UI fixes from user screenshot review (2026-07-12)
+
+Same-day follow-up to the prototype-parity pass above — user reviewed the
+live screens (not just the prototype) and reported 5 concrete issues,
+fixed as follows:
+
+- **Sentiment donut → single cumulative bar.** `BreakdownPanel`'s
+  `type === 'sentiment'` case (`charts/breakdown-panel.tsx`) rendered a
+  donut (`DonutChart`) for the 3-way positive/neutral/negative split. User
+  wants the prototype's own pattern instead — big percentages in a row
+  above, one horizontal bar below split proportionally by color
+  (`54% / 18% / 28%` over green/gray/red). Replaced `SentimentDonut` with
+  `SentimentBar` (fixed `positive→neutral→negative` order regardless of
+  API item order, uses the existing `text-sentiment-*`/`bg-sentiment-*`
+  Tailwind tokens instead of hardcoded hex). `DonutChart`
+  (`charts/donut-chart.tsx`) had no other consumer, so it was deleted
+  rather than left dead.
+- **Line chart hover labels.** Clarified with the user (`AskUserQuestion`)
+  that the ask was specifically *value labels drawn on the line itself*
+  while hovering — the chart already had axis ticks and a legend/tooltip
+  panel below, but no label near the actual point. `TrendLineChart`
+  (`charts/trend-line-chart.tsx`) now draws an SVG `<text>` per series
+  next to its hover-highlighted point (white stroke halo via
+  `paintOrder="stroke"` so colored text stays legible over the grid/line),
+  in addition to the existing circle marker and the panel below.
+- **Sidebar ended before the end of page content.** Root cause:
+  `Sidebar`'s `<aside>` had `h-screen` (fixed 100vh), so on any page taller
+  than one viewport the flex row (which stretches to the tallest child —
+  the content column) left a gap below the sidebar once you scrolled past
+  100vh. The prototype's own sidebar div uses
+  `min-height:100vh;position:sticky;top:0;align-self:flex-start` — ported
+  that exact pattern (`min-h-screen sticky top-0 self-start` replacing
+  `h-screen`) in `components/intelligence-center/sidebar.tsx`. This is the
+  standard flexbox trick for a sidebar shorter than a scrolling sibling
+  column: `align-self: flex-start` stops it from being force-stretched to
+  the (taller) content height, while `position: sticky` keeps it pinned
+  through the full scroll instead of scrolling away after 100vh.
+- **Zero-mention rows in "Sentimento por plataforma"/"por pauta".**
+  `ScoreList` (the `platform`/`theme` branch of `BreakdownPanel`) now
+  filters out any item with `pct === 0` (0% das menções) before rendering
+  — applied to both consumers (platform and theme breakdowns use the same
+  component), since a 0%-mention row is equally uninformative in either.
+  Falls back to an `<EmptyState />` if every row is filtered out.
+- **Narratives list: no card summary when nothing selected.** The
+  prototype's `hasNoSelection` state shows a card grid of every Narrativa
+  below the table; the current implementation only ever showed something
+  below the table when a row *was* selected. Added the missing
+  `!selected` branch to `narratives/page.tsx` — one card per Narrativa
+  (`grid-cols-1 sm:grid-cols-2 md:grid-cols-3`), each with title +
+  `SentimentBadge`, SOV/Momentum/Velocity, and an "Explorar narrativa →"
+  link to `/narratives/[id]`. ⚠️ Deviation from the prototype: its cards
+  also show a `resumo` (summary blurb) per Narrativa — `NarrativeRow`
+  (`@reputation/shared-types`) has no such field (no spec defines a
+  per-row summary text; the only narrative-level description that exists
+  today is `get-narrative-detail`'s own `ui_meta.narrative.description`,
+  fetched per-ID, not available in the list envelope), so the cards omit
+  it rather than inventing filler text.
 
 ## Directory structure
 

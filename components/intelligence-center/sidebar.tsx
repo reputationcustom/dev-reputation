@@ -69,7 +69,7 @@ export function Sidebar({
 
   return (
     <aside
-      className={`flex h-screen flex-shrink-0 flex-col bg-bg-sidebar px-3 py-6 transition-[width] ${
+      className={`sticky top-0 flex min-h-screen flex-shrink-0 flex-col self-start bg-bg-sidebar px-3 py-6 transition-[width] ${
         collapsed ? "w-16" : "w-60"
       }`}
     >

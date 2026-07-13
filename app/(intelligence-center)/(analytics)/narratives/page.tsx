@@ -69,6 +69,37 @@ export default function NarrativesListPage() {
             </div>
           </div>
         )}
+
+        {!selected && rows.length > 0 && (
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3">
+            {rows.map((row) => (
+              <div
+                key={row.id}
+                className="flex flex-col gap-3 rounded-xl border border-border-default bg-bg-card p-5"
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <h3 className="font-bold text-text-primary">{row.title}</h3>
+                  <SentimentBadge value={row.net_sentiment} label={row.sentiment_label} />
+                </div>
+                <div className="flex flex-wrap items-center gap-4 text-xs font-semibold text-text-secondary">
+                  <span>
+                    SOV <b className="text-text-primary">{row.sov_pct === null ? "—" : `${row.sov_pct}%`}</b>
+                  </span>
+                  <span className="flex items-center gap-1">
+                    Momentum <MomentumLabel score={row.momentum_score} />
+                  </span>
+                  <VelocityIndicator score={row.velocity_score} label={row.velocity_label} />
+                </div>
+                <Link
+                  href={`/narratives/${row.id}`}
+                  className="mt-1 text-sm font-semibold text-accent-blue hover:underline"
+                >
+                  Explorar narrativa →
+                </Link>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </>
   );

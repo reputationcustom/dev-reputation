@@ -177,6 +177,33 @@ export function TrendLineChart({ trend, emptyMessage }: { trend: Trend | undefin
               />
             );
           })}
+
+        {/* Rótulo do valor direto na linha, junto ao ponto — pedido do
+            usuário 2026-07-12 (rótulos ao passar o mouse sobre a linha, não
+            só no painel abaixo do gráfico). */}
+        {hoverIndex !== null &&
+          groups.map((group) => {
+            const point = group.series[hoverIndex];
+            if (!point) return null;
+            const x = xForIndex(hoverIndex, pointCount);
+            const y = Math.max(yForValue(point.value, maxValue) - 8, PADDING_TOP + 8);
+            return (
+              <text
+                key={`label-${group.group}`}
+                x={x}
+                y={y}
+                textAnchor="middle"
+                fontSize={10}
+                fontWeight={700}
+                fill={GROUP_COLORS[group.group] ?? "#9aa0ab"}
+                stroke="#ffffff"
+                strokeWidth={3}
+                paintOrder="stroke"
+              >
+                {new Intl.NumberFormat("pt-BR", { notation: "compact" }).format(point.value)}
+              </text>
+            );
+          })}
       </svg>
 
       {hoverIndex !== null ? (

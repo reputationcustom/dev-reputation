@@ -3,7 +3,7 @@ tipo: feature-spec
 módulo: intelligence-center
 funcionalidade: executive-overview
 status: pronto
-atualizado: 2026-07-15
+atualizado: 2026-07-16
 ---
 
 # Executive Overview
@@ -77,7 +77,18 @@ Qualquer usuário autenticado, membro de ao menos uma organização (ver
      2026-07-11, ver `foundation/data-model.md`, "Camada de reporting")
      — o usuário só vê "as narrativas da minha organização", sem
      perceber que o SOV de cada uma é calculado dentro do universo da sua
-     própria Query.
+     própria Query. ✅ **Decidido (2026-07-16)**: quando uma Category tem
+     Subcategories (a maioria — Brandwatch exige ≥1 Subcategory por
+     Category, ver `brandwatch-setup.md` §5), esta tabela mostra **só a
+     Category de topo** ("a categoria"), não cada Subcategory como linha
+     separada — evita listar Pauta + suas Narrativas-filhas juntas na
+     mesma tabela agregada. Granularidade de Subcategory fica pra
+     [narratives-exploration.md](narratives-exploration.md) ("aba de
+     narrativas"). Implementado via `get_narratives_table(p_scope =>
+     'roots')`, ver `aggregated-metrics/sql-aggregation.md` e
+     `foundation/narratives.md`. Categories/Subcategories com `status =
+     'inactive'` (removidas da Brandwatch, ver `foundation/data-model.md`)
+     nunca aparecem aqui, em nenhum dos dois escopos.
 5. Usuário pode clicar "Ver" numa linha da tabela de Narrativas → navega
    para o detalhe (`/narratives/[id]`, ver
    [narratives-exploration.md](narratives-exploration.md)).

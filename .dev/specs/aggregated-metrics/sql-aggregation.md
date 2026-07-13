@@ -3,7 +3,7 @@ tipo: feature-spec
 módulo: aggregated-metrics
 funcionalidade: sql-aggregation
 status: pronto
-atualizado: 2026-07-12
+atualizado: 2026-07-16
 ---
 
 # Camada SQL de Agregação
@@ -256,6 +256,16 @@ necessário — não travar a implementação por causa disso.
 - `get_narratives_table`/`get_theme_breakdown` aceitam um filtro opcional de `pauta_id`
   (= `narratives.id` de uma Narrativa de topo), para serem reaproveitadas tanto na página
   Narrativas quanto no bloco "narrativas dentro da pauta" em Pautas Eleitorais.
+- ✅ **`get_narratives_table` ganhou `p_scope` (2026-07-16, migration `20260716010000`)**:
+  `'roots'` (só Narrativas cuja Category é de topo) | `'leaves'` (só Narrativas-filhas/Subcategory)
+  | `null` (sem restrição, default). Só tem efeito quando `p_pauta_id` está ausente — com
+  `p_pauta_id` setado, o comportamento existente (Narrativas-filhas daquela Pauta específica)
+  continua tendo prioridade. Resolve o pedido do usuário: Overview usa `'roots'` ("só a
+  categoria"), a aba Narrativas e a lista de Pautas Eleitorais (sem uma Pauta específica aberta)
+  usam `'leaves'` ("considera-se as subcategorias") — ver `service-layer-aggregation.md`'s
+  `narrativesScopeForPage()` e `foundation/narratives.md`. Ambas as functions também passaram a
+  exigir `bw_categories.status = 'active'` — Narrativas cuja Category saiu do Brandwatch (ver
+  `foundation/data-model.md`, "bw_categories.status") somem da listagem por padrão.
 - `get_dissemination_graph` é a única function que recebe um `narrative_id` obrigatório em vez
   de `filters` — ela nunca deve ser chamada para múltiplas narrativas ao mesmo tempo (grafo é
   sempre por narrativa individual, para não gerar payload gigante).

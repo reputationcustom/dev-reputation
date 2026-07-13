@@ -2,7 +2,7 @@
 tipo: data-model
 módulo: foundation
 status: implementado
-atualizado: 2026-07-14
+atualizado: 2026-07-16
 ---
 
 > ✅ **Status corrigido 2026-07-14** (premissa do projeto, ver CLAUDE.md
@@ -223,9 +223,10 @@ usando join implícito por `project_id in (select id from bw_projects where orga
 | `name`           | `text`        | sim | |
 | `matching_type`  | `text`        | não | `manual` \| `keywords` |
 | `query_ids`      | `bigint[]`    | sim | default `'{}'`. ✅ Adicionado 2026-07-11 (migration `20260711080000`, correção de bug de SOV) — de `queryIds` no payload de `GET .../rulecategories` (confirmado em `developers.brandwatch.com/docs/retrieving-categories`), sem chamada nova. Quais Queries essa Category está associada — usado por `fetchNarrativeCategoryIds()` pra escopar `categoryTargets` corretamente por Query, e por `refresh_narrative_metrics()` pra saber a qual Query o `total_mentions` de uma Narrativa pertence |
+| `status`         | `text`        | sim | default `'active'`. ✅ Adicionado 2026-07-16 (migration `20260716010000`, pedido do usuário: "as categorias permanecem mesmo quando excluídas da brandwatch... status passa para inativo"). `active` \| `inactive` (check constraint). `refreshMetadata()` marca `inactive` toda Category/Subcategory do Project que não veio mais em `GET /rulecategories` na última checagem — a linha nunca é deletada (preserva FK de `bw_query_metrics_daily`/`bw_query_topics`/`bw_query_top_authors`/histórico), só sinaliza que não deve mais ser usada. Reativação é automática se a Category reaparecer num sync futuro. `get_narratives_table`/`get_theme_breakdown` (aggregated-metrics) exigem `status = 'active'`; `fetchNarrativeCategoryIds()` (bw-sync) também, pra não gastar orçamento de rate limit sincronizando novo dado pra Category já removida |
 | `synced_at`      | `timestamptz` | sim | `now()` |
 
-**Índices**: `(project_id)`, `(parent_id)`.
+**Índices**: `(project_id)`, `(parent_id)`, `(project_id, status)`.
 
 **RLS**: mesmo padrão via `project_id`.
 
@@ -1853,6 +1854,22 @@ revoke all on schema public from bi_reader;
       fase agora é guardada pelo mesmo orçamento usado em toda fase
       "stale-gated" (ver `sync-brandwatch.md`, nota logo após a tabela de
       fases)
+      → ✅ **`bw_categories.status` implementado (2026-07-16, migration
+      `20260716010000`)**: pedido do usuário — Category/Subcategory some do
+      Brandwatch, mas nunca é deletada localmente, passa a `status =
+      'inactive'`; `refreshMetadata()` recalcula isso a cada refresh de
+      metadata (checando o `GET /rulecategories` atual contra o que já
+      existe localmente). `get_narratives_table`/`get_theme_breakdown`
+      (aggregated-metrics) e `fetchNarrativeCategoryIds()` (bw-sync) passam
+      a exigir `status = 'active'` — ver §"bw_categories" acima e CLAUDE.md
+      "Category/Subcategory status tracking + página-escopo raiz/subcategoria"
+      → ✅ **correção de bug de produção (2026-07-16, migration
+      `20260716020000`)**: `bw_sync_lock` ganha `rate_limited_until` — um
+      429 com retry esgotado agora grava um backoff de 10min (a janela real
+      do rate limit da Brandwatch), e a próxima invocação checa esse campo
+      antes de mintar token/chamar a Brandwatch de novo, em vez de repetir a
+      mesma chamada fadada a tomar 429 a cada heartbeat de 15min — ver
+      CLAUDE.md "bw-sync rate limit cross-invocation backoff"
 - [ ] Triggers `set_updated_at` em `organizations`, `brandwatch_credentials`, `narratives`
 - [ ] RLS habilitada em **todas** as tabelas deste módulo (inclusive
       `sync_cursors`/`sync_log`, deny-all)

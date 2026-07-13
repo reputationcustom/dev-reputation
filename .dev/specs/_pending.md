@@ -1,6 +1,6 @@
 ---
 tipo: pending-tracker
-atualizado: 2026-07-15 (rev. 7)
+atualizado: 2026-07-16 (rev. 8)
 ---
 
 # Pendências — Digital Intelligent Communication
@@ -47,6 +47,18 @@ importar um pacote de workspace local em produção (Princípio técnico 5), ent
 `supabase/functions-shared-source/aggregated-metrics-service.ts` mantém sua própria cópia inline
 dos tipos, sincronizada à mão. Ver `CLAUDE.md`, "aggregated-metrics module (Sprint 2)".
 
+✅ **Resolvida 2026-07-16** (pedido do usuário, não numerada — surgiu na
+sessão, não vinha de nenhum item desta tabela): "as categorias permanecem
+mesmo quando excluídas da brandwatch... status passa para inativo" e
+"overview apenas a categoria, narrativas as subcategorias, pautas todas as
+subcategorias da categoria Pauta". `bw_categories.status` (migration
+`20260716010000`) + `get_narratives_table`'s novo `p_scope` — ver
+`CLAUDE.md`, "bw_categories.status" e "Overview vs. Narrativas vs. Pautas
+Eleitorais", e item #17 abaixo (parcialmente resolvido pelo mesmo
+trabalho). Mesma sessão também corrigiu um bug de produção real de
+rate-limit cross-invocation em `bw-sync` (migration `20260716020000`) —
+ver `CLAUDE.md`, "bw-sync rate limit cross-invocation backoff".
+
 ✅ Resolvidas em 2026-07-13: `net_sentiment` oficial por Narrativa/Query
 (gap técnico #1 de foundation, migration `20260713030000` — ver
 [foundation/data-model.md](foundation/data-model.md)); tabela
@@ -92,7 +104,7 @@ na época. Itens #2/#3 resolvidos na mesma data (ver acima).
 | 10 | `aggregated-metrics` | Trend "volume por plataforma ao longo do tempo" (`platforms`) e "SOV por pauta ao longo do tempo" (`themes`) — `block-mapping-per-page.md` pede os dois, mas `sql-aggregation.md`'s `get_volume_trend` só cobre volume/sentimento geral, sem quebra por plataforma/pauta ao longo de uma série temporal (só como snapshot estático via `get_platform_breakdown`/`get_theme_breakdown`). `fetchTrends()` na service layer já loga e retorna `[]` pra essas 2 páginas em vez de inventar uma série | [aggregated-metrics/sql-aggregation.md](aggregated-metrics/sql-aggregation.md) |
 | 11 | `aggregated-metrics` | `authors[].risk_level` sempre `null` — diferente de `narratives` (que tem a fórmula completa "Scores de Narrativa"), nenhuma spec define como calcular risco por autor individual. `get_authors_ranking` retorna `null` de propósito até uma spec futura definir a fórmula | [aggregated-metrics/sql-aggregation.md](aggregated-metrics/sql-aggregation.md) |
 | 16 | `intelligence-center` | `/narratives/[id]` abre como página cheia, não como modal via intercepting route — `narratives-exploration.md` já tinha decidido por modal (2026-07-12, `(.)narratives/[id]`); não é uma decisão em aberto, é uma simplificação de implementação (2026-07-15) por causa do volume de trabalho da sessão. A rota funciona e navega corretamente, só não abre sobre a lista como a spec pede | [intelligence-center/narratives-exploration.md](intelligence-center/narratives-exploration.md), "Fluxo principal" item 5 |
-| 17 | `intelligence-center` | Pautas Eleitorais (`/themes`): drill-down "narrativas dentro da pauta" (clicar numa Pauta → só as Narrativas-filhas, via `get-page-themes` com `pauta_id`) não está interativo — o backend já suporta (`get_narratives_table`'s `p_pauta_id`), só falta a UI de seleção; a tabela hoje mostra Pautas e Narrativas-filhas juntas, sem distinguir (bloco `narratives` do envelope não expõe a hierarquia `bw_categories.parent_id`) | [intelligence-center/electoral-themes.md](intelligence-center/electoral-themes.md) |
+| 17 | `intelligence-center` | Pautas Eleitorais (`/themes`): drill-down "narrativas dentro da pauta" (clicar numa Pauta → só as Narrativas-filhas, via `get-page-themes` com `pauta_id`) ainda não está interativo na UI — o backend suporta (`get_narratives_table`'s `p_pauta_id`), só falta o clique. ✅ **Parcialmente resolvido (2026-07-16)**: a parte "mostra Pautas e Narrativas-filhas juntas, sem distinguir" **não é mais verdade** — `get_narratives_table` ganhou `p_scope` (migration `20260716010000`); sem `pauta_id`, `/themes` já lista só Narrativas-filhas (nunca mais Pautas misturadas com suas próprias filhas), e `/overview` já lista só Pautas. Resta só o clique-pra-expandir uma Pauta específica | [intelligence-center/electoral-themes.md](intelligence-center/electoral-themes.md) |
 | 18 | `intelligence-center`/`platform-analysis` | 4 widgets de `/platforms` sem fonte de dado (nenhuma function SQL cobre): evolução do volume por plataforma ao longo do tempo, narrativas dominantes especificamente por plataforma, velocidade de propagação por plataforma (variação % entre períodos por `page_type`), conteúdos de destaque (cards de mentions individuais) — todos renderizados como `<EmptyState />` explicando o motivo, não omitidos silenciosamente | [intelligence-center/platform-analysis.md](platform-analysis.md) |
 | 19 | `intelligence-center`/`sentiment-analysis` | 2 widgets de `/sentiment` sem fonte de dado: "Sentimento por Narrativa" (barras por Narrativa — `block-mapping-per-page.md` não marca o bloco `narratives` para esta página) e "Menções que mais influenciaram o sentimento" (lista de mentions individuais, sem bloco correspondente no envelope) | [intelligence-center/sentiment-analysis.md](sentiment-analysis.md) |
 | 20 | `intelligence-center`/`narratives-exploration` | Detalhe de Narrativa: "Menções relevantes" e "Ações e decisões" (`cases`) ficam `<EmptyState />` — a primeira por falta de bloco no envelope (nenhum dos 8 blocos padrão cobre "lista de mentions em destaque"), a segunda porque a tabela `cases` (`intelligence-center/data-model.md`) ainda não tem migration — spec já previa esse estado vazio explicitamente ("Nenhuma ação registrada ainda") enquanto `cases` não existir | [intelligence-center/narratives-exploration.md](narratives-exploration.md), "Ações e decisões" |

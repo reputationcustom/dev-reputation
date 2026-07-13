@@ -220,6 +220,26 @@ const PAGE_BREAKDOWN_TYPES: Partial<Record<PageKey, Breakdown['type'][]>> = {
   reports: ['sentiment'],
 }
 
+// Pedido do usuário (2026-07-16): "Quando há categoria e subcategoria, o
+// sistema deve considerar na página de overview apenas a categoria, porém
+// na aba de narrativas considera-se as subcategorias." — 'roots' = só
+// Narrativas cuja Category é de topo (bw_categories.parent_id is null,
+// mesma definição de "Pauta" de electoral-themes.md); 'leaves' = só
+// Narrativas-filhas (Subcategory). get_narratives_table (migration
+// 20260716010000) só aplica p_scope quando p_pauta_id está ausente — a
+// página `themes` continua usando p_pauta_id (ctx.pautaId) pra "todas as
+// subcategorias da categoria Pauta" quando uma Pauta específica é aberta;
+// sem pautaId, cai no default 'leaves' abaixo (todas as Narrativas-filhas
+// de todas as Pautas, mesmo escopo de granularidade de `narratives`).
+// Páginas fora deste mapa (narrative_detail, authors, alerts) não usam o
+// bloco `narratives` via PAGE_BLOCKS — narrative_detail busca uma única
+// Narrativa à parte, via ui_meta.narrative (ver get-narrative-detail).
+function narrativesScopeForPage(page: PageKey): 'roots' | 'leaves' | null {
+  if (page === 'overview' || page === 'reports') return 'roots'
+  if (page === 'narratives' || page === 'platforms' || page === 'themes') return 'leaves'
+  return null
+}
+
 // =========================================================================
 // Contexto de montagem — organização/período/filtros vêm sempre do header
 // global (nunca recalculados aqui, ver "Regras de negócio" do envelope).
@@ -456,7 +476,7 @@ async function fetchTrends(page: PageKey, supabase: SupabaseClient, ctx: PageCon
   }
 }
 
-async function fetchNarratives(supabase: SupabaseClient, ctx: PageContext): Promise<NarrativeRow[]> {
+async function fetchNarratives(page: PageKey, supabase: SupabaseClient, ctx: PageContext): Promise<NarrativeRow[]> {
   try {
     const { data, error } = await supabase.rpc('get_narratives_table', {
       p_organization_id: ctx.organizationId,
@@ -464,6 +484,7 @@ async function fetchNarratives(supabase: SupabaseClient, ctx: PageContext): Prom
       p_period_end: ctx.period.end,
       p_filters: effectiveFilters(ctx),
       p_pauta_id: ctx.pautaId ?? null,
+      p_scope: narrativesScopeForPage(page),
     })
     if (error) throw error
     return (data ?? []) as NarrativeTableRow[]
@@ -556,7 +577,7 @@ export async function assemblePageResponse(
     blocks.has('metrics') ? fetchMetrics(supabase, context) : Promise.resolve<MetricCard[]>([]),
     blocks.has('breakdowns') ? fetchBreakdowns(page, supabase, context) : Promise.resolve<Breakdown[]>([]),
     blocks.has('trends') ? fetchTrends(page, supabase, context) : Promise.resolve<Trend[]>([]),
-    blocks.has('narratives') ? fetchNarratives(supabase, context) : Promise.resolve<NarrativeRow[]>([]),
+    blocks.has('narratives') ? fetchNarratives(page, supabase, context) : Promise.resolve<NarrativeRow[]>([]),
     blocks.has('authors') ? fetchAuthors(supabase, context) : Promise.resolve<AuthorRow[]>([]),
     blocks.has('highlights') ? fetchHighlights(supabase, context) : Promise.resolve<Highlight[]>([]),
     blocks.has('term_signals') ? fetchTermSignals(supabase, context) : Promise.resolve<TermSignal[]>([]),

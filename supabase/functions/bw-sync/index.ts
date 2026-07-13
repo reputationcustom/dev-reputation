@@ -148,6 +148,13 @@ class BrandwatchApiError extends Error {
 let brandwatchCallCount = 0;
 const BRANDWATCH_CALL_BUDGET = 25;
 
+// Correção 2026-07-16 (ver migration 20260716020000): janela real do rate
+// limit da Brandwatch (30 chamadas/10min por Client, brandwatch-setup.md
+// §1) — usado como backoff persistido em bw_sync_lock.rate_limited_until
+// quando callBrandwatch() esgota as 3 tentativas locais em 429, pra
+// próximas invocações não repetirem a mesma chamada fadada a falhar.
+const BRANDWATCH_RATE_LIMIT_BACKOFF_SECONDS = 600;
+
 function hasBrandwatchCallBudget(): boolean {
   return brandwatchCallCount < BRANDWATCH_CALL_BUDGET;
 }
@@ -163,7 +170,11 @@ async function callBrandwatch(path: string, token: string): Promise<any> {
 
     if (response.status === 429) {
       if (attempt === 3) {
-        throw new Error(`Brandwatch rate limit excedido após 3 tentativas em ${path}`);
+        // Tipado como BrandwatchApiError (status 429), não Error genérico —
+        // deixa runSyncInvocation() distinguir "esgotou retry por rate
+        // limit" de qualquer outra falha e acionar mark_bw_rate_limited()
+        // (ver migration 20260716020000, correção 2026-07-16).
+        throw new BrandwatchApiError(429, `Brandwatch rate limit excedido após 3 tentativas em ${path}`);
       }
       const retryAfterHeader = response.headers.get("retry-after");
       const retryAfterMs = retryAfterHeader ? Number(retryAfterHeader) * 1000 : 20_000;
@@ -465,6 +476,7 @@ async function refreshMetadata(
       // linhas de bw_query_metrics_daily de Queries erradas pra mesma
       // Narrativa.
       query_ids: category.queryIds ?? [],
+      status: "active",
       synced_at: new Date().toISOString(),
     });
     for (const child of category.children ?? []) {
@@ -475,6 +487,7 @@ async function refreshMetadata(
         name: child.name,
         matching_type: category.matchingType ?? null,
         query_ids: child.queryIds ?? category.queryIds ?? [],
+        status: "active",
         synced_at: new Date().toISOString(),
       });
     }
@@ -482,6 +495,27 @@ async function refreshMetadata(
   if (categoryRows.length > 0) {
     const { error } = await supabase.from("bw_categories").upsert(categoryRows, { onConflict: "id" });
     if (error) throw new Error(`Erro atualizando bw_categories: ${error.message}`);
+  }
+
+  // Pedido do usuário (2026-07-16): Category/Subcategory que suma do
+  // /rulecategories atual (renomeada/excluída na Brandwatch) nunca é
+  // deletada localmente (preserva FK/histórico de bw_query_metrics_daily
+  // etc., ver migration 20260716010000), mas passa pra status='inactive' —
+  // "não mais será utilizada no sistema". Reativação é automática: se ela
+  // reaparecer num sync futuro, o upsert acima já grava status:'active' de
+  // novo. `.not("id", "in", ...)` com lista vazia vira `not.in.()`, que o
+  // PostgREST não aceita — usa um id inalcançável (0, bigint nunca usado
+  // por Category real) como placeholder nesse caso, marcando tudo inativo.
+  const returnedCategoryIds = categoryRows.map((c) => c.id as number);
+  const knownIdsList = returnedCategoryIds.length > 0 ? returnedCategoryIds.join(",") : "0";
+  const { error: deactivateError } = await supabase
+    .from("bw_categories")
+    .update({ status: "inactive" })
+    .eq("project_id", projectId)
+    .eq("status", "active")
+    .not("id", "in", `(${knownIdsList})`);
+  if (deactivateError) {
+    throw new Error(`Erro desativando bw_categories removidas da Brandwatch: ${deactivateError.message}`);
   }
 
   const narrativesCreated = await ensureNarrativesFromCategories(supabase, organizationId, categoryRows);
@@ -940,10 +974,15 @@ async function isQueryGroupSovStale(
 // (`queryIds` já vem no payload de `rulecategories`, sem chamada nova —
 // ver refreshMetadata()).
 async function fetchNarrativeCategoryIds(supabase: SupabaseClient, projectId: number, queryId: number): Promise<number[]> {
+  // status='active' (2026-07-16): não gasta orçamento de rate limit
+  // sincronizando novo dado pra Categories que já sumiram do
+  // /rulecategories da Brandwatch — ver refreshMetadata() e migration
+  // 20260716010000.
   const { data: categories, error: categoriesError } = await supabase
     .from("bw_categories")
     .select("id")
     .eq("project_id", projectId)
+    .eq("status", "active")
     .contains("query_ids", [queryId]);
   if (categoriesError) throw new Error(`Erro lendo bw_categories: ${categoriesError.message}`);
 
@@ -2516,6 +2555,31 @@ Deno.serve(async (_req: Request) => {
     });
   }
 
+  // Passo 0.5c: gate de rate limit (correção 2026-07-16 — ver migration
+  // `20260716020000` e CLAUDE.md "bw-sync rate limit cross-invocation
+  // backoff"). Checagem barata (1 SELECT), antes de mintar token ou
+  // reivindicar o lock — se uma invocação recente já esgotou retry num 429,
+  // não vale a pena nem tentar: o teto de 30 chamadas/10min é por Client,
+  // não por par, então qualquer chamada nova provavelmente toma 429 de novo
+  // até a janela real liberar.
+  const { data: lockRow, error: lockRowError } = await supabase
+    .from("bw_sync_lock")
+    .select("rate_limited_until")
+    .eq("id", true)
+    .maybeSingle();
+  if (lockRowError) {
+    logError("invocation:rate_limit_check_failed", lockRowError.message);
+    // Não bloqueia a invocação por uma falha nesta leitura de otimização —
+    // só significa que o gate abaixo não vai pegar um backoff ativo desta
+    // vez; o pior caso é repetir o 429 e regravar o mesmo backoff.
+  } else if (lockRow?.rate_limited_until && new Date(lockRow.rate_limited_until as string) > new Date()) {
+    log("invocation:rate_limited_skip", { rateLimitedUntil: lockRow.rate_limited_until });
+    return new Response(
+      JSON.stringify({ ok: true, skipped: true, reason: "brandwatch_rate_limited", rateLimitedUntil: lockRow.rate_limited_until }),
+      { headers: { "Content-Type": "application/json" } },
+    );
+  }
+
   // Correção 2026-07-10/11 (relatado pelo usuário: HTTP 429 em cascata —
   // logs mostraram duas chamadas diferentes, para endpoints diferentes,
   // levando 429 de forma intercalada, sinal de duas invocações rodando ao
@@ -3653,6 +3717,25 @@ async function runSyncInvocation(supabase: SupabaseClient, invocationStartedAt: 
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     logError("invocation:failed", err);
+
+    // Correção 2026-07-16: um 429 com retry esgotado significa que o
+    // orçamento REAL da Brandwatch (30 chamadas/10min por Client) está
+    // saturado — não só o orçamento local desta invocação
+    // (hasBrandwatchCallBudget()), que não tem memória de invocações
+    // anteriores. Grava um backoff em bw_sync_lock pra que a PRÓXIMA
+    // invocação (deste par ou de qualquer outro — o teto é por Client, não
+    // por par) sequer tente chamar a Brandwatch antes da janela real
+    // liberar, em vez de repetir o mesmo 429 a cada heartbeat de 15min.
+    if (err instanceof BrandwatchApiError && err.status === 429) {
+      const { error: rateLimitError } = await supabase.rpc("mark_bw_rate_limited", {
+        p_seconds: BRANDWATCH_RATE_LIMIT_BACKOFF_SECONDS,
+      });
+      if (rateLimitError) {
+        logError("invocation:mark_rate_limited_failed", rateLimitError.message);
+      } else {
+        log("invocation:rate_limited", { backoffSeconds: BRANDWATCH_RATE_LIMIT_BACKOFF_SECONDS });
+      }
+    }
 
     // Falha isolada por par — marca erro no cursor, mas não derruba a fila
     // (a próxima invocação pega outro par ou tenta este de novo). Não
