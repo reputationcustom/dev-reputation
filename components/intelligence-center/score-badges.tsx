@@ -123,6 +123,25 @@ export function MomentumLabel({ score }: { score: number | null }) {
   return <span className="text-sm text-text-secondary">{momentumBand(score).label}</span>;
 }
 
+// Pill de Momentum (pedido do usuário 2026-07-21, card de Narrativa) — ao
+// lado do RiskBadge no cabeçalho do card, no lugar da antiga barra de
+// risco em largura total. Mesmas faixas/cores de `momentumBand`
+// (`bg-intensity-*`, já usadas em `ScoreBar`/`MOMENTUM_LEGEND`) — nenhuma
+// paleta nova. `bg-intensity-*` não tem um par "-bg" claro/texto escuro
+// como sentiment/risk (são cores sólidas mais saturadas), por isso usa
+// texto branco em vez do padrão `meta.text`/`meta.bg` dos outros badges.
+export function MomentumBadge({ score }: { score: number | null }) {
+  if (score === null) return null;
+  const band = momentumBand(score);
+  const rounded = Math.round(score);
+  return (
+    <span className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold text-white ${band.color}`}>
+      Momentum
+      <span className="opacity-80">{rounded}</span>
+    </span>
+  );
+}
+
 const RISK_LEGEND: { label: string; text: string; bg: string }[] = [
   RISK_META.low,
   RISK_META.medium,

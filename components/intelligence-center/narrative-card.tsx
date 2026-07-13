@@ -1,12 +1,11 @@
 import Link from "next/link";
 import type { NarrativeRow } from "@reputation/shared-types";
-import { RiskBadge } from "./score-badges";
+import { RiskBadge, MomentumBadge } from "./score-badges";
 
 // Card de Narrativa — pedido do usuário 2026-07-21 (referência visual
 // anexada): borda esquerda colorida pelo sentimento (só 3 estados —
 // vermelho/verde/neutro, não as 7 faixas finas de SentimentBadge — pedido
-// explícito do usuário), SOV + menções em destaque, barra de risco (mesma
-// cor/faixa do badge "CRÍTICA"/etc ao lado do título), resumo textual
+// explícito do usuário), SOV + menções em destaque, resumo textual
 // (reservado pra IA — ai-synthesis, sprint futura, ver
 // foundation/narratives.md "Resumo executivo"), barra de sentimento
 // positivo/neutro/negativo e tags (termos/hashtags reais de
@@ -15,6 +14,13 @@ import { RiskBadge } from "./score-badges";
 // Reusado por toda tela que lista Narrativas em formato de card (lista de
 // Narrativas sem seleção, "Top 3 Narrativas" da Visão Geral) — não
 // duplicar este layout por página.
+//
+// ✅ **2026-07-21, revisão do usuário**: a barra de risco em largura total
+// (logo abaixo do título) foi removida — lida sozinha, sem o contexto do
+// número/faixa por perto, ela ficava sem sentido claro ("por que uma barra
+// amarela?"). No lugar, o Momentum aparece como uma segunda tag ao lado do
+// badge de Risco, no cabeçalho — mesmo padrão visual (pill colorida),
+// informação equivalente, mais legível.
 const SENTIMENT_BORDER: Record<string, string> = {
   very_positive: "border-l-sentiment-positive",
   positive: "border-l-sentiment-positive",
@@ -25,20 +31,12 @@ const SENTIMENT_BORDER: Record<string, string> = {
   very_negative: "border-l-sentiment-negative",
 };
 
-const RISK_BAR_COLOR: Record<string, string> = {
-  low: "bg-risk-low",
-  medium: "bg-risk-medium",
-  high: "bg-risk-high",
-  critical: "bg-risk-critical",
-};
-
 function formatMentions(value: number) {
   return new Intl.NumberFormat("pt-BR").format(value);
 }
 
 export function NarrativeCard({ narrative }: { narrative: NarrativeRow }) {
   const borderClass = SENTIMENT_BORDER[narrative.sentiment_label] ?? "border-l-sentiment-neutral";
-  const riskBarColor = narrative.risk_label ? RISK_BAR_COLOR[narrative.risk_label] : null;
 
   const hasSentimentSplit =
     narrative.sentiment_positive_pct !== null &&
@@ -51,6 +49,7 @@ export function NarrativeCard({ narrative }: { narrative: NarrativeRow }) {
         <div className="flex flex-wrap items-center gap-2">
           <h3 className="font-bold text-text-primary">{narrative.title}</h3>
           {narrative.risk_label && <RiskBadge score={narrative.risk_score} label={narrative.risk_label} />}
+          <MomentumBadge score={narrative.momentum_score} />
         </div>
         <div className="flex-shrink-0 text-right">
           <div className="text-2xl font-extrabold text-text-primary">
@@ -61,15 +60,6 @@ export function NarrativeCard({ narrative }: { narrative: NarrativeRow }) {
           </div>
         </div>
       </div>
-
-      {riskBarColor && narrative.risk_score !== null && (
-        <div className="h-1.5 w-full overflow-hidden rounded-full bg-border-subtle-2">
-          <div
-            className={`h-full ${riskBarColor}`}
-            style={{ width: `${Math.max(0, Math.min(100, narrative.risk_score))}%` }}
-          />
-        </div>
-      )}
 
       {/* Resumo textual — reservado pra síntese por IA (ai-synthesis, sprint
           futura). Hoje sempre vazio (narratives.description ainda sem

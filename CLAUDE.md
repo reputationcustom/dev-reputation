@@ -2518,10 +2518,24 @@ narrative-card.tsx`), replacing two separate ad hoc card layouts:
 `narratives/page.tsx`'s "no selection" grid, and `overview/page.tsx`'s
 `TopThreeNarrativeCards`. Left border color uses only 3 buckets (not the
 usual 7-band `SentimentBadge` granularity) — explicit user ask ("variação
-entre vermelho, verde ou neutro"); the risk progress bar reuses the same
-`risk_label`/color already shown in the badge next to the title, not a new
-palette (no pink/magenta token exists in `_design-tokens.md`, and inventing
-one wasn't the point of the request — the structure/color logic was).
+entre vermelho, verde ou neutro"); the risk progress bar (see follow-up
+below — removed the same day) reused the same `risk_label`/color already
+shown in the badge next to the title, not a new palette (no pink/magenta
+token exists in `_design-tokens.md`, and inventing one wasn't the point of
+the request — the structure/color logic was).
+
+✅ **Follow-up, same day, after seeing the card live**: the full-width risk
+progress bar read as unexplained on its own (a plain colored bar with no
+adjacent label/number to anchor it — "why is there a yellow bar?"). Removed
+it entirely and replaced it with a second pill next to the Risk badge in
+the card header showing Momentum (`MomentumBadge`, new export in
+`score-badges.tsx`) — same visual language as `RiskBadge` (colored pill),
+same `momentumBand()` bands/colors already used by `ScoreBar`/
+`MOMENTUM_LEGEND` (`bg-intensity-1..5`), just white text instead of the
+light-bg/dark-text pairing risk/sentiment badges use, since `intensity-*`
+only has one saturated hex per band, no separate light "-bg" token to pair
+with dark text. No new color introduced, no SQL/envelope change — purely
+presentational.
 
 **Simplification this unlocked**: `TopThreeNarrativeCards` used to fetch a
 separate `breakdowns` entry (`type: 'narrative'`, from
