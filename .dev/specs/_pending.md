@@ -1,6 +1,6 @@
 ---
 tipo: pending-tracker
-atualizado: 2026-07-21 (rev. 12)
+atualizado: 2026-07-21 (rev. 13)
 ---
 
 # Pendências — Digital Intelligent Communication
@@ -116,6 +116,26 @@ consumidor nesta página). ⚠️ Sem marcador de "emoção" no card — nenhuma
 fonte não-amostrada existe pra isso hoje (ver `sql-aggregation.md`, "Campos
 do card de Narrativa"). Ver `CLAUDE.md`, `aggregated-metrics/sql-aggregation.md`
 e `intelligence-center/narratives-exploration.md`.
+
+✅ **Resolvida 2026-07-21** (pedido do usuário, não numerada: "tem ocorrido
+muito esse erro ao executar a bw-sync, resolva em definitivo" — 429
+recorrente em `daily_metrics`, ex: `/data/authors/categories/days`, mesmo
+com o backoff reativo de `rate_limited_until` já em produção desde
+2026-07-16). Causa raiz: aquele backoff só age DEPOIS que um 429 já
+aconteceu (3 tentativas locais esgotadas) — nunca evita a falha em si, só
+evita repeti-la. `callBrandwatch()` já lia o header oficial
+`x-rate-limit-used` (contagem real da Brandwatch do teto de 30/10min por
+Client) desde a implementação original, mas só para log. Migration
+`20260721020000` + `bw-sync/index.ts`: esse valor agora também governa
+`hasBrandwatchCallBudget()` (para novas chamadas assim que o uso real
+reportado chega a 27/30, mesmo com orçamento local de sobra) e é
+persistido em `bw_sync_lock` entre invocações (`last_rate_limit_used`/
+`last_rate_limit_observed_at`, `record_bw_rate_limit_usage()`), checado
+por um novo gate proativo (passo 0.5d) antes de mintar token — cobre o
+cenário já documentado de invocações manuais de teste no Dashboard
+somadas ao heartbeat de 15min, que o backoff puramente reativo não
+prevenia. Ver `CLAUDE.md`, "bw-sync rate limit — gate proativo" e
+`foundation/sync-brandwatch.md` passos 0.5d/8.
 
 ## Gaps técnicos (spec pronta, sem migration/código ainda)
 

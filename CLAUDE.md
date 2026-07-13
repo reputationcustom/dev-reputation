@@ -1174,6 +1174,53 @@ used to apply to `bw-sync`.)
   9-or-so heartbeats after a real `429` become free no-ops instead of
   repeating the failure and re-writing the same error every 15 minutes.
 
+- **bw-sync rate limit — proactive gate using Brandwatch's own usage
+  header (2026-07-21, migration `20260721020000`)** — user report: "tem
+  ocorrido muito esse erro ao executar a bw-sync, resolva em definitivo"
+  (this keeps happening a lot, fix it for good), pasted log showing `429`
+  on `/data/authors/categories/days` (the `daily_metrics` phase) after 3
+  exhausted retries, correctly caught by the 2026-07-16 backoff above
+  (`rate_limited_until` written, next heartbeats skip). That backoff is
+  real and working, but it's purely *reactive* — it only engages after a
+  429 has already happened and 3 local retries (each waiting `retry-after`
+  or a 20s fallback, so up to a minute-plus per occurrence) have already
+  been burned. It has no way to prevent the 429 in the first place, which
+  is why the user was seeing it recur "a lot" rather than once. The fix
+  was sitting in plain sight: `callBrandwatch()` has *always* read the
+  official `x-rate-limit-used` response header (Brandwatch's own
+  authoritative count of how much of the 30-calls/10min-per-Client ceiling
+  is spent, confirmed in `brandwatch-setup.md` §1 and the `brandwatch-api`
+  skill's reference client) — but only for a log line, never to influence
+  behavior. `hasBrandwatchCallBudget()` only ever checked the local,
+  per-invocation `brandwatchCallCount` counter (max 25), which has zero
+  visibility into what *other* recent invocations (heartbeat or manual
+  Dashboard "Invoke" testing, already flagged as a real concurrent
+  scenario in the 2026-07-16 write-up) already spent against the real,
+  Client-wide ceiling. Fixed in two layers, both reusing this same signal:
+  (1) **within an invocation** — `lastKnownRateLimitUsed` (module state,
+  reset to `null` per invocation like `brandwatchCallCount`) is updated
+  from the header on every response (success or 429), and
+  `hasBrandwatchCallBudget()` now also returns `false` once it reports
+  `>= 27` (of 30) — a phase stops issuing new calls as soon as
+  Brandwatch's *own* count says it's near the ceiling, even if the local
+  25-call counter still thinks there's room; (2) **across invocations** —
+  `bw_sync_lock` gained `last_rate_limit_used`/`last_rate_limit_observed_at`,
+  written (`record_bw_rate_limit_usage()` RPC) in the handler's top-level
+  `finally` block at the end of every invocation that made at least one
+  call, and read by a new gate (step "0.5d" in `sync-brandwatch.md`,
+  right after the existing 0.5c `rate_limited_until` gate) that skips the
+  *next* invocation before it even mints a token if the last observed
+  usage was `>= 27` and is still within Brandwatch's real 10-minute
+  window (a stale value past that window is ignored — a legitimate
+  15-minute heartbeat well after the window rolled over must not get
+  stuck thinking the ceiling is still blown). Net effect: most 429s for
+  this cause shouldn't happen anymore — the code now stops itself right
+  at the real ceiling instead of finding out about it by crashing into
+  it. The existing reactive `rate_limited_until` backoff (2026-07-16) is
+  left completely in place as a second line of defense for whatever this
+  proactive gate doesn't catch (e.g. Brandwatch not returning the header
+  for some reason).
+
 - **`bw_categories.status` — Category/Subcategory removed from Brandwatch
   no longer used by the system (2026-07-16, migration `20260716010000`)**
   — user request: "as categorias permanecem mesmo quando excluídas da
@@ -2490,9 +2537,32 @@ pages still request it (`sentiment` page's own "Sentimento por narrativa"
 widget still depends on it), untouched.
 
 **Verification**: `npx tsc --noEmit` and `npm run build` both pass clean
-(18 routes). Migration not run against a real Postgres instance this
-session (no DB access, same limitation as every prior session) — reviewed
-manually against the existing `get_narratives_table` body it replaces.
+(18 routes). Migration reviewed manually before the user ran `supabase db
+push` for real — that push caught a genuine, pre-existing bug (see below).
+
+**Real production bug found via `supabase db push`, same session**: the
+push failed on this migration's `comment on function get_narratives_table
+is ...` with `function name "get_narratives_table" is not unique`
+(SQLSTATE 42725). Root cause predates this session: `get_narratives_table`
+grew its parameter list twice — `20260715000000` added `p_pauta_id` (4→5
+params) and `20260716010000` added `p_scope` (5→6 params) — each via
+`create or replace function` with no preceding `drop function`. Postgres
+only replaces a function of the exact same signature (name **and**
+parameter types); a different arg count creates a new overload alongside
+the old one instead of replacing it. Every RPC caller always passed all 6
+named arguments, so this silently never broke a real call — but it left
+the 4-arg and 5-arg versions as dead overloads still sitting in the
+database, invisible until something referenced the function by bare name
+(no signature), which is exactly what a `comment on function` does. Fixed
+in `20260721010000` by dropping all 3 known historical signatures (4/5/6
+params) before creating the new one, and qualifying the `comment on
+function` with the full signature so it can never hit this ambiguity
+again regardless of future overloads. No other function in this module
+has the same risk — `get_theme_breakdown`/`get_authors_ranking` had their
+parameter counts fixed from their first migration (or already used
+`drop function` when their signature changed, see `20260717000000`);
+`get_narratives_table` was the only one that grew arity incrementally
+without a matching drop.
 
 ### Full prototype re-import + visual/object parity pass, and full nav IA (2026-07-13)
 

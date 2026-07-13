@@ -3,7 +3,7 @@ tipo: feature-spec
 módulo: foundation
 funcionalidade: sync-brandwatch
 status: implementado
-atualizado: 2026-07-16
+atualizado: 2026-07-21
 ---
 
 # Sync Brandwatch
@@ -303,6 +303,18 @@ própria `platform_by_narrative` (passo 6.3c abaixo) — ver `data-model.md`
    esgotou retry num `429`), a invocação encerra imediatamente (`HTTP 200,
    ok: true, skipped: true, reason: "brandwatch_rate_limited"`) sem mintar
    token nem reivindicar o lock.
+0.5d. **Gate proativo de uso real** (✅ adicionado 2026-07-21, migration
+   `20260721020000` — ver item 8 abaixo pro racional completo). Roda logo
+   depois do gate 0.5c, mesma checagem barata. Lê
+   `bw_sync_lock.last_rate_limit_used`/`last_rate_limit_observed_at` — o
+   último valor do header oficial `x-rate-limit-used` que uma invocação
+   anterior observou (não um 429, um uso normal que já reportava estar
+   perto do teto). Se esse valor está `>= 27` (de 30) **e** foi observado
+   há menos de 10 minutos (a janela real do rate limit — passado isso,
+   presume-se obsoleto), a invocação encerra (`HTTP 200, ok: true,
+   skipped: true, reason: "brandwatch_rate_limit_near_ceiling"`) sem
+   mintar token. Diferente do gate 0.5c (reage a um 429 que já
+   aconteceu), este gate impede a maioria dos 429 de sequer ocorrer.
 1. `pg_cron` invoca a Edge Function `bw-sync` a cada **15 minutos** — um
    heartbeat fixo e barato (cadência de infraestrutura, não o parâmetro de
    negócio; só precisa ser frequente o bastante relativo aos
@@ -953,6 +965,26 @@ própria `platform_by_narrative` (passo 6.3c abaixo) — ver `data-model.md`
    acima — checa `rate_limited_until` antes de mintar token ou
    reivindicar o lock do passo 0.5, e sai cedo (mesmo padrão do gate de
    `BW_SYNC_INTERVAL_HOURS`) se o backoff ainda está ativo.
+   ✅ **Correção definitiva (2026-07-21, migration `20260721020000`)**:
+   o backoff de `rate_limited_until` acima só reage DEPOIS que um 429 já
+   aconteceu (esgotando 3 tentativas locais, até ~60s+ perdidos por
+   invocação) — nunca evita o 429 em si. `callBrandwatch()` sempre leu o
+   header oficial `x-rate-limit-used` (contagem autoritativa da própria
+   Brandwatch do quanto do teto de 30/10min já foi gasto, inclusive por
+   invocações/testes manuais anteriores — não só desta invocação), mas só
+   pra log. Agora esse valor (`lastKnownRateLimitUsed`) também governa
+   `hasBrandwatchCallBudget()`: qualquer fase para de fazer novas chamadas
+   assim que o uso reportado pela Brandwatch chegar a `27` (de 30), mesmo
+   que o orçamento local (`brandwatchCallCount < 25`) ainda "ache" que há
+   sobra — é isso que teria evitado o 429 relatado (várias chamadas
+   bem-sucedidas de `daily_metrics` antes da que falhou já deviam ter
+   reportado uso perto do teto, sinal até então ignorado). Esse último
+   valor observado também é persistido em `bw_sync_lock.last_rate_limit_used`/
+   `last_rate_limit_observed_at` ao final de toda invocação
+   (`record_bw_rate_limit_usage()`) e checado pelo novo gate 0.5d acima —
+   fecha o buraco em que a PRÓXIMA invocação, com seu contador local
+   zerado, não tinha como saber que o teto real já estava perto do limite
+   antes de tentar a primeira chamada.
 
 ## Fluxos alternativos e erros
 

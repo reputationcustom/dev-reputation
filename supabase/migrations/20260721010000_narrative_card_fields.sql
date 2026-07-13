@@ -39,7 +39,24 @@
 -- Precisa dropar a function (não só `create or replace`) porque estamos
 -- adicionando colunas de saída — mesma trava do Postgres já documentada em
 -- 20260717000000 (`cannot change return type of existing function`).
-
+--
+-- ⚠️ Bug real encontrado ao rodar `supabase db push` nesta sessão: como
+-- `create or replace function` só substitui uma function de mesma
+-- ASSINATURA (nome + tipos de parâmetro, não só nome), cada vez que
+-- get_narratives_table ganhou um parâmetro novo por `create or replace`
+-- sem dropar a versão anterior primeiro (20260715000000 acrescentou
+-- p_pauta_id: 4→5 parâmetros; 20260716010000 acrescentou p_scope: 5→6),
+-- Postgres CRIOU um overload novo em vez de substituir — deixando as
+-- versões de 4 e 5 parâmetros mortas, porém ainda presentes no banco. Isso
+-- nunca quebrou nenhuma chamada via RPC (sempre com os 6 argumentos
+-- nomeados, resolve pro overload certo), mas quebra qualquer referência à
+-- function pelo nome sem assinatura — exatamente o `comment on function
+-- get_narratives_table is ...` abaixo, que falhava com "function name
+-- ... is not unique" (SQLSTATE 42725) por existir mais de um overload.
+-- Fix: dropar todas as assinaturas antigas conhecidas, não só a mais
+-- recente, e qualificar a assinatura completa no `comment on function`.
+drop function if exists get_narratives_table(uuid, date, date, jsonb);
+drop function if exists get_narratives_table(uuid, date, date, jsonb, uuid);
 drop function if exists get_narratives_table(uuid, date, date, jsonb, uuid, text);
 
 create or replace function get_narratives_table(
@@ -273,5 +290,10 @@ as $$
   order by r.risk_score desc nulls last, ld.total_mentions desc nulls last
 $$;
 
-comment on function get_narratives_table is
+-- Assinatura completa obrigatória aqui (não só o nome) — ver nota acima
+-- sobre os overloads mortos que motivaram os 3 `drop function` no topo
+-- deste arquivo; um `comment on function get_narratives_table is ...` sem
+-- assinatura falha com "function name ... is not unique" sempre que mais
+-- de um overload existir.
+comment on function get_narratives_table(uuid, date, date, jsonb, uuid, text) is
   'Bloco `narratives` do envelope (aggregated-metrics/sql-aggregation.md). sentiment_positive_pct/neutral_pct/negative_pct = split de narrative_metrics.sentiment_* normalizado por (pos+neu+neg) no período pedido (mesma base de get_narrative_sentiment_breakdown, nunca dilui pelo total de mentions). summary = narratives.description (reservado pra ai-synthesis, hoje sempre null). tags = top 6 termos/hashtags de bw_query_topics por Narrativa (agregado oficial, nunca amostrado) — ver CLAUDE.md, "Sentimento por narrativa/autores" e "Narrative naming/scope change".';

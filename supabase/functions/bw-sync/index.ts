@@ -155,8 +155,35 @@ const BRANDWATCH_CALL_BUDGET = 25;
 // próximas invocações não repetirem a mesma chamada fadada a falhar.
 const BRANDWATCH_RATE_LIMIT_BACKOFF_SECONDS = 600;
 
+// Correção 2026-07-21 (migration `20260721020000` — pedido do usuário:
+// 429 recorrente em `daily_metrics` mesmo com o backoff reativo acima já
+// em produção). O backoff de `rate_limited_until` só age DEPOIS de 3
+// tentativas locais já terem esgotado em 429 — nunca evita o 429 em si, só
+// evita repeti-lo indefinidamente. `callBrandwatch()` sempre leu o header
+// oficial `x-rate-limit-used` (contagem AUTORITATIVA da Brandwatch do
+// quanto do teto de 30/10min já foi gasto, inclusive por invocações/testes
+// manuais anteriores — ver brandwatch-setup.md §1 e o cliente de
+// referência da skill `brandwatch-api`), mas só pra log, nunca pra decidir
+// se continua chamando. `lastKnownRateLimitUsed` agora guarda o último
+// valor visto (nesta invocação); `hasBrandwatchCallBudget()` para de
+// liberar novas chamadas assim que ele chegar perto do teto real — mesmo
+// que o contador local `brandwatchCallCount` (que não vê nada fora da
+// invocação atual) ainda "ache" que há orçamento de sobra. Isso é o que
+// teria evitado o 429 relatado: várias chamadas de `daily_metrics` bem-
+// sucedidas antes da que falhou já deviam ter reportado um uso perto de
+// 30/30 nesse header, sinal ignorado até agora.
+let lastKnownRateLimitUsed: number | null = null;
+const BRANDWATCH_RATE_LIMIT_CEILING = 30;
+const BRANDWATCH_SAFE_USAGE_CEILING = 27;
+// Janela real do rate limit (10min) — usada para decidir se um
+// `last_rate_limit_used` persistido de uma invocação anterior ainda é
+// válido ou se presumivelmente a janela da Brandwatch já girou.
+const BRANDWATCH_RATE_LIMIT_WINDOW_MS = 10 * 60 * 1000;
+
 function hasBrandwatchCallBudget(): boolean {
-  return brandwatchCallCount < BRANDWATCH_CALL_BUDGET;
+  if (brandwatchCallCount >= BRANDWATCH_CALL_BUDGET) return false;
+  if (lastKnownRateLimitUsed !== null && lastKnownRateLimitUsed >= BRANDWATCH_SAFE_USAGE_CEILING) return false;
+  return true;
 }
 
 async function callBrandwatch(path: string, token: string): Promise<any> {
@@ -167,6 +194,12 @@ async function callBrandwatch(path: string, token: string): Promise<any> {
     const response = await fetch(url, {
       headers: { Authorization: `Bearer ${token}` },
     });
+
+    const rateLimitUsedHeader = response.headers.get("x-rate-limit-used");
+    if (rateLimitUsedHeader !== null) {
+      const parsed = Number(rateLimitUsedHeader);
+      if (!Number.isNaN(parsed)) lastKnownRateLimitUsed = parsed;
+    }
 
     if (response.status === 429) {
       if (attempt === 3) {
@@ -188,7 +221,11 @@ async function callBrandwatch(path: string, token: string): Promise<any> {
       throw new BrandwatchApiError(response.status, `Brandwatch API error ${response.status} em ${path}: ${body}`);
     }
 
-    log("callBrandwatch:ok", { path, rateLimitUsed: response.headers.get("x-rate-limit-used") });
+    log("callBrandwatch:ok", {
+      path,
+      rateLimitUsed: rateLimitUsedHeader,
+      rateLimitCeiling: BRANDWATCH_RATE_LIMIT_CEILING,
+    });
     return await response.json();
   }
 
@@ -2571,8 +2608,11 @@ Deno.serve(async (_req: Request) => {
   // Nunca reaproveitado entre invocações — mesmo se o isolate Deno for
   // reciclado (warm start), o contador precisa começar do zero a cada
   // request, senão o orçamento pareceria esgotado pra sempre depois da
-  // primeira invocação.
+  // primeira invocação. `lastKnownRateLimitUsed` idem — o valor observado
+  // de invocações anteriores é lido explicitamente do banco (gate abaixo),
+  // não reaproveitado in-memory entre requests.
   brandwatchCallCount = 0;
+  lastKnownRateLimitUsed = null;
   log("invocation:start");
 
   const supabase = createClient(
@@ -2631,7 +2671,7 @@ Deno.serve(async (_req: Request) => {
   // até a janela real liberar.
   const { data: lockRow, error: lockRowError } = await supabase
     .from("bw_sync_lock")
-    .select("rate_limited_until")
+    .select("rate_limited_until, last_rate_limit_used, last_rate_limit_observed_at")
     .eq("id", true)
     .maybeSingle();
   if (lockRowError) {
@@ -2643,6 +2683,33 @@ Deno.serve(async (_req: Request) => {
     log("invocation:rate_limited_skip", { rateLimitedUntil: lockRow.rate_limited_until });
     return new Response(
       JSON.stringify({ ok: true, skipped: true, reason: "brandwatch_rate_limited", rateLimitedUntil: lockRow.rate_limited_until }),
+      { headers: { "Content-Type": "application/json" } },
+    );
+  } else if (
+    // Correção 2026-07-21 (migration `20260721020000`): gate proativo,
+    // baseado no valor REAL de `x-rate-limit-used` que a invocação anterior
+    // observou — não espera um 429 acontecer de novo pra reagir. Só vale
+    // enquanto esse valor ainda está dentro da janela real de 10min da
+    // Brandwatch (`last_rate_limit_observed_at`); passado isso, presume-se
+    // que a janela já girou e o valor está obsoleto (senão um heartbeat de
+    // 15min legítimo, bem depois da janela ter liberado, ficaria preso
+    // achando que o teto ainda está estourado).
+    lockRow?.last_rate_limit_observed_at &&
+    Date.now() - new Date(lockRow.last_rate_limit_observed_at as string).getTime() < BRANDWATCH_RATE_LIMIT_WINDOW_MS &&
+    (lockRow.last_rate_limit_used as number | null) !== null &&
+    (lockRow.last_rate_limit_used as number) >= BRANDWATCH_SAFE_USAGE_CEILING
+  ) {
+    log("invocation:rate_limit_near_ceiling_skip", {
+      lastRateLimitUsed: lockRow.last_rate_limit_used,
+      lastRateLimitObservedAt: lockRow.last_rate_limit_observed_at,
+    });
+    return new Response(
+      JSON.stringify({
+        ok: true,
+        skipped: true,
+        reason: "brandwatch_rate_limit_near_ceiling",
+        lastRateLimitUsed: lockRow.last_rate_limit_used,
+      }),
       { headers: { "Content-Type": "application/json" } },
     );
   }
@@ -2676,6 +2743,18 @@ Deno.serve(async (_req: Request) => {
   try {
     return await runSyncInvocation(supabase, invocationStartedAt);
   } finally {
+    // Correção 2026-07-21 (migration `20260721020000`): persiste o último
+    // `x-rate-limit-used` observado nesta invocação (se alguma chamada
+    // chegou a ser feita) — é o que permite a PRÓXIMA invocação (gate
+    // `invocation:rate_limit_near_ceiling_skip` acima) saber, antes de
+    // mintar token ou chamar a Brandwatch, que o teto real já estava perto
+    // do limite, em vez de descobrir isso só depois de um 429.
+    if (lastKnownRateLimitUsed !== null) {
+      const { error: usageError } = await supabase.rpc("record_bw_rate_limit_usage", {
+        p_used: lastKnownRateLimitUsed,
+      });
+      if (usageError) logError("invocation:record_rate_limit_usage_failed", usageError.message);
+    }
     const { error: releaseError } = await supabase.rpc("release_bw_sync_lock");
     if (releaseError) logError("invocation:lock_release_failed", releaseError.message);
   }
