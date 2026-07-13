@@ -172,6 +172,20 @@ export interface DisseminationGraph {
   edges: { source: string; target: string; type: 'reply' | 'retweet' | 'mention' }[]
 }
 
+// "X Themes" da Brandwatch (Top Hashtags/Emojis/Stories/Most Mentioned X
+// Posters) — bw_query_x_insights (foundation/data-model.md), só na página
+// `platforms`. Ver get_x_insights em sql-aggregation.md.
+export interface XInsightItem {
+  insight_type: 'hashtag' | 'emoticon' | 'url' | 'mentioned_author'
+  name: string
+  label: string | null
+  volume: number
+  tweets: number | null
+  retweets: number | null
+  impressions: number | null
+  reach_estimate: number | null
+}
+
 export interface PageEnvelope {
   schema_version: string
   page: PageKey
@@ -187,6 +201,7 @@ export interface PageEnvelope {
   highlights: Highlight[]
   term_signals: TermSignal[]
   graph: DisseminationGraph | null
+  x_insights: XInsightItem[]
   narrative_text: string | null
   ui_meta: Record<string, unknown>
 }
@@ -207,6 +222,7 @@ type BlockKey =
   | 'highlights'
   | 'term_signals'
   | 'graph'
+  | 'x_insights'
   | 'narrative_text'
 
 export const PAGE_BLOCKS: Record<PageKey, BlockKey[]> = {
@@ -214,7 +230,7 @@ export const PAGE_BLOCKS: Record<PageKey, BlockKey[]> = {
   narratives: ['narratives'],
   narrative_detail: ['breakdowns', 'trends', 'authors', 'graph', 'narrative_text'],
   sentiment: ['breakdowns', 'trends', 'highlights', 'term_signals', 'narrative_text'],
-  platforms: ['breakdowns', 'trends', 'narratives', 'authors', 'narrative_text'],
+  platforms: ['breakdowns', 'trends', 'narratives', 'authors', 'x_insights', 'narrative_text'],
   themes: ['breakdowns', 'trends', 'narratives', 'authors', 'highlights', 'term_signals', 'narrative_text'],
   authors: ['authors'],
   alerts: ['highlights'],
@@ -596,6 +612,42 @@ async function fetchTermSignals(supabase: SupabaseClient, ctx: PageContext): Pro
   }
 }
 
+interface XInsightRow {
+  insight_type: 'hashtag' | 'emoticon' | 'url' | 'mentioned_author'
+  name: string
+  label: string | null
+  volume: number | null
+  tweets: number | null
+  retweets: number | null
+  impressions: number | null
+  reach_estimate: number | null
+}
+
+async function fetchXInsights(supabase: SupabaseClient, ctx: PageContext): Promise<XInsightItem[]> {
+  try {
+    const { data, error } = await supabase.rpc('get_x_insights', {
+      p_organization_id: ctx.organizationId,
+      p_period_start: ctx.period.start,
+      p_period_end: ctx.period.end,
+      p_filters: effectiveFilters(ctx),
+    })
+    if (error) throw error
+    return ((data ?? []) as XInsightRow[]).map((row) => ({
+      insight_type: row.insight_type,
+      name: row.name,
+      label: row.label,
+      volume: row.volume ?? 0,
+      tweets: row.tweets,
+      retweets: row.retweets,
+      impressions: row.impressions,
+      reach_estimate: row.reach_estimate,
+    }))
+  } catch (err) {
+    console.error('[aggregated-metrics] fetchXInsights failed', err)
+    return []
+  }
+}
+
 async function fetchGraph(supabase: SupabaseClient, ctx: PageContext): Promise<DisseminationGraph | null> {
   if (!ctx.narrativeId) return null
   try {
@@ -625,7 +677,7 @@ export async function assemblePageResponse(
 ): Promise<PageEnvelope> {
   const blocks = new Set(PAGE_BLOCKS[page])
 
-  const [metrics, breakdowns, trends, narratives, authors, highlights, termSignals, graph] = await Promise.all([
+  const [metrics, breakdowns, trends, narratives, authors, highlights, termSignals, graph, xInsights] = await Promise.all([
     blocks.has('metrics') ? fetchMetrics(supabase, context) : Promise.resolve<MetricCard[]>([]),
     blocks.has('breakdowns') ? fetchBreakdowns(page, supabase, context) : Promise.resolve<Breakdown[]>([]),
     blocks.has('trends') ? fetchTrends(page, supabase, context) : Promise.resolve<Trend[]>([]),
@@ -634,6 +686,7 @@ export async function assemblePageResponse(
     blocks.has('highlights') ? fetchHighlights(supabase, context) : Promise.resolve<Highlight[]>([]),
     blocks.has('term_signals') ? fetchTermSignals(supabase, context) : Promise.resolve<TermSignal[]>([]),
     blocks.has('graph') ? fetchGraph(supabase, context) : Promise.resolve<DisseminationGraph | null>(null),
+    blocks.has('x_insights') ? fetchXInsights(supabase, context) : Promise.resolve<XInsightItem[]>([]),
   ])
 
   return {
@@ -651,6 +704,7 @@ export async function assemblePageResponse(
     highlights,
     term_signals: termSignals,
     graph,
+    x_insights: xInsights,
     // ai-synthesis.md ainda não implementado nesta sessão — fica null até
     // a síntese rodar, exatamente o estado que o envelope já prevê.
     narrative_text: null,

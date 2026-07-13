@@ -977,6 +977,24 @@ passo 6.4b. **Salvaguarda de orçamento**: só sincronizado para
 disponível em `bw_query_metrics_daily_by_platform`) — não gasta as 4
 chamadas em Narrativa/Query sem presença em X.
 
+> ✅ **Consumidor implementado + mapeamento reconfirmado (2026-07-18)** —
+> até esta data, esta tabela era sincronizada e nunca lida por nada:
+> nenhuma function/bloco de `aggregated-metrics` a expunha (achado numa
+> auditoria pedida pelo usuário a partir de screenshots reais do
+> dashboard nativo da Brandwatch — "Top Hashtags"/"Most Mentioned X
+> Posters"/"Top Stories"/"Top Emojis"). Fechado via `get_x_insights`
+> (`aggregated-metrics/sql-aggregation.md`), bloco `x_insights` do
+> envelope, só na página `platforms`. Mesma sessão reconfirmou ao vivo
+> contra `developers.brandwatch.com/docs/twitter-insights` que `volume`/
+> `tweets`/`retweets`/`impressions`/`reachEstimate` são os nomes exatos de
+> campo nos 4 endpoints (segunda confirmação independente, mesmo
+> resultado da primeira em 2026-07-11/13) — os rótulos "Posts"/"Reposts"/
+> "All Posts"/"Impressions" do dashboard nativo da Brandwatch são só
+> apresentação da Brandwatch em cima destes mesmos 4 campos: `tweets` =
+> Posts, `retweets` = Reposts, `volume` = All Posts, `impressions` =
+> Impressions. Conferido também aritmeticamente contra um export real do
+> usuário.
+
 ### `bw_query_top_authors`
 
 Ranking nativo de autores via `data/volume/topauthors/queries` (até 1000 —

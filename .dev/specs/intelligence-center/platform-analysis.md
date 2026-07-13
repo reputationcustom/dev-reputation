@@ -2,11 +2,25 @@
 tipo: feature-spec
 módulo: intelligence-center
 funcionalidade: platform-analysis
-status: pronto
-atualizado: 2026-07-12
+status: implementado
+atualizado: 2026-07-18
 ---
 
 # Análise por Plataforma
+
+> ✅ **Implementado (2026-07-18)**: "X Themes" (Top Hashtags/Top Emojis/Top
+> Stories/Most Mentioned X Posters) — o que a nota "💡 Oportunidade futura"
+> abaixo deixava como planejado, não desenhado. Achado numa auditoria
+> pedida pelo usuário a partir de screenshots reais do dashboard nativo da
+> Brandwatch: o dado (`bw_query_x_insights`) já era capturado corretamente
+> desde `foundation` (2026-07-11), mas nenhuma function/bloco do envelope
+> jamais o expunha — sincronizado e parado, sem nenhum consumidor a
+> jusante. Fechado com `get_x_insights` (breakdown/bloco `x_insights`, só
+> nesta página) — ver `aggregated-metrics/sql-aggregation.md`. Nomes de
+> campo (`volume`/`tweets`/`retweets`/`impressions`/`reachEstimate`)
+> reconfirmados ao vivo contra `developers.brandwatch.com/docs/twitter-insights`
+> nesta sessão (iguais aos já documentados em `foundation/data-model.md`
+> desde 2026-07-11/13, agora com uma segunda confirmação independente).
 
 > Cobre "Página 4 — Análise por Plataforma" / item "10. Visualizações
 > recomendadas" do documento de estrutura do protótipo. Sem protótipo
@@ -72,20 +86,22 @@ Mesmo público das demais páginas deste módulo.
   distinto de "Top Sites" (de onde as mentions vêm); mede que domínios são
   mais linkados/compartilhados dentro do conteúdo. Útil como widget
   adicional desta página se o produto quiser.
-- 💡 **Oportunidade futura, não desenhada ainda** (2026-07-13, pedido do
-  usuário — "a Brandwatch usa [hashtags/emojis/URLs/autores citados] pra
-  criar nuvem de palavras, podemos incorporar no frontend mais adiante"):
-  `bw_query_x_insights` (`foundation/data-model.md` — confirmado
-  2026-07-13 que cobre exatamente os 4 endpoints documentados em
+- ✅ **"X Themes" implementado (2026-07-18)** — 4 listas lado a lado (Top
+  Hashtags/Most Mentioned X Posters/Top Stories/Top Emojis), espelhando o
+  dashboard nativo da Brandwatch mesmo shape/colunas (`Posts`/`Reposts`/
+  `All Posts`/`Impressions` = `tweets`/`retweets`/`volume`/`impressions`).
+  `bw_query_x_insights` (`foundation/data-model.md`, os 4 endpoints de
   `developers.brandwatch.com/docs/twitter-insights`: hashtags, emoticons,
-  stories/URLs, mentioned authors) já tem tudo que uma nuvem de
-  palavras/hashtags específica de X precisaria (`name`, `volume`,
-  `sentiment_positive/neutral/negative` por item) — não implementado nesta
-  spec porque não foi desenhado no protótipo, mas o dado já está
-  capturado e pronto quando o produto quiser essa visualização. Ver
-  também `bw_query_topics` (tematização geral, todas as plataformas) em
-  [sentiment-analysis.md](sentiment-analysis.md), "Drivers de sentimento" —
-  mesma ideia, escopo mais amplo.
+  stories/URLs, mentioned authors) via `get_x_insights` (breakdown/bloco
+  `x_insights`, ver `aggregated-metrics/sql-aggregation.md`) →
+  `components/intelligence-center/x-insights-panel.tsx`. Substituiu a nota
+  "💡 Oportunidade futura, não desenhada ainda" registrada em 2026-07-13 —
+  o dado já estava capturado e pronto, só faltava o wiring (mesmo padrão
+  do gap de "Sentimento por Narrativa" fechado um dia antes, ver
+  `CLAUDE.md`). Ver também `bw_query_topics` (tematização geral, todas as
+  plataformas) em [sentiment-analysis.md](sentiment-analysis.md), "Drivers
+  de sentimento" — mesma ideia, escopo mais amplo, não substituída por
+  esta.
 - **Conteúdos de destaque**: cards com preview de mentions específicas
   (autor, plataforma, sentimento, alcance, narrativa) — dado por mention
   individual (`mentions`/`content_source`/`reach_estimate`), mesmo padrão de

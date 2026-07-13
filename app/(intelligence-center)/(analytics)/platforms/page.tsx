@@ -6,6 +6,7 @@ import { WidgetCard } from "@/components/intelligence-center/widget-card";
 import { BreakdownPanel } from "@/components/intelligence-center/charts/breakdown-panel";
 import { NarrativesTable } from "@/components/intelligence-center/narratives-table";
 import { AuthorsList } from "@/components/intelligence-center/authors-list";
+import { XInsightsPanel } from "@/components/intelligence-center/x-insights-panel";
 import { NarrativeTextPanel } from "@/components/intelligence-center/insights-panel";
 import { EmptyState } from "@/components/ui/empty-state";
 
@@ -15,6 +16,9 @@ import { EmptyState } from "@/components/ui/empty-state";
 // propagação por plataforma, narrativas dominantes ESPECIFICAMENTE por
 // plataforma (a tabela abaixo mostra a mesma lista geral de Narrativas, não
 // quebrada por plataforma) e conteúdos de destaque (mentions individuais).
+// ✅ "X Themes" (Top Hashtags/Most Mentioned X Posters/Top Stories/Top
+// Emojis) implementado 2026-07-18 — bloco `x_insights`, ver
+// sql-aggregation.md/get_x_insights e platform-analysis.md.
 export default function PlatformsPage() {
   const { status, envelope, retry } = usePageEnvelope("get-page-platforms");
 
@@ -50,6 +54,10 @@ export default function PlatformsPage() {
             <EmptyState message="Ainda não implementado — sem function de comparação entre períodos por plataforma (ver _pending.md)." />
           </WidgetCard>
         </div>
+
+        <WidgetCard title="X Themes (Hashtags, Posters, Stories, Emojis)" status={status} onRetry={retry}>
+          <XInsightsPanel items={envelope?.x_insights ?? []} />
+        </WidgetCard>
 
         <WidgetCard title="Conteúdos de destaque" status={status} onRetry={retry}>
           <EmptyState message="Lista de mentions em destaque ainda não implementada — sem bloco correspondente no envelope atual." />

@@ -3,7 +3,7 @@
 import { usePageEnvelope } from "@/hooks/use-page-envelope";
 import { PageHeaderBar } from "@/components/intelligence-center/page-header-bar";
 import { WidgetCard } from "@/components/intelligence-center/widget-card";
-import { MetricCard } from "@/components/intelligence-center/metric-card";
+import { MetricCard, SentimentMetricCard } from "@/components/intelligence-center/metric-card";
 import { BreakdownPanel } from "@/components/intelligence-center/charts/breakdown-panel";
 import { TrendLineChart } from "@/components/intelligence-center/charts/trend-line-chart";
 import { NarrativesTable } from "@/components/intelligence-center/narratives-table";
@@ -29,7 +29,16 @@ export default function OverviewPage() {
               <div key={index} className="h-24 animate-pulse rounded-xl bg-border-subtle-2" />
             ))}
           {status === "loaded" &&
-            envelope!.metrics.map((metric) => <MetricCard key={metric.key} metric={metric} />)}
+            envelope!.metrics.map((metric) =>
+              metric.key === "net_sentiment" ? (
+                <SentimentMetricCard
+                  key={metric.key}
+                  breakdown={envelope!.breakdowns.find((b) => b.type === "sentiment")}
+                />
+              ) : (
+                <MetricCard key={metric.key} metric={metric} />
+              ),
+            )}
         </div>
 
         <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">

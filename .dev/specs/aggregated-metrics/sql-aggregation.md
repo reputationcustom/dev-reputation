@@ -3,7 +3,7 @@ tipo: feature-spec
 módulo: aggregated-metrics
 funcionalidade: sql-aggregation
 status: pronto
-atualizado: 2026-07-16
+atualizado: 2026-07-18
 ---
 
 # Camada SQL de Agregação
@@ -53,7 +53,7 @@ observado — **sem `query_id`** (revertido 2026-07-13, ver nota abaixo).
 
 | Function                              | Bloco que alimenta | Tabela(s) de origem real                              |
 |-----------------------------------------|---------------------|-------------------------------------------------|
-| `get_metrics_cards(...)`                | `metrics`           | `bw_query_metrics_daily`/`weekly`/`monthly` com `category_id is null` (Query inteira): `total_mentions`, `sentiment_*`, `reach_estimate`, `engagement_score`, `unique_authors` |
+| `get_metrics_cards(...)`                | `metrics`           | `bw_query_metrics_daily`/`weekly`/`monthly` com `category_id is null` (Query inteira): `total_mentions`, `net_sentiment` (score -100..100, média ponderada por `total_mentions`), `reach_estimate`, `engagement_score`, `unique_authors`. ⚠️ O card "Sentimento geral" no frontend **não** renderiza este `net_sentiment` — ver nota abaixo da tabela |
 | `get_sentiment_breakdown(...)`          | `breakdowns`        | `bw_query_metrics_daily`/`weekly`/`monthly` (campos `sentiment_positive/neutral/negative`) |
 | `get_platform_breakdown(...)`           | `breakdowns`        | `bw_query_metrics_daily_by_platform` (`category_id is null` para o total; `net_sentiment` quando o breakdown for de sentimento por plataforma — ver limitação de score único em `intelligence-center/sentiment-analysis.md`) |
 | `get_theme_breakdown(...)`              | `breakdowns`        | `narrative_metrics`/`narratives` filtrado a `bw_category_id` apontando para `bw_categories` raiz (`parent_id is null`) — mesma definição de "Pauta" já fechada em `intelligence-center/electoral-themes.md`, não uma segunda |
@@ -63,7 +63,40 @@ observado — **sem `query_id`** (revertido 2026-07-13, ver nota abaixo).
 | `get_authors_ranking(...)`              | `authors`            | `bw_query_top_authors`/`bw_query_top_tweeters` (quando o escopo for X) — nativos da Brandwatch, não amostrados. `entity_id`/classificação por partido/espectro fica `null` até `entities` (Sprint 2) existir; quando existir, `LEFT JOIN entity_tags` via `entity_accounts.username = bw_query_top_authors.author` é enriquecimento aditivo, nunca pré-requisito do ranking. ✅ **Ganhou `sentiment_positive`/`neutral`/`negative` (2026-07-17)** — `LEFT JOIN` agregado sobre `bw_query_author_topics` (soma os 3 contadores entre todos os temas do autor na semana mais recente sincronizada para aquele autor), não sobre `bw_query_top_authors.sentiment_*`. ⚠️ **Achado na mesma auditoria**: `bw_query_top_authors.sentiment_positive/neutral/negative` (e o mesmo em `bw_query_top_tweeters`) é escrito por `bw-sync` desde a criação da tabela lendo `d.sentiment` da resposta de `data/volume/topauthors/queries`, mas — diferente de todo campo vizinho na mesma tabela (`tweets`/`retweets`/`account_type`/`country_code`, todos com nota "confirmado contra developers.brandwatch.com/docs/top-tweeters") — esse mapeamento **nunca foi confirmado** contra a documentação real do endpoint, que não cita um objeto `sentiment` no payload. Risco real de ser sempre `0/0/0` em produção sem nenhum erro (fallback `?? 0`). Decisão do usuário (2026-07-17): documentar o achado e usar `bw_query_author_topics` (fonte já confirmada, mesmo padrão do `impressions` por autor) em vez de gastar uma chamada nova pra confirmar/substituir o campo agora — ver `foundation/data-model.md`, "bw_query_top_authors". Limitação herdada: só os top 10 autores por volume da Query inteira têm `bw_query_author_topics` — os demais autores do ranking vêm com os 3 campos `null` (nunca `0/0/0`, que seria "sentimento neutro" inventado) |
 | `get_dissemination_graph(narrative_id)` | `graph`              | `mentions` (`reply_to`/`retweet_of`/`insights_mentioned`), restrito às mentions retornadas por `narrative_matched_mentions(narrative_id)` — reusa a função canônica já definida em `foundation/data-model.md`, mesma abordagem já decidida em `intelligence-center/narratives-exploration.md` ("grafo de disseminação simplificado"), não uma tabela `grafo_arestas` nova |
 | `get_term_signals(...)`                 | `term_signals`       | `bw_query_topics` (`label`, `sentiment_positive/neutral/negative`, `trending`) — já carrega tema/sentimento/tendência, não precisa extrair termo de `mentions` |
+| `get_x_insights(...)`                   | `x_insights` (só `platforms`) | ✅ **Adicionado 2026-07-18** — `bw_query_x_insights` (`insight_type`: `hashtag`/`emoticon`/`url`/`mentioned_author`), até 10 itens por tipo, ordenados por `volume` desc, da semana mais recente sincronizada por tipo. Fecha um gap real: o dado já era capturado desde `foundation` (2026-07-11), mas nenhuma function/bloco o expunha — era só uma "oportunidade futura" registrada em `intelligence-center/platform-analysis.md` (2026-07-13), nunca implementada até esta auditoria. É o dado por trás de "Top Hashtags"/"Most Mentioned X Posters"/"Top Stories"/"Top Emojis" (dashboard nativo "X Themes" da Brandwatch) |
 | `get_active_highlights(...)`            | `highlights`         | `feed_events` (populada pelo módulo `event-radar`, tipo/tag `"radar"`) — **leitura pura, sem cálculo**: filtra por `organization_id`, `period`, escopo da página (narrativa/pauta/plataforma quando aplicável) e ordena por `severity_score` desc, respeitando o cap diário já aplicado na inserção pelo radar |
+
+> ✅ **Card de KPI "Sentimento geral" usa `get_sentiment_breakdown`, não o
+> `net_sentiment` de `get_metrics_cards` (2026-07-13)** —
+> `intelligence-center/executive-overview.md` sempre pediu, pros "Cards de
+> topo", uma "distribuição positivo/neutro/negativo compacta" pro
+> Sentimento geral, não um score único; a implementação original desviou
+> disso (achado direto pelo usuário na tela: um score isolado como "-1",
+> sem a escala -100..100 por perto, não comunica nada). Corrigido no
+> frontend, sem function SQL nova: a página busca `breakdowns` (`type =
+> 'sentiment'`) de qualquer forma para o widget "Sentimento geral" que já
+> existia abaixo da grade de KPIs — o card de KPI agora reaproveita esse
+> mesmo resultado (`SentimentMetricCard`,
+> `components/intelligence-center/metric-card.tsx`) em vez de ler
+> `envelope.metrics` para essa posição específica. `get_metrics_cards`
+> continua devolvendo `net_sentiment` sem mudança nenhuma — o score bruto
+> segue disponível no bloco `metrics` para quem precisar dele (ex: uma
+> eventual página de relatórios), só não é mais o que este card
+> específico renderiza. Ver `intelligence-center/executive-overview.md`
+> e `CLAUDE.md` para o detalhamento completo.
+
+> ✅ **`get_x_insights` — nomes de campo reconfirmados ao vivo (2026-07-18)**:
+> `volume`/`tweets`/`retweets`/`impressions`/`reachEstimate`/`sentiment` são
+> os nomes exatos usados pelos 4 endpoints de X Insights
+> (`developers.brandwatch.com/docs/twitter-insights`), verificado
+> diretamente contra a doc nesta sessão (não só herdado da confirmação de
+> 2026-07-11/13 em `foundation/data-model.md`). Os rótulos "Posts"/
+> "Reposts"/"All Posts"/"Impressions" que aparecem no dashboard nativo da
+> Brandwatch ("X Themes") são só apresentação da própria Brandwatch em cima
+> desses mesmos 4 campos — `tweets` = Posts, `retweets` = Reposts, `volume`
+> = All Posts (soma de tweets+retweets), `impressions` = Impressions.
+> Conferido também aritmeticamente contra um export real do usuário (ex:
+> `#flaviobolsonaropresidente2026`: Posts 10 + Reposts 402 ≈ All Posts 413).
 
 ## Scores de Narrativa: Sentimento, Momentum, Velocidade e Risco
 

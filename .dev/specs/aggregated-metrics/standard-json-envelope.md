@@ -3,7 +3,7 @@ tipo: feature-spec
 módulo: aggregated-metrics
 funcionalidade: standard-json-envelope
 status: pronto
-atualizado: 2026-07-12
+atualizado: 2026-07-18
 ---
 
 # Contrato do Envelope JSON (formato único de resposta de página)
@@ -56,6 +56,7 @@ exibidos na UI ficam em português:
   "highlights": [],
   "term_signals": [],
   "graph": null,
+  "x_insights": [],
 
   "narrative_text": null,
   "ui_meta": {}
@@ -116,6 +117,12 @@ exibidos na UI ficam em português:
   `reply`|`retweet`|`mention` — os três tipos de relacionamento que `mentions.reply_to`/
   `retweet_of`/`insights_mentioned` de fato capturam (ver `sql-aggregation.md`,
   `get_dissemination_graph`). Não inventar tipos de nó/aresta sem fonte de dado real.
+- **`x_insights`**: ✅ **Adicionado 2026-07-18** — "X Themes" nativo da Brandwatch (Top Hashtags/Top
+  Emojis/Top Stories/Most Mentioned X Posters), só preenchido na página `platforms` (ver
+  `block-mapping-per-page.md`). Cada item tem `insight_type`
+  (`hashtag`|`emoticon`|`url`|`mentioned_author`), `name`, `label` (só relevante para
+  `emoticon` — descrição textual do emoji), `volume`, `tweets`, `retweets`, `impressions`,
+  `reach_estimate` — de `bw_query_x_insights`, ver `sql-aggregation.md`, `get_x_insights`.
 - **`narrative_text`**: texto gerado pela IA a partir deste mesmo envelope (ver
   [ai-synthesis.md](ai-synthesis.md)). Fica `null` até a síntese rodar; depois é armazenado em cache
   junto do envelope.
@@ -133,7 +140,7 @@ exibidos na UI ficam em português:
   combina os dados (soma pra métricas agregadas, união pra listas como `narratives`, cada linha
   mantendo seu próprio `query_id` internamente só pra cálculo correto de SOV — nunca exposto no
   payload de resposta). Ver `aggregated-metrics/sql-aggregation.md`, "Functions a implementar".
-- Toda página deve retornar os 8 campos de topo (`metrics` até `graph`), mesmo que vazios
+- Toda página deve retornar os 9 campos de topo (`metrics` até `x_insights`), mesmo que vazios
   (`[]` ou `null`) — o Claude Code não deve omitir chaves não usadas por uma página específica.
   Isso mantém o parser do frontend e o prompt da IA únicos para todas as páginas.
 - `schema_version` deve ser incrementado sempre que um bloco mudar de formato (não ao adicionar

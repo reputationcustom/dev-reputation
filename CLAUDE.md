@@ -1210,6 +1210,44 @@ used to apply to `bw-sync`.)
   `sql-aggregation.md`/`service-layer-aggregation.md` to document this as
   a settled decision, not an open question.
 
+### X Themes (Top Hashtags/Emojis/Stories/Most Mentioned X Posters) — auditoria e correção (2026-07-18)
+
+User request: revisar, a partir de screenshots reais do dashboard nativo
+da Brandwatch ("Top Hashtags", "Most Mentioned X Posters", "Top Stories",
+"Top Emojis"), se `foundation` captura esses dados corretamente e se
+existem nos envelopes das páginas.
+
+- **Foundation estava correta o tempo todo**: `bw_query_x_insights`
+  (`foundation/data-model.md`) já cobre exatamente os 4 endpoints de
+  `data/hashtags`/`data/emoticons`/`data/urls`("Stories")/
+  `data/mentionedauthors` desde 2026-07-11, e o mapeamento de campo
+  (`volume`/`tweets`/`retweets`/`impressions`/`reachEstimate`) foi
+  reconfirmado ao vivo nesta sessão contra
+  `developers.brandwatch.com/docs/twitter-insights` — sem divergência. Os
+  rótulos "Posts"/"Reposts"/"All Posts"/"Impressions" do dashboard da
+  Brandwatch são só apresentação em cima desses mesmos 4 campos
+  (`tweets`=Posts, `retweets`=Reposts, `volume`=All Posts,
+  `impressions`=Impressions) — conferido também aritmeticamente contra um
+  export real do usuário.
+- **Gap real, fechado nesta sessão**: apesar do dado estar sincronizado
+  corretamente há uma semana, **nenhuma function/bloco de
+  `aggregated-metrics` jamais o expunha** — já estava explicitamente
+  registrado como "💡 Oportunidade futura, não desenhada ainda" em
+  `intelligence-center/platform-analysis.md` desde 2026-07-13, nunca
+  implementado até agora. Fechado: novo bloco `x_insights` no envelope
+  (`packages/shared-types/src/envelope.ts` + cópia inline em
+  `supabase/functions-shared-source/aggregated-metrics-service.ts`,
+  recopiada nas 6 Edge Functions por Princípio 5), nova function SQL
+  `get_x_insights` (migration `20260718000000`, até 10 itens por
+  `insight_type`, semana mais recente sincronizada por tipo), só na
+  página `platforms` (`PAGE_BLOCKS.platforms` ganhou `'x_insights'`).
+  Novo componente `components/intelligence-center/x-insights-panel.tsx`
+  — 4 tabelas lado a lado, mesmas colunas do dashboard nativo da
+  Brandwatch (Posts/Reposts/All Posts/Impressions).
+- **Verificação**: `npx tsc --noEmit` e `npm run build` passam limpos (14
+  rotas). Migration não executada contra banco real nesta sessão (sem
+  acesso — deploy via push pra `develop`, fluxo já estabelecido).
+
 ### Sentimento por narrativa/autores — auditoria e correções (2026-07-17)
 
 User request: auditar de onde vêm os dados de sentimento por
@@ -1976,6 +2014,66 @@ envelope/backend fields except one SQL fix (net_sentiment delta, below).
   today regardless of data (`event-radar`/`ai-synthesis` not implemented,
   `_pending.md` gaps #7/#8), so the actionable Narrativas table now comes
   first.
+
+### "Sentimento geral" KPI card redesigned as positivo/neutro/negativo (2026-07-13)
+
+User report, straight from a screenshot of the live `/overview` page: the
+"SENTIMENTO GERAL" KPI card (top-right entry of the previous session's UI
+polish pass, immediately above) showed a bare `-1` with `↑ 15,1% vs.
+período anterior` underneath — a signed `net_sentiment` score (-100..100)
+formatted with no visible scale next to it, so `-1` read as meaningless,
+and a "15.1% increase" beside a score that got *more* negative looked
+contradictory (it's an absolute point difference in a scale that crosses
+zero, not a relative percent — correct math, confusing presentation).
+User's own suggestion, adopted as-is: "acredito que seja melhor definir
+como positivo, negativo e neutro ao invés de porcentual."
+
+Checking `intelligence-center/executive-overview.md`'s "Cards de topo"
+bullet confirmed this wasn't a new product decision — the spec had
+*always* described this card as "Sentimento geral (**distribuição
+positivo/neutro/negativo compacta**)," and `aggregated-metrics/sql-aggregation.md`'s
+function table had always documented `get_metrics_cards` as sourcing
+`sentiment_*` for this block. The 2026-07-12 polish pass (previous section
+above) implemented a single weighted-average score instead — a real
+deviation from both specs that nobody had caught until it showed up
+confusingly on screen. Fixed by aligning the implementation back to what
+was specified, not by inventing a new design:
+
+- **`SentimentMetricCard`** (new export in
+  `components/intelligence-center/metric-card.tsx`) renders three compact
+  percentages (Positivo/Neutro/Negativo, `text-sentiment-*` colors) plus a
+  thin proportional bar underneath — same visual language as `SentimentBar`
+  in `charts/breakdown-panel.tsx` (the "Sentimento geral" widget that
+  already sat below the KPI grid on the same page), just sized to fit a
+  KPI card. `overview/page.tsx` renders it in place of the generic
+  `MetricCard` specifically for `metric.key === 'net_sentiment'` — same
+  grid position, no layout change.
+- **No new SQL function, no new Brandwatch call**: the page already fetches
+  `envelope.breakdowns` (`type = 'sentiment'`) for that pre-existing widget
+  below (`get_sentiment_breakdown`, `aggregated-metrics/sql-aggregation.md`)
+  — the KPI card now just reads the same already-fetched result instead of
+  `envelope.metrics`. `get_metrics_cards` is untouched; the raw
+  `net_sentiment` weighted score it computes is still returned in the
+  `metrics` block (a future consumer — e.g. a sparkline, or an eventual
+  `executive-reports` page — can still read it), it's just no longer what
+  this specific card renders.
+- **`MetricCard` (the generic component) had its `net_sentiment`-specific
+  branches removed as dead code** now that no metric with
+  `unit: 'net_sentiment_pct'` ever reaches it: the `formatValue()` `%`
+  branch, the `isPercentagePoints`/`" p.p."` suffix logic, and the
+  `net_sentiment` entry in `KPI_TOOLTIPS` (moved into `SentimentMetricCard`
+  itself as `SENTIMENT_TOOLTIP`, reworded for a distribution instead of a
+  signed score).
+- **Known, accepted redundancy**: the "Sentimento geral" widget below the
+  KPI grid (`SentimentBar`) now shows the exact same 3 percentages as this
+  KPI card, just larger — a deliberate trade-off (glance vs. detail, both
+  reading the same underlying aggregate) rather than restructuring the
+  page layout, which wasn't part of the request. Revisit if a future
+  design pass wants to fill that space with something else instead.
+
+Full spec updates in `intelligence-center/executive-overview.md` and
+`aggregated-metrics/sql-aggregation.md` (implementation notes dated
+2026-07-13 in both).
 
 ## Directory structure
 

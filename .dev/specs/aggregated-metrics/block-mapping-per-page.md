@@ -3,7 +3,7 @@ tipo: feature-spec
 módulo: aggregated-metrics
 funcionalidade: block-mapping-per-page
 status: pronto
-atualizado: 2026-07-17
+atualizado: 2026-07-18
 ---
 
 # Mapeamento de Blocos por Página
@@ -30,6 +30,7 @@ de preencher os marcados como obrigatórios.
 | `highlights`             | ● (insights + recomendações) | — | — | ● (mudanças de sentimento) | — | ● (comparação entre períodos) | — | ● (todos os alertas ativos) | ● |
 | `term_signals`           | — | — | — | ● (drivers de sentimento) | — | ● (termos emergentes) | — | — | — |
 | `graph`                  | — | — | ● (obrigatório) | — | — | — | — | — | — |
+| `x_insights`             | — | — | — | — | ● (Top Hashtags/Emojis/Stories/Most Mentioned X Posters) | — | — | — | — |
 | `narrative_text`         | ● | — | ● | ● | ● | ● | — | — | ● |
 
 Legenda: ● = bloco preenchido nessa página · — = bloco retorna vazio (`[]`) ou `null`.

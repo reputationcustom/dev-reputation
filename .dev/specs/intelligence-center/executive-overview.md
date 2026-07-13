@@ -215,6 +215,31 @@ Qualquer usuário autenticado, membro de ao menos uma organização (ver
 > cards leem) — `syncCategoryDailyAggregate()` só cobre a dimensão
 > `categories`, que nunca inclui a Query inteira.
 
+> ✅ **"Sentimento geral" corrigido para a distribuição positivo/neutro/
+> negativo que esta spec sempre pediu (2026-07-13)** — a nota de
+> 2026-07-12 acima ("`net_sentiment` como %") tinha implementado o card
+> como um único score -100..100 formatado com `%` — uma divergência real
+> desta spec, que desde a primeira versão descreve o card como "Sentimento
+> geral (**distribuição positivo/neutro/negativo compacta**)" (ver "Cards
+> de topo" abaixo). Achado pelo usuário direto na tela: um valor isolado
+> como "-1" não comunica nada sem a escala -100..100 por perto, e a
+> variação "↑ 15,1%" ao lado de um score que ficou mais negativo lia como
+> contraditória. Corrigido sem nenhuma chamada nova à Brandwatch nem
+> function SQL nova: `SentimentMetricCard`
+> (`components/intelligence-center/metric-card.tsx`) substitui `MetricCard`
+> só para `metric.key === 'net_sentiment'`, reaproveitando exatamente os
+> mesmos 3 percentuais já buscados para o widget "Sentimento geral" logo
+> abaixo (bloco `breakdowns`, `type = 'sentiment'` — `get_sentiment_breakdown`,
+> ver `aggregated-metrics/sql-aggregation.md`), só numa apresentação
+> compacta o bastante pra um card de KPI. `get_metrics_cards` continua sem
+> mudança — o score `net_sentiment` bruto que ele calcula segue disponível
+> no envelope (`metrics`), só não é mais o que este card específico
+> renderiza. Deviação preservada, não revertida: o widget "Sentimento
+> geral" abaixo da grade (`SentimentBar`) mostra a mesma informação numa
+> versão maior — redundância aceita deliberadamente (ver `CLAUDE.md`,
+> entrada desta data) em vez de reestruturar o layout da página, que não
+> fazia parte do pedido.
+
 ## Interface (UI)
 
 - **Header**: nome da organização ativa (+ seletor, se aplicável), seletor
