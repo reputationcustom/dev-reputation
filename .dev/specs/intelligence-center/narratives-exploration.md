@@ -8,6 +8,42 @@ atualizado: 2026-07-25
 
 # Exploração de Narrativas (lista + detalhe)
 
+> ✅ **Lista reestruturada (2026-07-14)**, pedido do usuário, 5 itens:
+> 1. **Coluna "Ação" removida** de `NarrativesTable` (agora 6 colunas:
+>    Narrativa/SOV/Tendência/Sentimento/Momentum/Risco) — "não está sendo
+>    usual, pois ao clicar no nome abre o modal e na linha destaca o
+>    card." O título já é o link/gatilho de navegação; a coluna extra
+>    duplicava essa mesma ação.
+> 2. **Painel de resumo passou de "abaixo da tabela" para "ao lado dela"**:
+>    selecionar uma linha agora divide a tela num grid de 2 colunas —
+>    tabela encolhe à esquerda (`minmax(0,1fr)`), `NarrativeCard` completo
+>    aparece à direita numa coluna fixa de 400px — "de forma que o resumo
+>    executivo possa ser lido completamente" (antes o card aparecia numa
+>    largura reduzida, `sm:max-w-md`, empilhado abaixo da tabela).
+> 3. **Desseleção**: clicar de novo na mesma linha já selecionada
+>    desmarca-a (mesmo `onRowClick`, alterna); um botão "✕ Fechar" acima
+>    do card oferece a mesma ação de forma explícita/descobrível. Qualquer
+>    um dos dois volta a visualização padrão (tabela cheia + grade de
+>    cards por categoria).
+> 4. **Tabela dinâmica**: toggle "Subcategorias"/"Categoria e subcategoria"
+>    no cabeçalho do widget da tabela (`NarrativesTable`'s novo prop
+>    `groupByCategory`) — "Subcategorias" é o comportamento de sempre
+>    (lista plana); "Categoria e subcategoria" agrupa as linhas por
+>    `category_label` (a mesma Category-pai que já agrupa a grade de cards,
+>    `NarrativeCategoryLanes`, desde 2026-07-25), com cabeçalho de grupo
+>    expansível/recolhível — mesmo padrão visual (▲/▼) já usado pelas raias
+>    de cards.
+> 5. **Toggle "Tabela e cards"/"Só tabela"/"Só cards"**: controla quais dos
+>    2 blocos (tabela interativa, grade de cards por categoria) aparecem na
+>    página. Em "Só tabela", o item 2 acima (painel lateral ao selecionar)
+>    é o único jeito de ler o resumo completo de uma Narrativa sem a grade
+>    de cards — por isso o pedido do usuário marcou esse item como
+>    "primordial" nesse modo. Em "Só cards", a tabela (e a seleção que
+>    depende dela) fica oculta; a grade por categoria aparece
+>    incondicionalmente.
+>
+> Ver `CLAUDE.md` para o detalhamento completo da implementação.
+
 > Cobre "Página 2 — Narrativas" e "8. Página de detalhamento da narrativa" do
 > documento de estrutura do protótipo. É a única página, além da Visão
 > Geral, que o protótipo `Comunicacao Inteligente.dc.html` implementa de
@@ -36,11 +72,15 @@ membro de ao menos uma organização.
 2. Tabela com **todas** as Narrativas da organização ativa (header
    global, ver [executive-overview.md](executive-overview.md), "Header" —
    combina todas as Queries da organização, transparente ao usuário) —
-   mesmas 7 colunas do Executive Overview: Narrativa, SOV, Tendência,
-   Sentimento, Momentum, Risco, Ação — ordenação personalizada (ver
+   mesmas 6 colunas do Executive Overview: Narrativa, SOV, Tendência,
+   Sentimento, Momentum, Risco (coluna "Ação" removida em 2026-07-14, ver
+   blockquote de topo) — ordenação personalizada (ver
    [executive-overview.md](executive-overview.md), "Tabela interativa de
    Narrativas", já especificada lá; esta página reusa o mesmo componente,
-   sem duplicar regra). ✅ **Simplificado (2026-07-21)**, pedido do usuário:
+   sem duplicar regra), com um toggle "Subcategorias"/"Categoria e
+   subcategoria" (2026-07-14) que agrupa as linhas por `category_label`
+   quando ativado (ver "Interface (UI)" abaixo). ✅ **Simplificado
+   (2026-07-21)**, pedido do usuário:
    "Para facilitar vamos considerar apenas as subcategorias em todas as
    narrativas. Retire a regra de 'categoria - subcategoria'." Esta página
    (e o Executive Overview) voltam a listar só as Narrativas-folha
@@ -57,10 +97,17 @@ membro de ao menos uma organização.
    > mesmo comportamento do estado atual): "a granularidade mais
    > específica, as narrativas dentro de cada categoria" — `p_scope =>
    > 'leaves'`.
-3. Clique numa linha → painel de resumo abaixo da tabela (nome, resumo,
-   indicadores-chave, mix de plataformas) sem navegar de página —
-   equivalente ao estado `hasSelection` do protótipo.
-4. Nenhuma linha selecionada → grid de cards, um por Narrativa (nome,
+3. Clique numa linha → painel de resumo sem navegar de página (nome,
+   resumo, indicadores-chave, mix de plataformas) — equivalente ao estado
+   `hasSelection` do protótipo. ✅ **Layout lado a lado (2026-07-14)**: o
+   painel deixou de aparecer abaixo da tabela (largura reduzida,
+   `sm:max-w-md`) e passou a aparecer **ao lado** dela — a tabela encolhe
+   pra uma coluna `minmax(0,1fr)`, o painel (`NarrativeCard` completo)
+   ocupa uma coluna fixa de 400px à direita, permitindo ler o resumo
+   executivo por inteiro. Clicar de novo na mesma linha, ou o botão
+   "✕ Fechar" acima do card, desseleciona e volta à visualização padrão.
+4. Nenhuma linha selecionada (e o modo de exibição inclui cards, ver
+   blockquote de topo) → grid de cards, um por Narrativa (nome,
    resumo, SOV, momentum, tendência, botão "Explorar narrativa") —
    equivalente a `hasNoSelection`/`narrativeCards` no protótipo. (Nota: o
    `NarrativeCard` implementado, ver `sql-aggregation.md` "Campos do card
@@ -117,6 +164,34 @@ autor/risco — retirados desta primeira versão a pedido do usuário). Os
 filtros de **período** e **organização** do header global
 (`executive-overview.md`) continuam valendo. Filtros próprios desta página
 ficam como ampliação futura, sem spec de comportamento por ora.
+
+> ✅ **3 toggles adicionados (2026-07-14)** — todos client-side, sem
+> parâmetro novo em `get-page-narratives`/`get_narratives_table` (mesmos
+> `rows` já buscados, só reorganizados/filtrados na UI):
+> 1. **Exibição** ("Tabela e cards"/"Só tabela"/"Só cards") — topo da
+>    página, acima da tabela. Controla se a tabela interativa e/ou a grade
+>    de cards por categoria (`NarrativeCategoryLanes`) aparecem. Default
+>    "Tabela e cards" (comportamento equivalente ao que existia antes deste
+>    pedido).
+> 2. **Agrupamento da tabela** ("Subcategorias"/"Categoria e subcategoria")
+>    — no cabeçalho do próprio widget da tabela (`WidgetCard`'s
+>    `headerAction`). "Subcategorias" (default) é a lista plana de sempre;
+>    "Categoria e subcategoria" agrupa por `category_label` — mesmo campo/
+>    lógica de agrupamento já usada pela grade de cards por categoria
+>    (`NarrativeCategoryLanes`, 2026-07-25), aplicado agora também à
+>    tabela, com cabeçalho de grupo expansível/recolhível (▲/▼) por
+>    categoria.
+> 3. Selecionar uma linha muda o layout do bloco da tabela de 1 coluna
+>    (tabela cheia) para 2 colunas (tabela + painel `NarrativeCard` de
+>    400px à direita) — ver item 3 do "Fluxo principal" acima.
+>
+> Em "Só tabela", a grade de cards nunca aparece — o painel lateral ao
+> selecionar uma linha é o único caminho pra ler o resumo executivo
+> completo de uma Narrativa sem sair da página, por isso esse layout é
+> tratado como parte essencial (não cosmética) desse modo de exibição. Em
+> "Só cards", a tabela (e a seleção que depende dela) fica oculta — a
+> grade por categoria aparece sempre, independente de qualquer seleção
+> remanescente de uma troca de modo anterior.
 
 ✅ **Cards redesenhados (2026-07-21)**, referência visual do usuário: o
 grid de cards ("nenhuma linha selecionada" — item 4 do "Fluxo principal")

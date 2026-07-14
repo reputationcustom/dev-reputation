@@ -246,6 +246,22 @@ export interface XInsightItem {
   retweets: number | null
   impressions: number | null
   reach_estimate: number | null
+  synced_at: string
+}
+
+// "Top Sites" da Brandwatch (data/volume/topsites/queries) — domínios de
+// onde as menções se originam, distinto de bw_query_top_shared_sites
+// ("Top Shared Sites", ainda sem bloco próprio). Só na página `authors`,
+// aba "Visão Geral". Ver get_top_sites em sql-aggregation.md.
+export interface TopSiteItem {
+  domain: string
+  volume: number
+  reach_estimate: number | null
+  monthly_visitors: number | null
+  sentiment_positive: number | null
+  sentiment_neutral: number | null
+  sentiment_negative: number | null
+  synced_at: string
 }
 
 export interface PageEnvelope {
@@ -264,6 +280,7 @@ export interface PageEnvelope {
   term_signals: TermSignal[]
   graph: DisseminationGraph | null
   x_insights: XInsightItem[]
+  top_sites: TopSiteItem[]
   narrative_text: string | null
   ui_meta: Record<string, unknown>
 }
@@ -285,6 +302,7 @@ type BlockKey =
   | 'term_signals'
   | 'graph'
   | 'x_insights'
+  | 'top_sites'
   | 'narrative_text'
 
 // ✅ 'term_signals' estendido a overview/narratives/platforms (2026-07-14,
@@ -303,7 +321,11 @@ export const PAGE_BLOCKS: Record<PageKey, BlockKey[]> = {
   sentiment: ['breakdowns', 'trends', 'highlights', 'term_signals', 'narrative_text'],
   platforms: ['breakdowns', 'trends', 'term_signals', 'narrative_text'],
   themes: ['breakdowns', 'trends', 'narratives', 'authors', 'highlights', 'term_signals', 'narrative_text'],
-  authors: ['authors', 'x_insights'],
+  // ✅ 'top_sites' adicionado (redesenho em 2 guias, aba "Visão Geral" —
+  // .dev/specs/intelligence-center/authors-and-influencers.md): get_top_sites,
+  // domínios de onde as menções se originam (bw_query_top_sites), já
+  // sincronizado desde 2026-07-11, nunca exposto ao frontend até agora.
+  authors: ['authors', 'x_insights', 'top_sites'],
   alerts: ['highlights'],
   reports: ['metrics', 'breakdowns', 'trends', 'narratives', 'highlights', 'narrative_text'],
 }
@@ -881,6 +903,42 @@ async function fetchXInsights(supabase: SupabaseClient, ctx: PageContext): Promi
   }
 }
 
+interface TopSiteRow {
+  domain: string
+  volume: number | null
+  reach_estimate: number | null
+  monthly_visitors: number | null
+  sentiment_positive: number | null
+  sentiment_neutral: number | null
+  sentiment_negative: number | null
+  synced_at: string
+}
+
+async function fetchTopSites(supabase: SupabaseClient, ctx: PageContext): Promise<TopSiteItem[]> {
+  try {
+    const { data, error } = await supabase.rpc('get_top_sites', {
+      p_organization_id: ctx.organizationId,
+      p_period_start: ctx.period.start,
+      p_period_end: ctx.period.end,
+      p_filters: effectiveFilters(ctx),
+    })
+    if (error) throw error
+    return ((data ?? []) as TopSiteRow[]).map((row) => ({
+      domain: row.domain,
+      volume: row.volume ?? 0,
+      reach_estimate: row.reach_estimate,
+      monthly_visitors: row.monthly_visitors,
+      sentiment_positive: row.sentiment_positive,
+      sentiment_neutral: row.sentiment_neutral,
+      sentiment_negative: row.sentiment_negative,
+      synced_at: row.synced_at,
+    }))
+  } catch (err) {
+    console.error('[aggregated-metrics] fetchTopSites failed', err)
+    return []
+  }
+}
+
 const NARRATIVE_TEXT_TREND_WORDS: Record<TrendDirection, string> = {
   up: 'cresceu',
   down: 'caiu',
@@ -1236,7 +1294,7 @@ export async function assemblePageResponse(
 ): Promise<PageEnvelope> {
   const blocks = new Set(PAGE_BLOCKS[page])
 
-  const [metrics, breakdowns, trends, narratives, authors, highlights, termSignals, graph, xInsights] = await Promise.all([
+  const [metrics, breakdowns, trends, narratives, authors, highlights, termSignals, graph, xInsights, topSites] = await Promise.all([
     blocks.has('metrics') ? fetchMetrics(supabase, context) : Promise.resolve<MetricCard[]>([]),
     blocks.has('breakdowns') ? fetchBreakdowns(page, supabase, context) : Promise.resolve<Breakdown[]>([]),
     blocks.has('trends') ? fetchTrends(page, supabase, context) : Promise.resolve<Trend[]>([]),
@@ -1246,6 +1304,7 @@ export async function assemblePageResponse(
     blocks.has('term_signals') ? fetchTermSignals(supabase, context) : Promise.resolve<TermSignal[]>([]),
     blocks.has('graph') ? fetchGraph(supabase, context) : Promise.resolve<DisseminationGraph | null>(null),
     blocks.has('x_insights') ? fetchXInsights(supabase, context) : Promise.resolve<XInsightItem[]>([]),
+    blocks.has('top_sites') ? fetchTopSites(supabase, context) : Promise.resolve<TopSiteItem[]>([]),
   ])
 
   // ✅ Camada 0 (2026-07-25) e Camada 1 (2026-08-02, event-radar Fase B) de
@@ -1270,6 +1329,7 @@ export async function assemblePageResponse(
     term_signals: termSignals,
     graph,
     x_insights: xInsights,
+    top_sites: topSites,
     narrative_text: narrativeText,
     ui_meta: {},
   }

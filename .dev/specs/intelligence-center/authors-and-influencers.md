@@ -3,10 +3,32 @@ tipo: feature-spec
 módulo: intelligence-center
 funcionalidade: authors-and-influencers
 status: implementado
-atualizado: 2026-08-01
+atualizado: 2026-08-08
 ---
 
 # Autores e Influenciadores
+
+> ✅ **Redesenho em 2 guias (2026-08-08)**, pedido do usuário: "Precisamos
+> ajustar a página Autores e Influenciadores com dois objetivos distintos:
+> 1) Visualizar os autores genericamente: detratores, impulsionadores,
+> alcance, engajamento, envolvimento em narrativas, etc. Top Autores, Top
+> Sites, Top Stories. 2) Visualização por entidade como já existe,
+> incluindo não só partido, mas imprensa, e outras organizações que pode
+> existir na tabela entities." A página de guia única (redesenho de
+> 2026-08-01) virou 2 guias — "Visão Geral" (todo autor, vinculado ou não;
+> foco em comportamento observado: detratores/impulsionadores, alcance,
+> engajamento, envolvimento em narrativas, Top Autores) e "Por Entidade"
+> (só autores com `entity_id`, organizados por `entities.type` — pessoa,
+> partido, veículo de imprensa, instituição, empresa, movimento, outro —
+> não mais só partido). Fechou também um gap real encontrado durante a
+> auditoria de backend: `bw_query_top_sites` ("Top Sites",
+> `data/volume/topsites/queries`) já era sincronizada por `bw-sync` desde
+> 2026-07-11 mas nunca tinha function SQL/bloco de envelope — 100%
+> sincronizada, 100% inacessível ao frontend até agora. Ver "Redesenho em
+> 2 guias (2026-08-08)" abaixo para o detalhe completo; a seção "Redesenho
+> interativo (2026-08-01)" abaixo fica como histórico — a maior parte da
+> mecânica ali descrita (dispersão, painel de detalhe, paleta) continua
+> valendo, só a organização em 1 guia única é que foi substituída.
 
 > ✅ **Implementado parcialmente (2026-07-25)**, pedido do usuário: "mover
 > Perfis relevantes, X Themes (Hashtags, Posters, Stories, Emojis), Most
@@ -277,6 +299,143 @@ uma paleta nova:
   `TrendLineChart` pra grupos sem paleta fixa conhecida — ver
   `_pending.md`/`CLAUDE.md`, "trend de plataforma/pauta").
 
+## Redesenho em 2 guias (2026-08-08)
+
+> Substitui a guia única do redesenho de 2026-08-01 por 2 guias, pedido
+> explícito do usuário (ver blockquote de topo). Continua 100%
+> client-side sobre o mesmo `envelope.authors` já carregado (mais um bloco
+> novo, `envelope.top_sites` — ver abaixo) — trocar de guia nunca dispara
+> uma chamada de rede.
+
+### Guia "Visão Geral"
+
+Todo autor do escopo, vinculado a uma Entity ou não — o recorte é
+comportamental, não organizacional:
+
+- **Toolbar** (`AuthorGeneralFiltersToolbar`): só Buscar + Sentimento
+  dominante + "Limpar filtros" — Partido/Ideologia/Tipo de Entidade não
+  aparecem aqui, são o assunto da outra guia. Quando o filtro de
+  Narrativa está ativo (ver abaixo), aparece como um chip removível
+  ("Narrativa: X ✕") para ficar descobrível.
+- **4 KPIs**: Autores no filtro, Menções totais, Alcance total (✅ novo —
+  a guia única antiga não somava alcance, só "Partidos distintos", que
+  não fazia sentido genericamente), Sentimento médio.
+- **Detratores e impulsionadores** (✅ novo, `author-detractors-boosters.tsx`)
+  — 2 mini-listas lado a lado (até 6 cada), autores predominantemente
+  negativos/positivos (`dominantSentiment()`, mesmo helper de sempre),
+  ordenados por alcance desc. Só considera autores dentro do recorte de
+  sentimento enriquecido (top ~10 por volume) — mesma limitação já
+  documentada em "Gaps conhecidos".
+- **Alcance × Sentimento**: mesma dispersão de sempre
+  (`AuthorScatterChart`), `colorBy` fixo em "sentimento" — ideologia/
+  partido não fazem sentido nesta guia.
+- **Envolvimento em narrativas** (✅ novo, `author-narrative-involvement.tsx`)
+  — barras horizontais, quantos autores **distintos** citam cada
+  Narrativa/pauta (`AuthorRow.narrative_labels`, um autor pode contar em
+  mais de uma barra) — não uma soma de menções (isso já é coberto pela
+  própria tabela de Narrativas). Clique numa barra filtra a guia por
+  aquele label (substitui a seleção, não soma).
+- **Top Autores** (`AuthorsList`, `variant="general"`) — mesma tabela de
+  sempre, sem as colunas Partido/Ideologia (variant nova, ver "Tabela"
+  abaixo).
+- **Top Sites** (✅ novo, `top-sites-panel.tsx`) — tabela única (Domínio/
+  Menções/Alcance/Visitantes por mês/Sentimento), fecha o gap real de
+  `bw_query_top_sites` nunca exposta (ver blockquote de topo e "Dados
+  envolvidos" abaixo). Mostra "Atualizado há X" (mesmo padrão de
+  `XInsightsPanel`, `bw-sync` só re-sincroniza Top Sites a cada 7 dias por
+  par).
+- **X Themes (Hashtags, Posters, Stories, Emojis)** — inalterado
+  (`XInsightsPanel`), agora agrupado na mesma seção visual de Top Sites
+  ("Conteúdo em destaque") por serem ambos rankings suplementares de
+  conteúdo, não comportamento de autor.
+
+### Guia "Por Entidade"
+
+Só autores com `entity_id` não-nulo (filtro implícito, aplicado pela
+própria página antes de qualquer outro filtro — um autor sem Entity não
+tem nada a mostrar aqui: sem tipo, sem partido, sem ideologia):
+
+- **Toolbar** (`AuthorEntityFiltersToolbar`): "Colorir por" (Tipo de
+  Entidade / Ideologia / Partido / Sentimento — ✅ "Tipo de Entidade" é
+  novo, default desta guia) + Buscar + Partido + Sentimento + chips de
+  **Tipo de Entidade** (✅ novos: Pessoa/Partido/Veículo de Imprensa/
+  Instituição/Empresa/Movimento/Outro, `ENTITY_TYPE_ORDER` em
+  `author-color.ts`) + chips de Ideologia (inalterados).
+- **4 KPIs**: Entidades vinculadas, Menções, Alcance, Tipos de Entidade
+  distintos (✅ substitui "Partidos distintos" da guia única antiga — mais
+  geral, cobre qualquer `entity_type`, não só partido).
+- **Por tipo de Entidade** (✅ novo, `author-entity-type-breakdown.tsx`) —
+  barras na ordem fixa `ENTITY_TYPE_ORDER`, soma de `reach`. **Esta é a
+  visualização que responde diretamente ao pedido do usuário** ("não só
+  partido, mas imprensa, e outras organizações") — lê `entities.type`
+  (já enriquecido em `AuthorRow.entity_type` desde `author-linking.md`,
+  nunca usado em nenhuma visualização até esta sessão). Clique toggla o
+  filtro de Tipo de Entidade (mesmo mecanismo dos chips de ideologia —
+  multi-seleção, nenhum selecionado = todos aparecem).
+- **Top partidos por alcance**, **Menções por ideologia**, **Sentimento
+  médio por ideologia** — inalterados, só escopados à lista já filtrada
+  por `entity_id != null` desta guia (continuam mostrando só as linhas
+  com `entity_partido`/`entity_ideologia` preenchidos — Entities sem
+  esses campos, ex: a maioria dos veículos de imprensa/institutos de
+  pesquisa, simplesmente não aparecem nessas 2 barras, sem código novo
+  necessário: já eram `null`-safe).
+- **Alcance × Sentimento** — mesma dispersão, `colorBy` vem do controle da
+  toolbar (default "Tipo de Entidade" nesta guia, diferente do fixo
+  "Sentimento" da guia "Visão Geral").
+- **Entidades vinculadas** (`AuthorsList`, `variant="entity"`) — ganha uma
+  coluna **Tipo** (entre Autor e Partido) e, no nome do autor, mostra
+  `entity_cargo` quando existe (pessoas) ou o `tag_value` de `segment`
+  (✅ novo, `entitySegment()` em `author-color.ts` — lê
+  `AuthorRow.entity_tags`, já buscado desde 2026-08-01 mas nunca
+  renderizado em lugar nenhum até esta sessão) quando não existe cargo —
+  ex: um veículo de imprensa mostra "Portal de Notícias"/"Jornal
+  Impresso" (`entities/data-model.md`, seed de institutos/veículos de
+  2026-07-14) em vez de ficar em branco.
+- Estado vazio dedicado quando não há nenhum autor vinculado no
+  organização/período atual: explica que o vínculo depende de cadastro em
+  `/admin/entities` + `entity_accounts` (`author-linking.md`), não um erro.
+
+### Tabela (`AuthorsList`) — variantes por coluna
+
+✅ **Nova prop `variant: "full" | "general" | "entity"` (default `"full"`)**
+— `full` preserva exatamente as 7 colunas/comportamento de sempre, usada
+sem mudança nenhuma pelos 2 outros consumidores deste componente
+(`/themes`, detalhe de Narrativa — nenhum dos dois pediu a mudança desta
+sessão). `general` remove Partido/Ideologia (guia "Visão Geral" de
+`/authors`). `entity` acrescenta a coluna **Tipo** antes de Partido/
+Ideologia (guia "Por Entidade"). Mesma lista de linhas/ordenação/paginação
+por trás das 3 — só quais colunas renderizam muda.
+
+### Bloco novo do envelope: `top_sites`
+
+- **`get_top_sites(p_organization_id, p_period_start, p_period_end,
+  p_filters)`** (migration `20260808010000`) — mesmo padrão exato de
+  `get_x_insights` (escopo por Narrativa via `filter_category_ids`/`cat_ids`
+  cross join, "latest" agrupado por `category_id`), lendo
+  `bw_query_top_sites` (`foundation/data-model.md`) — domínios de onde as
+  menções se originam, distinto de `bw_query_top_shared_sites` ("Top
+  Shared Sites", domínios linkados **dentro** do conteúdo — continua sem
+  function própria, gap documentado, não pedido nesta sessão). Top 15 por
+  `volume`.
+- `TopSiteItem` (`packages/shared-types/src/envelope.ts` + cópia inline
+  nas 7 Edge Functions `get-page-*`/`get-narrative-detail`, Princípio
+  técnico 5): `domain`, `volume`, `reach_estimate`, `monthly_visitors`,
+  `sentiment_positive/neutral/negative`, `synced_at`.
+- `PAGE_BLOCKS.authors` ganhou `'top_sites'` — único consumidor por
+  enquanto, mesmo padrão de `x_insights`.
+- ✅ **Achado de passagem, corrigido nesta sessão**: o arquivo canônico
+  (`supabase/functions-shared-source/aggregated-metrics-service.ts`)
+  estava com `XInsightItem` **sem** o campo `synced_at` na própria
+  interface (`synced_at` só aparecia no shape de leitura interno e no
+  `.map()` de `fetchXInsights`) — inconsistência que não quebrava nada em
+  runtime (TypeScript não barra um objeto com propriedade a mais sendo
+  atribuído a um tipo mais estreito) e não era pega pelo `tsc` do Next.js
+  (`supabase/functions*` fica fora do `tsconfig.json` de propósito), mas
+  divergia das 7 Edge Functions **já deployadas**, que já tinham
+  `synced_at` corretamente desde 2026-08-03. Corrigido no canônico junto
+  desta mudança — as 7 cópias deployadas não precisaram de nenhuma
+  alteração nesse campo específico (já estavam certas).
+
 ## Regras de negócio
 
 - **Toda a interatividade desta seção é client-side**, sobre o array
@@ -302,8 +461,11 @@ uma paleta nova:
 - **Lê**: `bw_query_top_authors`, `bw_query_top_tweeters`,
   `bw_query_author_topics`, `bw_query_x_insights` — todos já sincronizados
   desde `foundation`, sem mudança de captura. `entity_accounts`/`entities`/
-  `entity_tags` — novo, via `get_authors_ranking` (ver
-  `entities/author-linking.md`), não uma leitura direta desta página.
+  `entity_tags` — via `get_authors_ranking` (ver
+  `entities/author-linking.md`), não uma leitura direta desta página. ✅
+  **`bw_query_top_sites` (2026-08-08)** — já sincronizada desde
+  2026-07-11, só passou a ter function/bloco de envelope nesta sessão (ver
+  "Redesenho em 2 guias" acima).
 - Nenhuma escrita própria desta página — a única escrita (cadastro rápido
   de Entity a partir de um autor) reusa `create-entity`
   (`entities/entity-registration.md`).
@@ -343,6 +505,21 @@ escrita real é sempre revalidada no servidor.
   mesma regra de cor. Paleta de ideologia virou token real (`tailwind.config.ts`
   + `_design-tokens.md`, "Ideologia") — violeta↔teal, não vermelho/verde
   (reservados pra sentimento).
+- ✅ **Redesenho em 2 guias (2026-08-08)** — componentes novos:
+  `author-detractors-boosters.tsx`, `author-narrative-involvement.tsx`,
+  `author-entity-type-breakdown.tsx`, `top-sites-panel.tsx`.
+  `author-filters-toolbar.tsx` deixou de exportar 1 toolbar única e passou
+  a exportar 2 (`AuthorGeneralFiltersToolbar`/`AuthorEntityFiltersToolbar`)
+  sobre o mesmo `AuthorFiltersState` (ganhou `narrativeLabel`/
+  `entityTypes`, perdeu `onlyLinked` — agora implícito por guia).
+  `author-color.ts` ganhou `ENTITY_TYPE_ORDER`/`ENTITY_TYPE_LABEL`/
+  `ENTITY_TYPE_HEX`/`entityTypeLabel()`/`entityTypeHex()`/`entitySegment()`,
+  e `ColorByMode` ganhou o valor `"entity_type"`. `authors-list.tsx` ganhou
+  a prop `variant` (ver "Tabela" acima). Nova function SQL
+  `get_top_sites` + bloco `top_sites` do envelope (ver "Bloco novo do
+  envelope" acima) — propagados em `packages/shared-types/src/envelope.ts`
+  e nas 7 Edge Functions `get-page-*`/`get-narrative-detail` (Princípio
+  técnico 5), verificado por diff byte-a-byte contra o arquivo canônico.
 
 ## Gaps conhecidos (fora de escopo desta sessão)
 
@@ -359,7 +536,14 @@ escrita real é sempre revalidada no servidor.
 - `p_period_start`/`p_period_end` de `get_authors_ranking` continuam sem
   efeito real (sempre "snapshot mais recente") — ver
   `entities/author-linking.md` pra a explicação completa (sem dado
-  histórico nesta fonte pra period-scoping fazer sentido).
+  histórico nesta fonte pra period-scoping fazer sentido). Mesma limitação
+  vale pra `get_top_sites` (✅ 2026-08-08) — `bw_query_top_sites` também só
+  guarda o snapshot mais recente por par, não histórico por período.
+- ✅ **`bw_query_top_shared_sites` ("Top Shared Sites") continua sem
+  function/bloco de envelope (2026-08-08)** — só "Top Sites" foi pedido
+  nesta sessão; domínios linkados/compartilhados dentro do conteúdo das
+  menções (distinto de domínios de origem) ficam para uma sessão futura se
+  pedido.
 
 ## Referências relacionadas
 

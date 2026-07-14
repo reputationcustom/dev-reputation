@@ -6572,6 +6572,202 @@ pra `critical` no próximo ciclo do `pg_cron` (15min) sem que
 `momentum_score`/`metric_value` tenham mudado — confirma que o fator
 "Velocidade" está lendo o valor certo.
 
+### `/narratives` — coluna Ação removida, painel lateral ao selecionar, tabela dinâmica, toggle tabela/cards (2026-07-14)
+
+User request, 5 itens na mesma mensagem, só frontend + documentação (sem
+mudança de backend/envelope):
+
+1. **Coluna "Ação" removida** de `NarrativesTable`
+   (`components/intelligence-center/narratives-table.tsx`) — pedido do
+   usuário: "não está sendo usual, pois ao clicar no nome abre o modal e
+   na linha destaca o card." A coluna "Narrativa" já contém o `Link` que
+   abre `/narratives/[id]` (modal, via a intercepting route existente) —
+   a coluna "Ação" era um segundo caminho pra exatamente a mesma
+   navegação. Tabela shared component (também usada por `/themes`) caiu
+   de 7 pra 6 colunas em ambos os lugares; `min-w-[760px]` do wrapper
+   `overflow-x-auto` ajustado pra `min-w-[680px]`.
+2. **Painel de resumo passou de "abaixo da tabela" pra "ao lado dela"**
+   (`app/(intelligence-center)/(analytics)/narratives/page.tsx`) — pedido
+   do usuário: "reduza essa tabela a esquerda e mostre ao lado direito da
+   tabela o card... de forma que o resumo executivo possa ser lido
+   completamente." O bloco que envolve a `WidgetCard` da tabela virou um
+   `grid` que só ganha uma segunda coluna (`lg:grid-cols-
+   [minmax(0,1fr)_400px]`) quando há uma linha selecionada — a tabela
+   ocupa a coluna elástica (encolhe, rola horizontalmente por dentro se
+   precisar, mesmo `overflow-x-auto` de sempre) e o mesmo `NarrativeCard`
+   de sempre ocupa uma coluna fixa de 400px à direita, larga o bastante
+   pra não cortar o resumo executivo. Sem seleção, o grid volta a 1
+   coluna (tabela cheia), comportamento idêntico ao de antes.
+3. **Desseleção**: `onRowClick` agora alterna — clicar de novo na mesma
+   linha já selecionada chama `setSelectedId(null)` em vez de
+   reselecionar a mesma linha à toa. Um botão "✕ Fechar" (texto simples,
+   sem ícone novo) acima do `NarrativeCard`, ao lado do rótulo "Narrativa
+   selecionada", oferece a mesma ação de forma explícita — cobre tanto
+   quem descobre por tentativa (clicar de novo na linha) quanto quem
+   procura um controle óbvio de fechar.
+4. **Tabela dinâmica**: `NarrativesTable` ganhou um prop opcional
+   `groupByCategory?: boolean` (default `false`, então `/themes` — que
+   não passa esse prop — está inalterada). Quando `true`, agrupa
+   `sortedRows` por `category_label` (mesmo campo/lógica de
+   `NarrativeCategoryLanes`, 2026-07-25 — a Category-pai da Subcategory,
+   sempre presente) em vez de uma lista plana — cada grupo vira uma linha
+   de cabeçalho (`colSpan` de todas as colunas, negrito, contagem +
+   ▲/▼) seguida das linhas normais daquele grupo, com o mesmo estado de
+   expandir/recolher por categoria já usado pelas raias de cards
+   (`Set<string>` de categorias recolhidas, local ao componente). Ordem
+   dentro de cada grupo preserva a ordenação por coluna ativa (ou o
+   default do backend) — só a soma dos grupos é reorganizada, não o
+   critério de ordenação em si. Toggle "Subcategorias"/"Categoria e
+   subcategoria" no `headerAction` do `WidgetCard` da tabela (mesmo prop
+   adicionado à `WidgetCard` na sessão anterior).
+5. **Toggle "Tabela e cards"/"Só tabela"/"Só cards"** no topo da página —
+   `displayMode` (`useState`), controla `showTable`/`showCardsGrid`.
+   `selected` é calculado como `showTable ? rows.find(...) : null` —
+   nunca fica "preso" numa seleção invisível quando o usuário troca pra
+   "Só cards" (não há tabela pra ter gerado essa seleção nesse modo, então
+   ela é sempre ignorada ali, mesmo que um `selectedId` tenha sobrado de
+   uma troca de modo anterior). A grade de cards por categoria
+   (`NarrativeCategoryLanes`) só aparece quando `showCardsGrid && !selected`
+   — em "Só tabela" nunca aparece (por isso o pedido do usuário marcou o
+   item 2 como "primordial" nesse modo: o painel lateral é o único jeito
+   de ler o resumo sem a grade); em "Só cards" aparece sempre, já que
+   `selected` é sempre `null` nesse modo.
+
+**Especificações atualizadas**: `intelligence-center/narratives-exploration.md`
+(novo blockquote de topo + "Fluxo principal" itens 2-4 + nova seção de
+toggles em "Interface (UI)"), `executive-overview.md` ("7 colunas" →
+"6 colunas", já que a tabela é o mesmo componente compartilhado).
+
+**Verificação**: `npx tsc --noEmit` e `npm run build` (com `rm -rf .next`
+antes) passam limpos — 21 rotas, mesma contagem de antes (mudança só de
+conteúdo em `/narratives`, nenhuma rota nova/removida). Sem mudança de
+backend/migration nesta sessão. Sem automação de browser disponível neste
+ambiente — o layout lado a lado, os 3 toggles e o agrupamento por
+categoria na tabela não foram confirmados visualmente num navegador real,
+mesma limitação já registrada em toda sessão anterior de
+`intelligence-center` neste arquivo.
+
+### Autores e Influenciadores redesenhada em 2 guias + Top Sites (gap real fechado) + NarrativesTable (default SOV, oculta zerados) (2026-08-08)
+
+User request, 3 partes na mesma sessão: (1) "Precisamos ajustar a página
+Autores e Influenciadores com dois objetivos distintos: 1) Visualizar os
+autores genericamente: detratores, impulsionadores, alcance, engajamento,
+envolvimento em narrativas, etc. Top Autores, Top Sites, Top Stories. 2)
+Visualização por entidade como já existe, incluindo não só partido, mas
+imprensa, e outras organizações que pode existir na tabela entities.
+Portanto, divida essa página em duas guias... Redesenhe de forma
+eficiente, objetiva e clara"; (2) mid-turn: "ordenação defaulta da tabela
+de narrativas deve ser por sov"; (3) mid-turn: "o que estiver zerado em
+sov pode ser ocultado da tabela... No mensal aparece uma narrativa, mas
+quando mudo para o diário tem menos narrativas... algumas zeradas pq não
+foram citadas no dia."
+
+**Auditoria antes do código** confirmou um gap real, não só de UI:
+`bw_query_top_sites` ("Top Sites", `data/volume/topsites/queries` —
+domínios de onde as menções se originam, distinto de `bw_query_top_shared_sites`
+= "Top Shared Sites") já era sincronizada por `bw-sync` desde
+2026-07-11 (`runTopSitesStep`/`isTopSitesStale`, mesmo throttle semanal de
+`x_insights`), mas nunca teve nenhuma function SQL/bloco de envelope
+lendo essa tabela — 100% sincronizada, 100% inacessível ao frontend até
+agora, mesma classe de achado de "X Themes — auditoria de bw-sync" (ver
+acima). "Top Autores" e "Top Stories" já existiam (ranking/`AuthorsList`
+e `x_insights.insight_type='url'`, respectivamente) — só "Top Sites" era
+um gap de verdade.
+
+**Backend, migration `20260808010000`**: `get_top_sites(p_organization_id,
+p_period_start, p_period_end, p_filters)` — mesmo padrão exato de
+`get_x_insights` (`filter_category_ids`/`cat_ids` cross join, nunca `= any((select
+...))`; "latest" agrupado por `category_id`, não um `max(metric_week)`
+global — nasce já correto, evitando o bug que `get_x_insights` teve que
+corrigir em 2026-08-03), top 15 por `volume`. Novo `TopSiteItem`
+(`domain`/`volume`/`reach_estimate`/`monthly_visitors`/`sentiment_positive/
+neutral/negative`/`synced_at`) + `top_sites` no `PageEnvelope` +
+`PAGE_BLOCKS.authors` ganhando `'top_sites'` — propagado em
+`packages/shared-types/src/envelope.ts`, no arquivo canônico
+(`supabase/functions-shared-source/aggregated-metrics-service.ts`) e nas
+7 Edge Functions `get-page-*`/`get-narrative-detail` (Princípio técnico
+5), verificado por diff byte-a-byte de cada bloco novo contra o canônico
+depois da propagação (script Node de uso único, mesma técnica já usada em
+sessões anteriores). **Achado de passagem, corrigido no mesmo lote**: o
+arquivo canônico tinha `XInsightItem` **sem** o campo `synced_at` na
+própria interface (só aparecia no shape de leitura interno e no `.map()`
+de `fetchXInsights`) — as 7 Edge Functions já deployadas já tinham o campo
+certo desde 2026-08-03 (confirmado via grep antes de mexer), então isso
+nunca foi um bug em produção, só uma divergência silenciosa no arquivo
+"fonte da verdade" que o `tsc` do Next.js nunca pega (`supabase/functions*`
+fica fora do `tsconfig.json` de propósito). Corrigido no canônico; as 7
+cópias deployadas não precisaram de nenhuma mudança nesse campo.
+
+**Frontend — 2 guias, mesmo `envelope.authors`/`envelope.top_sites` já
+carregado, nenhuma chamada de rede por troca de guia ou filtro**:
+- **"Visão Geral"**: toolbar simplificada (`AuthorGeneralFiltersToolbar`
+  — só Buscar + Sentimento, sem Partido/Ideologia/Tipo, que são assunto
+  da outra guia), 4 KPIs (Autores/Menções/**Alcance total** — novo, a
+  versão antiga não somava alcance/Sentimento médio), novo
+  `AuthorDetractorsBoosters` (`author-detractors-boosters.tsx` — 2
+  mini-listas lado a lado, até 6 cada, por `dominantSentiment()` +
+  alcance desc), dispersão com `colorBy` fixo em "sentimento", novo
+  `AuthorNarrativeInvolvement` (`author-narrative-involvement.tsx` —
+  barras de quantos autores **distintos** citam cada Narrativa/pauta via
+  `narrative_labels`, clique filtra), `AuthorsList` com a nova
+  `variant="general"` (sem colunas Partido/Ideologia), e uma seção
+  "Conteúdo em destaque" reunindo o novo `TopSitesPanel`
+  (`top-sites-panel.tsx` — tabela única com mini-barra de sentimento) e o
+  `XInsightsPanel` já existente (Hashtags/Posters/Stories/Emojis).
+- **"Por Entidade"**: toolbar (`AuthorEntityFiltersToolbar`) ganha
+  "Colorir por: Tipo" (novo `ColorByMode = "entity_type"`) e chips de
+  **Tipo de Entidade** (novo `author-entity-type-breakdown.tsx` +
+  `ENTITY_TYPE_ORDER`/`ENTITY_TYPE_LABEL`/`ENTITY_TYPE_HEX` em
+  `author-color.ts` — Pessoa/Partido/Veículo de Imprensa/Instituição/
+  Empresa/Movimento/Outro, os 7 valores reais do enum `entity_type`) —
+  **esta é a peça que responde diretamente ao pedido "não só partido, mas
+  imprensa, e outras organizações"**, lendo `AuthorRow.entity_type`
+  (já enriquecido desde `author-linking.md`, 2026-08-01, mas nunca usado
+  em nenhuma visualização até agora). Filtra a lista inteira a
+  `entity_id != null` antes de qualquer outro filtro (autor sem Entity
+  não tem tipo/partido/ideologia a mostrar). `AuthorsList` ganha
+  `variant="entity"` (coluna Tipo + Partido/Ideologia) e, no nome do
+  autor, passa a mostrar `entitySegment()` (novo helper — lê
+  `entity_tags.tag_type='segment'`, já buscado desde 2026-08-01 mas nunca
+  renderizado) quando não há `entity_cargo` — ex: um veículo de imprensa
+  mostra "Portal de Notícias" em vez de ficar em branco.
+- **`AuthorsList` ganhou a prop `variant: "full" | "general" | "entity"`**
+  (default `"full"`) — `/themes` e o detalhe de Narrativa (os outros 2
+  consumidores deste componente) continuam recebendo `"full"` sem
+  nenhuma mudança de comportamento, nenhum dos dois pediu a redesign
+  desta sessão.
+- `AuthorFiltersState` reorganizado: perdeu `onlyLinked` (agora implícito
+  por guia — "Visão Geral" nunca filtra por Entity, "Por Entidade" sempre
+  filtra), ganhou `narrativeLabel` (só "Visão Geral") e `entityTypes`
+  (só "Por Entidade").
+
+**Fix separado, mesma sessão, `NarrativesTable`** (2 pedidos mid-turn):
+(1) ordenação default trocada de "nenhuma" (ordem crua do backend,
+`risk_score desc`) para `sov_pct desc`; (2) linhas com `sov_pct` nulo ou
+`0` agora são **ocultadas** inteiramente (`visibleRows`, filtrado antes de
+ordenar/agrupar/renderizar) — antes apareciam com a célula mostrando "—",
+o que confundia ao trocar de um período longo (mês, onde a Narrativa tem
+SOV real) para um período curto (dia, sem nenhuma menção naquele dia
+específico). Mesmo tratamento de "0 é ausência de dado, não um valor
+real" já usado em `ScoreList` (`charts/breakdown-panel.tsx`,
+2026-07-12). Afeta todo consumidor deste componente compartilhado
+(Visão Geral, Narrativas, Pautas Eleitorais) de uma vez, sem duplicar a
+regra em cada página.
+
+**Verificação**: `npx tsc --noEmit` limpo (achou e corrigiu de passagem um
+erro real em `toAiPayload()`, `packages/shared-types/src/envelope.ts` —
+faltava `top_sites` no objeto retornado, `Omit<PageEnvelope, ...>` exige
+todo campo não omitido). `npm run build` limpo (21 rotas, mesma contagem
+de antes — nenhuma rota nova/removida), só os 2 warnings pré-existentes
+de `<img>` (`sidebar.tsx`/`layout.tsx`, não relacionados). Migration
+`20260808010000` revisada manualmente, não executada contra um banco real
+nesta sessão — mesma limitação recorrente de toda sessão sem credenciais
+de deploy neste ambiente. Sem automação de browser disponível — a troca
+de guias, os novos widgets (Detratores/Impulsionadores, Envolvimento em
+narrativas, Por tipo de Entidade, Top Sites) e o comportamento de ocultar
+linhas zeradas em `NarrativesTable` não foram confirmados visualmente num
+navegador real.
+
 ## Directory structure
 
 ```

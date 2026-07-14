@@ -294,6 +294,21 @@ export interface XInsightItem {
   synced_at: string;
 }
 
+// "Top Sites" da Brandwatch (data/volume/topsites/queries) — domínios de
+// onde as menções se originam, distinto de bw_query_top_shared_sites
+// ("Top Shared Sites", ainda sem bloco próprio). Só na página `authors`,
+// aba "Visão Geral". Ver get_top_sites em sql-aggregation.md.
+export interface TopSiteItem {
+  domain: string;
+  volume: number;
+  reach_estimate: number | null;
+  monthly_visitors: number | null;
+  sentiment_positive: number | null;
+  sentiment_neutral: number | null;
+  sentiment_negative: number | null;
+  synced_at: string;
+}
+
 export interface PageEnvelope {
   schema_version: string;
   page: PageKey;
@@ -311,6 +326,7 @@ export interface PageEnvelope {
   term_signals: TermSignal[];
   graph: DisseminationGraph | null;
   x_insights: XInsightItem[];
+  top_sites: TopSiteItem[];
 
   narrative_text: string | null;
   ui_meta: Record<string, unknown>;
@@ -338,6 +354,7 @@ export function createEmptyEnvelope(
     term_signals: [],
     graph: null,
     x_insights: [],
+    top_sites: [],
     narrative_text: null,
     ui_meta: {},
   };
@@ -363,5 +380,6 @@ export function toAiPayload(envelope: PageEnvelope): EnvelopeAiPayload {
     term_signals: envelope.term_signals,
     graph: envelope.graph,
     x_insights: envelope.x_insights,
+    top_sites: envelope.top_sites,
   };
 }

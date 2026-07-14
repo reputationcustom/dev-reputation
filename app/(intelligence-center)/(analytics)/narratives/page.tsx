@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import type { NarrativeRow } from "@reputation/shared-types";
 import { usePageEnvelope } from "@/hooks/use-page-envelope";
 import { PageHeaderBar } from "@/components/intelligence-center/page-header-bar";
 import { WidgetCard } from "@/components/intelligence-center/widget-card";
@@ -9,48 +10,150 @@ import { NarrativeCard } from "@/components/intelligence-center/narrative-card";
 import { NarrativeCategoryLanes } from "@/components/intelligence-center/narrative-category-lanes";
 import { TopicSentimentList } from "@/components/intelligence-center/term-signals-list";
 
+type DisplayMode = "both" | "table" | "cards";
+type TableGrouping = "flat" | "category";
+
+const DISPLAY_MODE_OPTIONS: { mode: DisplayMode; label: string }[] = [
+  { mode: "both", label: "Tabela e cards" },
+  { mode: "table", label: "Só tabela" },
+  { mode: "cards", label: "Só cards" },
+];
+
+const GROUPING_OPTIONS: { grouping: TableGrouping; label: string }[] = [
+  { grouping: "flat", label: "Subcategorias" },
+  { grouping: "category", label: "Categoria e subcategoria" },
+];
+
 // Exploração de Narrativas — lista (`/narratives`,
-// intelligence-center/narratives-exploration.md). Clique numa linha abre um
-// painel de resumo abaixo da tabela sem navegar (equivalente ao estado
-// `hasSelection` do protótipo); "Ver página completa"/"Ver" navegam para o
-// detalhe. ✅ **Implementado (2026-07-22)**: o detalhe abre como modal
-// (intercepting route `@modal/(.)narratives/[id]`, ver
+// intelligence-center/narratives-exploration.md). Clique numa linha
+// seleciona (destaca a linha + abre o resumo ao lado); clicar no título
+// abre o modal de detalhe. ✅ **Implementado (2026-07-22)**: o detalhe abre
+// como modal (intercepting route `@modal/(.)narratives/[id]`, ver
 // app/(intelligence-center)/(analytics)/@modal/) — clicar num link pra
 // `/narratives/[id]` a partir de qualquer página dentro de `(analytics)`
 // (não só daqui) abre por cima da tela atual; acessar a URL direto (link
 // compartilhado, recarregar a página) continua renderizando a página cheia,
 // sem modal — ver narrative-detail-content.tsx.
+//
+// ✅ **Reestruturado (2026-07-14)**, pedido do usuário, 5 itens:
+// 1. Coluna "Ação" removida da tabela (`NarrativesTable`) — duplicava a
+//    navegação que o título já oferece.
+// 2. Selecionar uma linha agora divide a tela: tabela encolhe à esquerda,
+//    `NarrativeCard` completo aparece à direita (`lg:grid-cols-
+//    [minmax(0,1fr)_400px]`) — antes o card aparecia abaixo da tabela em
+//    largura reduzida (`sm:max-w-md`), cortando a leitura do resumo.
+// 3. Botão "✕ Fechar" acima do card + clicar de novo na mesma linha
+//    desseleciona e volta à visualização padrão (tabela cheia + grade de
+//    cards por categoria).
+// 4. Tabela dinâmica: toggle "Subcategorias"/"Categoria e subcategoria" no
+//    cabeçalho do widget da tabela (`NarrativesTable`'s `groupByCategory`).
+// 5. Toggle "Tabela e cards"/"Só tabela"/"Só cards" — em "Só tabela", o
+//    item 2 (painel lateral ao selecionar) é o único jeito de ler o resumo
+//    completo, já que a grade de cards fica oculta.
 export default function NarrativesListPage() {
   const { status, envelope, retry } = usePageEnvelope("get-page-narratives");
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [displayMode, setDisplayMode] = useState<DisplayMode>("both");
+  const [tableGrouping, setTableGrouping] = useState<TableGrouping>("flat");
 
   const rows = envelope?.narratives ?? [];
-  const selected = rows.find((row) => row.id === selectedId) ?? null;
+  const showTable = displayMode !== "cards";
+  const showCardsGrid = displayMode !== "table";
+  // Seleção só é significativa quando a tabela está visível — em "Só
+  // cards" não há como uma linha estar selecionada (não há tabela pra
+  // clicar), então ignora qualquer `selectedId` remanescente de uma troca
+  // de modo anterior.
+  const selected = showTable ? (rows.find((row) => row.id === selectedId) ?? null) : null;
+
+  function handleRowClick(row: NarrativeRow) {
+    setSelectedId((current) => (current === row.id ? null : row.id));
+  }
 
   return (
     <>
       <PageHeaderBar title="Narrativas" subtitle="Explore todas as Narrativas em monitoramento." />
 
       <div className="flex flex-col gap-6 p-8">
-        <WidgetCard title="Todas as Narrativas" status={status} onRetry={retry}>
-          <NarrativesTable rows={rows} onRowClick={(row) => setSelectedId(row.id)} selectedId={selectedId} />
-        </WidgetCard>
+        <div className="flex flex-wrap items-center gap-2 self-start rounded-md border border-border-default p-0.5">
+          {DISPLAY_MODE_OPTIONS.map((option) => (
+            <button
+              key={option.mode}
+              type="button"
+              onClick={() => setDisplayMode(option.mode)}
+              className={`whitespace-nowrap rounded px-3 py-1.5 text-xs font-medium transition-colors ${
+                displayMode === option.mode ? "bg-accent-blue text-white" : "text-text-secondary hover:bg-bg-page"
+              }`}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
 
-        {/* Painel de resumo ao clicar numa linha — usa o mesmo NarrativeCard
-            do resto do produto (Top 3 da Visão Geral, grade sem seleção
-            logo abaixo), não mais um painel de badges ad hoc; garante que
-            SOV/menções/risco/momentum/resumo (reservado pra IA)/sentimento/
-            tags fiquem consistentes em toda tela, pedido do usuário
-            2026-07-25. */}
-        {selected && (
-          <div className="sm:max-w-md">
-            <NarrativeCard narrative={selected} />
+        {showTable && (
+          <div className={`grid grid-cols-1 gap-6 ${selected ? "lg:grid-cols-[minmax(0,1fr)_400px]" : ""}`}>
+            <WidgetCard
+              title="Todas as Narrativas"
+              status={status}
+              onRetry={retry}
+              headerAction={
+                <div className="flex rounded-md border border-border-default p-0.5">
+                  {GROUPING_OPTIONS.map((option) => (
+                    <button
+                      key={option.grouping}
+                      type="button"
+                      onClick={() => setTableGrouping(option.grouping)}
+                      className={`whitespace-nowrap rounded px-2 py-1 text-xs font-medium transition-colors ${
+                        tableGrouping === option.grouping
+                          ? "bg-accent-blue text-white"
+                          : "text-text-secondary hover:bg-bg-page"
+                      }`}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              }
+            >
+              <NarrativesTable
+                rows={rows}
+                onRowClick={handleRowClick}
+                selectedId={selectedId}
+                groupByCategory={tableGrouping === "category"}
+              />
+            </WidgetCard>
+
+            {/* Painel de resumo ao lado da tabela — pedido do usuário
+                2026-07-14: "mostre ao lado direito da tabela o card... de
+                forma que o resumo executivo possa ser lido completamente."
+                Mesmo NarrativeCard do resto do produto (Top N da Visão
+                Geral, grade sem seleção abaixo) — garante que SOV/menções/
+                risco/momentum/resumo/sentimento/tags fiquem consistentes em
+                toda tela (pedido do usuário 2026-07-25). */}
+            {selected && (
+              <div className="flex flex-col gap-3">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-xs font-bold uppercase tracking-wide text-text-tertiary">
+                    Narrativa selecionada
+                  </h3>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedId(null)}
+                    className="text-xs font-medium text-text-secondary hover:text-accent-blue"
+                  >
+                    ✕ Fechar
+                  </button>
+                </div>
+                <NarrativeCard narrative={selected} />
+              </div>
+            )}
           </div>
         )}
 
-        {/* Cards agrupados por categoria (raia por Category-pai) —
-            pedido do usuário 2026-07-25, ver narrative-category-lanes.tsx. */}
-        {!selected && rows.length > 0 && <NarrativeCategoryLanes rows={rows} />}
+        {/* Cards agrupados por categoria (raia por Category-pai) — pedido do
+            usuário 2026-07-25. Some quando há uma linha selecionada (o
+            painel de resumo ao lado da tabela já cobre esse caso) e quando
+            o modo de exibição é "Só tabela". */}
+        {showCardsGrid && !selected && rows.length > 0 && <NarrativeCategoryLanes rows={rows} />}
 
         {/* ✅ Adicionado 2026-07-14 (pedido do usuário: "em todas as
             páginas é importante existir os principais tópicos positivos e

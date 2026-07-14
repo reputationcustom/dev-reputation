@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import Link from "next/link";
 import type { NarrativeRow } from "@reputation/shared-types";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -12,8 +12,8 @@ type SortKey = "title" | "sov_pct" | "trend_score" | "net_sentiment" | "momentum
 // Tooltips por coluna (pedido do usuário 2026-07-13) — mesmo padrão/
 // componente já usado nos 5 KPIs da Visão Geral (metric-card.tsx). Como
 // esta tabela é reusada por Visão Geral/Narrativas/Plataformas/Pautas
-// (ver comentário abaixo), as definições explicam a coluna também. "Narrativa"
-// e "Ação" ficam sem tooltip — autoexplicativas.
+// (ver comentário abaixo), as definições explicam a coluna também.
+// "Narrativa" fica sem tooltip — autoexplicativa.
 const COLUMNS: { key: SortKey; label: string; tooltip?: string }[] = [
   { key: "title", label: "Narrativa" },
   {
@@ -45,30 +45,76 @@ const COLUMNS: { key: SortKey; label: string; tooltip?: string }[] = [
   },
 ];
 
-// Tabela interativa de Narrativas — 7 colunas (Narrativa/SOV/Tendência/
-// Sentimento/Momentum/Risco/Ação), reusada por Visão Geral, Narrativas
-// (lista completa) e Pautas Eleitorais (intelligence-center/executive-overview.md,
+function groupByCategoryLabel(rows: NarrativeRow[]): Array<{ category: string; rows: NarrativeRow[] }> {
+  const groups = new Map<string, NarrativeRow[]>();
+  for (const row of rows) {
+    const key = row.category_label || "Sem categoria";
+    const existing = groups.get(key);
+    if (existing) {
+      existing.push(row);
+    } else {
+      groups.set(key, [row]);
+    }
+  }
+  return Array.from(groups.entries())
+    .map(([category, categoryRows]) => ({ category, rows: categoryRows }))
+    .sort((a, b) => a.category.localeCompare(b.category, "pt-BR"));
+}
+
+// Tabela interativa de Narrativas — 6 colunas (Narrativa/SOV/Tendência/
+// Sentimento/Momentum/Risco), reusada por Visão Geral, Narrativas (lista
+// completa) e Pautas Eleitorais (intelligence-center/executive-overview.md,
 // "Tabela interativa de Narrativas"; narratives-exploration.md: "mesma
-// tabela... sem duplicar regra"). Ordenação default do backend (risk_score
-// desc, depois total_mentions desc) — clique no cabeçalho troca a
-// ordenação (mesma spec: "podendo o usuário ordenar por outras opções").
+// tabela... sem duplicar regra"). ✅ Ordenação default por SOV desc (pedido
+// do usuário, 2026-08-08 — antes vinha crua do backend, risk_score desc) —
+// clique no cabeçalho troca a ordenação (mesma spec: "podendo o usuário
+// ordenar por outras opções"). ✅ Linhas com SOV zerado/nulo são ocultadas
+// (mesmo pedido) — uma Narrativa sem menção nenhuma no período selecionado
+// (comum ao trocar pra um período mais curto, ex: "Diário") não tem SOV
+// nenhum a mostrar.
+// ✅ **Coluna "Ação" removida (2026-07-14)** — pedido do usuário: "não está
+// sendo usual, pois ao clicar no nome abre o modal e na linha destaca o
+// card". O título (`Link` na própria célula "Narrativa") já navega/abre o
+// modal de detalhe; a coluna extra só duplicava essa mesma ação.
 export function NarrativesTable({
   rows,
   emptyMessage = "Nenhuma Narrativa em monitoramento.",
   onRowClick,
   selectedId,
+  groupByCategory = false,
 }: {
   rows: NarrativeRow[];
   emptyMessage?: string;
   onRowClick?: (row: NarrativeRow) => void;
   selectedId?: string | null;
+  // ✅ Adicionado 2026-07-14 (pedido do usuário: "tabela dinâmica...
+  // agrupando categoria e subcategoria ou apenas subcategoria como está
+  // hoje") — quando `true`, agrupa as linhas por `category_label` (mesma
+  // lógica de agrupamento já usada por `NarrativeCategoryLanes`), com um
+  // cabeçalho de grupo expansível/recolhível por categoria. `false`
+  // (default) preserva o comportamento original: lista plana de
+  // Subcategorias, sem agrupamento.
+  groupByCategory?: boolean;
 }) {
-  const [sort, setSort] = useState<{ key: SortKey; direction: "asc" | "desc" } | null>(null);
+  // Default: ordenado por SOV desc (pedido do usuário, 2026-08-08) — antes
+  // não tinha sort inicial (null), a ordem vinha crua do backend
+  // (get_narratives_table, `order by risk_score desc`).
+  const [sort, setSort] = useState<{ key: SortKey; direction: "asc" | "desc" } | null>({ key: "sov_pct", direction: "desc" });
+  const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set());
+
+  // ✅ Oculta Narrativas com SOV zerado/nulo (pedido do usuário, 2026-08-08:
+  // "No mensal aparece uma narrativa, mas quando mudo para o diário tem
+  // menos narrativas... algumas zeradas pq não foram citadas no dia") — uma
+  // Narrativa sem nenhuma menção no período selecionado não tem SOV nenhum a
+  // mostrar, então a linha só confundia (0%/"—" sem contexto). Mesmo
+  // tratamento de "0 é o mesmo que ausência de dado" já usado na célula de
+  // SOV logo abaixo (renderRow) e em ScoreList (charts/breakdown-panel.tsx).
+  const visibleRows = useMemo(() => rows.filter((row) => row.sov_pct !== null && row.sov_pct !== 0), [rows]);
 
   const sortedRows = useMemo(() => {
-    if (!sort) return rows;
+    if (!sort) return visibleRows;
     const factor = sort.direction === "asc" ? 1 : -1;
-    return [...rows].sort((a, b) => {
+    return [...visibleRows].sort((a, b) => {
       const av = a[sort.key];
       const bv = b[sort.key];
       if (av === null || av === undefined) return 1;
@@ -78,7 +124,12 @@ export function NarrativesTable({
       }
       return (Number(av) - Number(bv)) * factor;
     });
-  }, [rows, sort]);
+  }, [visibleRows, sort]);
+
+  const groups = useMemo(
+    () => (groupByCategory ? groupByCategoryLabel(sortedRows) : null),
+    [groupByCategory, sortedRows],
+  );
 
   function handleSort(key: SortKey) {
     setSort((current) => {
@@ -87,13 +138,61 @@ export function NarrativesTable({
     });
   }
 
-  if (rows.length === 0) {
+  function toggleCategory(category: string) {
+    setCollapsedCategories((current) => {
+      const next = new Set(current);
+      if (next.has(category)) {
+        next.delete(category);
+      } else {
+        next.add(category);
+      }
+      return next;
+    });
+  }
+
+  if (visibleRows.length === 0) {
     return <EmptyState message={emptyMessage} />;
+  }
+
+  function renderRow(row: NarrativeRow) {
+    return (
+      <tr
+        key={row.id}
+        onClick={onRowClick ? () => onRowClick(row) : undefined}
+        className={`border-b border-border-subtle-2 last:border-0 ${
+          onRowClick ? "cursor-pointer hover:bg-bg-page" : ""
+        } ${selectedId === row.id ? "bg-accent-blue-bg" : ""}`}
+      >
+        <td className="px-4 py-3 font-medium text-text-primary">
+          <Link
+            href={`/narratives/${row.id}`}
+            onClick={(e) => e.stopPropagation()}
+            className="hover:text-accent-blue hover:underline"
+          >
+            {row.title}
+          </Link>
+        </td>
+        {/* sov_pct nunca é null/0 aqui — visibleRows já filtra essas linhas antes de chegar em renderRow */}
+        <td className="px-4 py-3 text-text-secondary">{row.sov_pct}%</td>
+        <td className="px-4 py-3">
+          <TrendArrow score={row.trend_score} label={row.trend_label} />
+        </td>
+        <td className="px-4 py-3">
+          <SentimentBadge value={row.net_sentiment} label={row.sentiment_label} />
+        </td>
+        <td className="px-4 py-3">
+          <ScoreBar score={row.momentum_score} />
+        </td>
+        <td className="px-4 py-3">
+          <RiskBadge score={row.risk_score} label={row.risk_label} />
+        </td>
+      </tr>
+    );
   }
 
   return (
     <div className="overflow-x-auto">
-      <table className="w-full min-w-[760px] text-left text-sm">
+      <table className="w-full min-w-[680px] text-left text-sm">
         <thead>
           <tr className="border-b border-border-subtle text-xs font-bold uppercase tracking-wide text-text-primary">
             {COLUMNS.map((column) => (
@@ -121,50 +220,37 @@ export function NarrativesTable({
                 </span>
               </th>
             ))}
-            <th className="px-4 py-3 font-bold">Ação</th>
           </tr>
         </thead>
         <tbody>
-          {sortedRows.map((row) => (
-            <tr
-              key={row.id}
-              onClick={onRowClick ? () => onRowClick(row) : undefined}
-              className={`border-b border-border-subtle-2 last:border-0 ${
-                onRowClick ? "cursor-pointer hover:bg-bg-page" : ""
-              } ${selectedId === row.id ? "bg-accent-blue-bg" : ""}`}
-            >
-              <td className="px-4 py-3 font-medium text-text-primary">
-                <Link
-                  href={`/narratives/${row.id}`}
-                  onClick={(e) => e.stopPropagation()}
-                  className="hover:text-accent-blue hover:underline"
-                >
-                  {row.title}
-                </Link>
-              </td>
-              {/* 0 tratado como "—", igual a null (overview.md, "Premissas de visualização de dados", regra 5) */}
-              <td className="px-4 py-3 text-text-secondary">
-                {row.sov_pct === null || row.sov_pct === 0 ? "—" : `${row.sov_pct}%`}
-              </td>
-              <td className="px-4 py-3">
-                <TrendArrow score={row.trend_score} label={row.trend_label} />
-              </td>
-              <td className="px-4 py-3">
-                <SentimentBadge value={row.net_sentiment} label={row.sentiment_label} />
-              </td>
-              <td className="px-4 py-3">
-                <ScoreBar score={row.momentum_score} />
-              </td>
-              <td className="px-4 py-3">
-                <RiskBadge score={row.risk_score} label={row.risk_label} />
-              </td>
-              <td className="px-4 py-3">
-                <Link href={`/narratives/${row.id}`} className="text-sm font-medium text-accent-blue hover:underline">
-                  Ver
-                </Link>
-              </td>
-            </tr>
-          ))}
+          {groups
+            ? groups.map(({ category, rows: groupRows }) => {
+                const isExpanded = !collapsedCategories.has(category);
+                return (
+                  <Fragment key={category}>
+                    <tr className="border-b border-border-subtle bg-bg-page">
+                      <td colSpan={COLUMNS.length} className="px-4 py-2">
+                        <button
+                          type="button"
+                          onClick={() => toggleCategory(category)}
+                          aria-expanded={isExpanded}
+                          className="flex w-full items-center gap-2 text-left hover:opacity-80"
+                        >
+                          <span className="font-bold text-text-primary">{category}</span>
+                          <span className="rounded-full bg-bg-card px-2 py-0.5 text-xs font-semibold text-text-secondary">
+                            {groupRows.length}
+                          </span>
+                          <span className="ml-auto text-xs text-text-tertiary" aria-hidden>
+                            {isExpanded ? "▲" : "▼"}
+                          </span>
+                        </button>
+                      </td>
+                    </tr>
+                    {isExpanded && groupRows.map((row) => renderRow(row))}
+                  </Fragment>
+                );
+              })
+            : sortedRows.map((row) => renderRow(row))}
         </tbody>
       </table>
     </div>

@@ -100,10 +100,54 @@ export const SENTIMENT_LABEL: Record<DominantSentiment, string> = {
   negative: "Negativo",
 };
 
+// Tipo de Entidade (entities.type — CLAUDE.md/entities/data-model.md) — usado
+// pela guia "Por Entidade" (redesenho em 2 guias, 2026-08-08) pra generalizar
+// além de partido: pessoa, partido, veículo de imprensa, instituição,
+// empresa, movimento, outro. Ordem fixa (não por valor) — mesma convenção de
+// IDEOLOGY_ORDER, pra a leitura não pular de posição entre recargas.
+export const ENTITY_TYPE_ORDER = ["person", "party", "media_outlet", "institution", "company", "movement", "other"] as const;
+export type EntityType = (typeof ENTITY_TYPE_ORDER)[number];
+
+export const ENTITY_TYPE_LABEL: Record<EntityType, string> = {
+  person: "Pessoa",
+  party: "Partido",
+  media_outlet: "Veículo de Imprensa",
+  institution: "Instituição",
+  company: "Empresa",
+  movement: "Movimento",
+  other: "Outro",
+};
+
+// Paleta fixa (não hash-based, diferente de partido) — só 7 valores
+// conhecidos de antemão (o enum Postgres entity_type), então uma legenda com
+// itens fixos é possível e mais clara que uma paleta aberta.
+export const ENTITY_TYPE_HEX: Record<EntityType, string> = {
+  person: "#2f6fed",
+  party: "#9b59b6",
+  media_outlet: "#f5a623",
+  institution: "#17a2b8",
+  company: "#d4478e",
+  movement: "#6d4c41",
+  other: "#8a8f98",
+};
+
+function isEntityType(value: string | null): value is EntityType {
+  return value !== null && (ENTITY_TYPE_ORDER as readonly string[]).includes(value);
+}
+
+export function entityTypeLabel(value: string | null): string | null {
+  return isEntityType(value) ? ENTITY_TYPE_LABEL[value] : value;
+}
+
+export function entityTypeHex(value: string | null): string | null {
+  return isEntityType(value) ? ENTITY_TYPE_HEX[value] : null;
+}
+
 // Dimensão ativa no controle "Colorir por" (toolbar da página /authors) —
 // controla a cor do avatar/dot em AuthorsList, na dispersão e no painel de
-// detalhe ao mesmo tempo.
-export type ColorByMode = "ideologia" | "partido" | "sentimento";
+// detalhe ao mesmo tempo. "entity_type" só faz sentido na guia "Por
+// Entidade" (redesenho em 2 guias, 2026-08-08).
+export type ColorByMode = "ideologia" | "partido" | "sentimento" | "entity_type";
 
 export const MUTED_HEX = "#c9cdd3"; // mesmo neutral-gray de _design-tokens.md
 
@@ -116,7 +160,17 @@ export function authorColorHex(author: AuthorRow, mode: ColorByMode): string {
     const s = dominantSentiment(author);
     return s ? SENTIMENT_HEX[s] : MUTED_HEX;
   }
+  if (mode === "entity_type") return (author.entity_type && entityTypeHex(author.entity_type)) || MUTED_HEX;
   return (author.entity_ideologia && ideologyHex(author.entity_ideologia)) || MUTED_HEX;
+}
+
+// Rótulo curto pra exibir sob o nome do autor quando não há `entity_cargo`
+// (pessoas) — usa o `tag_value` de `segment` (media_outlet/company, ver
+// entities/data-model.md, seed de institutos/veículos 2026-07-14) como
+// aproximação de "o que essa Entity é/faz". Nunca inventa um valor — `null`
+// quando a Entity não tem essa tag.
+export function entitySegment(author: Pick<AuthorRow, "entity_tags">): string | null {
+  return author.entity_tags.find((t) => t.tag_type === "segment")?.tag_value ?? null;
 }
 
 export function authorInitials(name: string): string {

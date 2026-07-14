@@ -467,17 +467,20 @@ Qualquer usuário autenticado, membro de ao menos uma organização (ver
   de substituir o indicador de Velocidade por uma tendência estatística
   (aumentando/diminuindo/estável) — ver `sql-aggregation.md`, "Tendência",
   para a fórmula completa (regressão linear de 14 dias, não mais
-  snapshot 3h-vs-3h):
+  snapshot 3h-vs-3h). ✅ **6 colunas (2026-07-14)** — coluna "Ação"
+  removida (pedido do usuário: "não está sendo usual, pois ao clicar no
+  nome abre o modal e na linha destaca o card") — o título (coluna
+  "Narrativa") já é o link que abre o detalhe/modal, a coluna extra só
+  duplicava essa ação:
 
   | Coluna | Fonte | Valor exibido |
   |---|---|---|
-  | Narrativa | `narratives.title` | direto |
+  | Narrativa | `narratives.title` | direto — também é o link de navegação/abertura do modal (ver `narratives-exploration.md`) |
   | SOV | `reporting.narratives_overview.sov_percent` | % — Share of Voice (Narrativa), ver `_glossary.md` |
   | Tendência | `get_narratives_table().trend_score` | score 0-100 + seta/rótulo (3 faixas — ver tabela abaixo). Tendência estatística dos últimos 14 dias (regressão sobre o volume diário), **independente** do período selecionado no header |
   | Sentimento | `reporting.narratives_overview.net_sentiment` | score -100 a +100 + rótulo/cor (7 faixas — ver tabela abaixo) |
   | Momentum | `get_narratives_table().momentum_score` | score 0-100 (5 faixas — ver tabela abaixo). Força/relevância atual (volume+engajamento+autores+alcance), comparando o período selecionado no header contra o período anterior de igual duração |
   | Risco | `get_narratives_table().risk_score` | score 0-100 + rótulo/cor (4 faixas — ver tabela abaixo) |
-  | Ação | — | link "Ver" → `/narratives/[id]` (ver [narratives-exploration.md](narratives-exploration.md)) |
 
   **Bandas e cores** (mapeamento exato de cor em
   [_design-tokens.md](../_design-tokens.md)):
