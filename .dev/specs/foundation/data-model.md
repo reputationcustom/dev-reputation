@@ -2,7 +2,7 @@
 tipo: data-model
 módulo: foundation
 status: implementado
-atualizado: 2026-07-23
+atualizado: 2026-08-06
 ---
 
 > ✅ **Status corrigido 2026-07-14** (premissa do projeto, ver CLAUDE.md
@@ -1649,9 +1649,31 @@ $$;
 
 ## Função: `refresh_narrative_metrics`
 
-Chamada direto pelo `pg_cron` (sem Edge Function). Desde `20260711010000`,
-uma via só — sem agregado oficial da Brandwatch (`bw_category_id` nulo),
-sem `narrative_metrics`.
+Chamada pelo `pg_cron` (sem Edge Function própria) **e**, desde
+2026-08-06, também via `.rpc(...)` a partir de `bw-sync` (ver nota
+abaixo) — duas vias de chamada, mesma function, `upsert` idempotente,
+sem conflito entre elas. Desde `20260711010000`, uma via de dado só —
+sem agregado oficial da Brandwatch (`bw_category_id` nulo), sem
+`narrative_metrics`.
+
+> ⚠️ **Bug de produção corrigido (2026-08-06)** — `get_narratives_table`
+> (a maior parte do que o painel de fato mostra: tabela de Narrativas,
+> cards de SOV/sentimento/momentum/tendência/risco) lê exclusivamente
+> desta tabela, nunca de `bw_query_metrics_daily` diretamente — então
+> ficava presa ao atraso de até 59min do `pg_cron` horário (ver "`pg_cron`
+> — agendamentos deste módulo" abaixo) mesmo quando `bw-sync` já tinha
+> sincronizado dado novo minutos antes. Usuário reportou o sintoma
+> exatamente assim: "a integração rodou ok, mas os dados não foram
+> refletidos no painel" logo após rodar `bw-sync` manualmente.
+> `get_metrics_cards` (KPIs de topo) não tinha esse problema — lê
+> `bw_query_metrics_daily` direto. Corrigido sem migration:
+> `refreshNarrativeMetricsForToday()` (`bw-sync/index.ts`) chama esta
+> mesma function via `.rpc(...)` pra uma janela estreita (hoje + ontem —
+> cobre virada de fuso sem reprocessar os ~210 dias que o cron horário já
+> cobre) assim que a fase `daily_metrics` grava dado novo
+> (`result.didWork`) — ver `sync-brandwatch.md` e `CLAUDE.md`, "Brandwatch
+> sync model", pro relato completo, incluindo o bug irmão (checagem de
+> frescor truncada pelo `max_rows` do PostgREST) corrigido na mesma sessão.
 
 > ⚠️ **A definição completa da função vive só na migration**
 > (`supabase/migrations/20260711080000_narrative_sov_scoped_by_query.sql`,
@@ -1828,7 +1850,8 @@ revoke all on schema public from bi_reader;
 | Job | Frequência | Ação |
 |---|---|---|
 | `bw-sync-heartbeat` (Edge Function) | a cada 15min (heartbeat fixo, infraestrutura) | ✅ **agendado em `20260711020000`** — `select net.http_post(url := 'https://ktvyqpogfnowuqmjybvu.supabase.co/functions/v1/bw-sync', ...)` (URL hardcoded, não é segredo — ver nota acima). Cadência de negócio real (quando de fato minta token/chama a Brandwatch) é `BW_SYNC_INTERVAL_HOURS` (secret da Edge Function, default `3`) — ver `sync-brandwatch.md`, passo 0.5b. Nenhum passo manual pós-deploy necessário |
-| `refresh_narrative_metrics_hourly` | de hora em hora | ✅ **agendado em `20260710030000`** — `select refresh_narrative_metrics(current_date - 210, current_date);`. Não chama a Brandwatch (só agrega dado já sincronizado), então não tinha o mesmo bloqueio de `bw-sync`. Janela larga (210 dias) hoje porque o backfill de `bw-sync` ainda está em andamento; revisar pra uma janela mais estreita quando isso estabilizar |
+| `refresh_narrative_metrics_hourly` | de hora em hora | ✅ **agendado em `20260710030000`** — `select refresh_narrative_metrics(current_date - 210, current_date);`. Não chama a Brandwatch (só agrega dado já sincronizado), então não tinha o mesmo bloqueio de `bw-sync`. Janela larga (210 dias) hoje porque o backfill de `bw-sync` ainda está em andamento; revisar pra uma janela mais estreita quando isso estabilizar. ⚠️ Continua sendo a **rede de segurança** — a chamada reativa abaixo cobre o caso comum (fase `daily_metrics` acabou de gravar dado), este cron continua cobrindo tudo mais (correções em dias antigos, pairs que não passaram por `daily_metrics` neste ciclo, etc.) |
+| _(sem cron próprio)_ `refresh_narrative_metrics` via `bw-sync` | a cada vez que a fase `daily_metrics` grava dado novo | ✅ **corrigido 2026-08-06** — `bw-sync/index.ts`'s `refreshNarrativeMetricsForToday()` chama `refresh_narrative_metrics(ontem, hoje)` via `.rpc(...)` logo após `runDailyMetricsStep()` retornar `didWork: true`. Fecha o atraso de até 59min entre "`bw-sync` sincronizou" e "o painel reflete" que existia por `narrative_metrics` depender só do cron horário acima, desacoplado do ciclo real de `bw-sync` — ver `sync-brandwatch.md` |
 
 ## Checklist antes de aplicar a migration
 

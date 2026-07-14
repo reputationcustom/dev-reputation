@@ -5903,6 +5903,70 @@ funcionou é `sync_cursors.next_step` deixando de ficar preso em
 (`hourly_metrics`/`topics`/`top_authors`/etc.) voltando a aparecer nos
 logs `[bw-sync] invocation:step_start`.
 
+**Follow-up, mesmo dia**: usuário rodou o pipeline manualmente depois do
+fix acima, colou um novo log confirmando que o ciclo agora completa de
+verdade — `daily_metrics` já tinha passado, e o log mostra
+`top_authors`→`top_tweeters`→`author_enrichment`→`top_sites`→
+`top_shared_sites`→`demographics`→`full_text_enrichment`→`sov`→
+`invocation:step_done {"cycleComplete":true}`, seguido de
+`invocation:no_pair_due` na heartbeat seguinte (o par ficou "não devido"
+por `BW_SYNC_INTERVAL_HOURS`, exatamente o comportamento esperado de um
+ciclo que fechou) — ou seja, o fix anterior funcionou, o pipeline agora
+sai de `daily_metrics` e completa o ciclo inteiro. Mesmo assim, o
+usuário reportou "a integração rodou ok, mas os dados não foram
+refletidos no painel".
+
+**Segunda causa raiz, independente da primeira**: `get_narratives_table`
+(o que abastece a tabela de Narrativas, os cards com SOV/sentimento/
+momentum/tendência/risco, "Top 3 Narrativas" — a maior parte do conteúdo
+visível do painel) lê de `narrative_metrics`, **não** direto de
+`bw_query_metrics_daily`. `narrative_metrics` só é populada por
+`refresh_narrative_metrics()`, que roda num `pg_cron` **próprio e
+totalmente desacoplado** do de bw-sync:
+`cron.schedule('refresh_narrative_metrics_hourly', '0 * * * *', ...)`
+(migration `20260710030000`) — topo de cada hora, UTC, sem nenhuma
+relação com quando `bw-sync` de fato termina um ciclo. `get_metrics_cards`
+(os KPIs de topo) é diferente — lê `bw_query_metrics_daily` diretamente,
+então esses já refletiam o dado novo na hora; só a parte do painel que
+depende de `narrative_metrics` ficava presa ao valor da última execução
+do cron horário. Rodando manualmente às 14:34 UTC (log timestamp
+convertido), o último `refresh_narrative_metrics_hourly` tinha rodado às
+14:00 — o próximo só às 15:00 — até 26 minutos de defasagem entre "a
+integração rodou" e "o painel principal reflete isso", exatamente o
+sintoma relatado. Isso nunca aparecia em uso normal (heartbeat de 15min
++ `BW_SYNC_INTERVAL_HOURS=3h` default) porque o atraso de até 59min do
+cron horário sempre ficava escondido dentro da janela de 3h entre ciclos
+— só fica visível quando alguém roda manualmente e confere o painel
+logo em seguida, exatamente o que o usuário fez.
+
+**Fix** (sem migration — só `bw-sync/index.ts`): `refreshNarrativeMetricsForToday()`,
+nova function que chama `refresh_narrative_metrics()` via `.rpc(...)`
+para uma janela estreita (hoje + ontem, cobre virada de fuso sem
+reprocessar os ~210 dias que o cron horário já cobre) — chamada logo
+depois que a fase `daily_metrics` escreve dado de verdade
+(`result.didWork`, no dispatcher de `runSyncInvocation`). Sem custo de
+rate limit (a function não chama a Brandwatch, só agrega dado já
+sincronizado — mesma justificativa já usada pro agendamento horário
+existente) e sem conflito com `refresh_narrative_metrics_hourly` (mesma
+function, `upsert` idempotente por `(narrative_id, metric_date, period)`
+— os dois convivem, o cron horário continua como rede de segurança pra
+qualquer pair/dia que essa chamada reativa não cubra). Uma falha nessa
+chamada é logada (`refreshNarrativeMetricsForToday:error`) e nunca
+derruba a invocação — `bw_query_metrics_daily` já está correto nesse
+ponto (o que importa pra integridade do dado); o painel só volta a
+ficar sujeito ao atraso do cron horário nesse caso específico, que já
+era o comportamento antes deste fix.
+
+**Verificação**: `npx tsc --noEmit` e `npm run build` passam limpos (21
+rotas, mudança Deno-only). Sem migration nesta parte — `refresh_narrative_metrics`
+já existe e já é chamável via RPC (nenhum `revoke`/`grant` restringindo
+seu acesso em nenhuma migration). Não testado contra um Supabase real
+nesta sessão — mesma limitação recorrente de toda sessão sem
+credenciais de deploy; o sinal de que funcionou é o painel refletir uma
+sincronização manual em segundos, não em até 59min, e o log
+`[bw-sync] refreshNarrativeMetricsForToday:done` aparecendo logo após
+`invocation:step_done {"step":"daily_metrics"}` nos logs de produção.
+
 ## Directory structure
 
 ```

@@ -155,10 +155,20 @@ CRUD de Narrativas em nenhuma versão do produto** — ver "Interface (UI)" e
    complemento **qualitativo** de uma Narrativa que já tem `bw_category_id`
    (ex: palavras-chave extras pra contexto), nunca como mecanismo pra criar
    uma Narrativa sem Category — ver Regras de negócio.
-2. `refresh_narrative_metrics()` roda diariamente via `pg_cron`
-   (ver [data-model.md](data-model.md)): copia de `bw_query_metrics_daily`
+2. `refresh_narrative_metrics()` roda de hora em hora via `pg_cron`
+   (`refresh_narrative_metrics_hourly`, `'0 * * * *'`) e, desde
+   2026-08-06, também logo após a fase `daily_metrics` de `bw-sync`
+   gravar dado novo — ver [data-model.md](data-model.md), "`pg_cron` —
+   agendamentos deste módulo": copia de `bw_query_metrics_daily`
    (`source = 'bw_aggregate'`) para toda Narrativa (sempre tem
-   `bw_category_id`, ver item 1). ⚠️ **Nota de consistência**: a versão
+   `bw_category_id`, ver item 1). ⚠️ **Correção 2026-08-06**: até então
+   esta linha dizia "roda diariamente" — descrição sempre incorreta desde
+   que o cron foi agendado em `20260710030000` (é `'0 * * * *'`, de hora
+   em hora, não diário); só ficou visível como um problema real quando um
+   usuário rodou `bw-sync` manualmente e reportou que o painel não
+   refletia o novo dado — o atraso real (até 59min entre execuções do
+   cron) era maior do que essa descrição sugeria, e sem relação alguma com
+   quando `bw-sync` de fato termina um ciclo. ⚠️ **Nota de consistência**: a versão
    anterior desta spec ainda descrevia aqui um fallback pra
    `source = 'mentions_sample'` (agregação local sobre `narrative_signals`
    quando não há `bw_category_id`) — esse caminho **nunca existe mais**

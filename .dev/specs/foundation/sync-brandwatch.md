@@ -3,7 +3,7 @@ tipo: feature-spec
 módulo: foundation
 funcionalidade: sync-brandwatch
 status: implementado
-atualizado: 2026-07-23
+atualizado: 2026-08-06
 ---
 
 # Sync Brandwatch
@@ -15,6 +15,46 @@ atualizado: 2026-07-23
 > implementação/bugs corrigidos (fases, rate limit, backfill, etc). Único
 > gap real restante é não-bloqueante: cache do token em Vault, ver
 > `_pending.md` "Gaps técnicos" #5.
+
+> ⚠️ **Dois bugs de produção reais corrigidos (2026-08-06)**, reportados
+> pelo usuário via log colado do Supabase ("os dados não estão sendo
+> atualizados completamente, o pipeline da bw_sync não executa
+> completamente" e, no dia seguinte após o fix, "a integração rodou ok mas
+> os dados não foram refletidos no painel") — ver `CLAUDE.md`, "Brandwatch
+> sync model", pro relato completo de causa raiz/investigação:
+> 1. **`fetchDailySentimentFreshness()` truncada pelo `max_rows=1000` do
+>    PostgREST** — a checagem de frescor por Narrativa da fase
+>    `daily_metrics` (seção "Otimização definitiva de `daily_metrics`
+>    (2026-07-22)" abaixo, item 2, `MAX_SENTIMENT_TARGETS_PER_INVOCATION`/
+>    `DAILY_SENTIMENT_FRESH_WINDOW_MS`) fazia um `select` multi-linha sem
+>    `ORDER BY`/`LIMIT` sobre `bw_query_metrics_daily` — para uma
+>    organização com mais de ~5 Narrativas (8+ categorias × ~196 dias de
+>    histórico já ultrapassa 1000 linhas), a resposta era silenciosamente
+>    truncada pelo PostgREST, sem garantia de quais linhas sobreviviam ao
+>    corte. Resultado: o cálculo de frescor ficava sistematicamente errado
+>    para as categorias afetadas — elas nunca eram marcadas "fresh", então
+>    a fase `daily_metrics` reprocessava para sempre as mesmas 8 primeiras
+>    categorias (`MAX_SENTIMENT_TARGETS_PER_INVOCATION`), nunca alcançava
+>    as demais, e nunca liberava `stayOnStep` — o pipeline inteiro ficava
+>    preso em `daily_metrics`, sem nunca alcançar `hourly_metrics`/
+>    `topics`/`top_authors`/etc. Corrigido (migration `20260806010000`)
+>    substituindo a `select` bruta por uma function agregada no Postgres
+>    (`bw_query_metrics_daily_category_freshness`, `GROUP BY category_id`
+>    — devolve no máximo `len(category_ids)` linhas, imune ao corte).
+> 2. **`narrative_metrics` desacoplada de `bw-sync`, atraso de até 59min
+>    depois de um ciclo fechar** — `get_narratives_table` (a maior parte
+>    do que o painel de fato mostra) lê de `narrative_metrics`, populada
+>    só por `refresh_narrative_metrics()` no seu próprio `pg_cron`
+>    (`'0 * * * *'`, topo de cada hora — ver `data-model.md`, "`pg_cron` —
+>    agendamentos deste módulo"), sem nenhuma relação com quando `bw-sync`
+>    de fato termina um ciclo. `get_metrics_cards` (KPIs de topo) já lia
+>    `bw_query_metrics_daily` direto, então já refletia dado novo na hora
+>    — só a tabela/cards de Narrativas ficavam presos ao valor da última
+>    execução do cron horário. Corrigido (sem migration): nova
+>    `refreshNarrativeMetricsForToday()` chama `refresh_narrative_metrics()`
+>    via RPC pra uma janela estreita (hoje + ontem) assim que a fase
+>    `daily_metrics` escreve dado novo — o cron horário continua existindo
+>    como rede de segurança, os dois convivem via `upsert` idempotente.
 
 ## Objetivo
 
@@ -192,6 +232,30 @@ de 30/10min). Duas correções, sem migration (mudança só na Edge Function):
    `last_synced_at` continua só avançando quando o ciclo INTEIRO (as 16
    fases) fecha, então um `daily_metrics` que ainda está espalhando o
    burst do sentimento não fecha o ciclo prematuramente.
+
+> ⚠️ **Bug real na checagem de frescor do item 2, corrigido 2026-08-06** —
+> `fetchDailySentimentFreshness()` (que decide quais Narrativas pular
+> porque já sincronizaram há menos de `DAILY_SENTIMENT_FRESH_WINDOW_MS`)
+> fazia `select category_id, synced_at from bw_query_metrics_daily where
+> category_id in (...)`, **sem `ORDER BY`/`LIMIT`**, computando o
+> `MAX(synced_at)` por categoria no client. `bw_query_metrics_daily`
+> acumula histórico indefinidamente (~196 dias/categoria) e
+> `supabase/config.toml` fixa `max_rows = 1000` (padrão do PostgREST) — com
+> mais de ~5 categorias essa query já ultrapassa 1000 linhas e é
+> silenciosamente truncada, sem garantia de quais linhas sobrevivem ao
+> corte. Efeito real observado em produção: para uma organização com mais
+> de 8 Narrativas, o cálculo de frescor ficava sistematicamente errado
+> para as categorias afetadas pelo corte — elas nunca eram marcadas
+> "fresh", então esta fase reprocessava para sempre as mesmas primeiras 8
+> categorias, nunca alcançava as demais, e nunca liberava `stayOnStep` —
+> o pipeline inteiro ficava preso em `daily_metrics`. Corrigido (migration
+> `20260806010000`): nova function agregada
+> `bw_query_metrics_daily_category_freshness(p_project_id, p_query_id,
+> p_category_ids)` — `GROUP BY category_id` no Postgres devolve no máximo
+> `len(category_ids)` linhas, imune ao `max_rows` independentemente de
+> quanto histórico a tabela acumule. `fetchDailySentimentFreshness()`
+> passou a chamar essa function via `.rpc(...)` em vez do `select` bruto.
+> Ver `CLAUDE.md`, "Brandwatch sync model", pro relato completo.
 
 **Estado vive inteiro no Postgres, nunca em memória do isolate** — por
 isso uma invocação **manual** (clique em "Invoke" no Dashboard do

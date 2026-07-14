@@ -3049,6 +3049,42 @@ async function runDailyMetricsStep(
   return { didWork: true };
 }
 
+// ⚠️ 2026-08-06: bug real de produção — usuário rodou bw-sync manualmente,
+// confirmou pelos logs que a fase `daily_metrics` completou (escrevendo em
+// `bw_query_metrics_daily`), mas o painel continuava mostrando dado velho.
+// Causa: `narrative_metrics` (o que `get_narratives_table` de fato lê —
+// SOV/sentimento/momentum/tendência/risco de cada Narrativa, a maior parte
+// do conteúdo do painel) só é populada por `refresh_narrative_metrics()`,
+// agendada num `pg_cron` PRÓPRIO e totalmente desacoplado do de bw-sync
+// (`refresh_narrative_metrics_hourly`, `'0 * * * *'` — topo de cada hora,
+// migration `20260710030000`). `get_metrics_cards` (os KPIs de topo) lê
+// `bw_query_metrics_daily` diretamente e por isso já refletia o novo dado
+// na hora — mas a tabela de Narrativas/cards, que é a maior parte do que
+// aparece no painel, ficava presa ao valor da última execução do cron
+// horário, até 59min atrás de qualquer sync manual ou fora do horário
+// cheio. Fix: depois que `daily_metrics` escreve dado de verdade
+// (`didWork`), o próprio bw-sync chama `refresh_narrative_metrics()` para
+// uma janela estreita (hoje + ontem, cobre virada de fuso sem reprocessar
+// os ~210 dias que o cron horário já cobre) — sem custo de rate limit
+// (não chama a Brandwatch, só agrega dado já sincronizado, mesma
+// justificativa já usada pro próprio agendamento horário) e sem competir
+// com o `refresh_narrative_metrics_hourly` (mesma function, `upsert`
+// idempotente, os dois convivem sem conflito).
+async function refreshNarrativeMetricsForToday(supabase: SupabaseClient, now: Date): Promise<void> {
+  const today = toDateOnly(now.toISOString());
+  const yesterday = toDateOnly(new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString());
+  const { error } = await supabase.rpc("refresh_narrative_metrics", { p_from: yesterday, p_to: today });
+  if (error) {
+    // Nunca derruba a invocação por isso — bw_query_metrics_daily já está
+    // correto (o que importa pra correção dos dados); só o painel fica
+    // mais um pouco atrasado até o próximo cron horário, o que já era o
+    // comportamento antes deste fix.
+    log("refreshNarrativeMetricsForToday:error", { error: error.message });
+    return;
+  }
+  log("refreshNarrativeMetricsForToday:done", { from: yesterday, to: today });
+}
+
 // =========================================================================
 // Passo 6.3e — grão horário (event-radar / gráficos de tendência), especificado
 // 2026-07-13 (.dev/specs/_pending.md, gap técnico #2 de foundation).
@@ -3841,6 +3877,11 @@ async function runSyncInvocation(supabase: SupabaseClient, invocationStartedAt: 
           break;
         case "daily_metrics":
           result = await runDailyMetricsStep(supabase, token, projectId, queryId, categoryTargets, metricsStartDate, now);
+          // ✅ 2026-08-06: refresca narrative_metrics (o que o painel de
+          // verdade lê) imediatamente após bw_query_metrics_daily receber
+          // dado novo, em vez de esperar até 59min pelo cron horário
+          // desacoplado — ver refreshNarrativeMetricsForToday().
+          if (result.didWork) await refreshNarrativeMetricsForToday(supabase, now);
           break;
         case "hourly_metrics":
           result = await runHourlyMetricsStep(supabase, token, projectId, queryId, now);
