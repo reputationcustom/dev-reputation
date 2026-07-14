@@ -3768,7 +3768,7 @@ none of the 7 changes above (renamed widget, chart labels, table headers,
 the Brazil map's actual rendering/colors, the new `/authors` page) were
 visually confirmed in a real browser.
 
-## Módulo `event-radar` (Sprint 3) — 1.1 `detection-engine`, 1.2 `deduplication-grouping`, 1.3 `severity`, 1.6 `volume-limits` e 1.4 `agent-orchestrator` implementados (2026-07-27 a 2026-07-31)
+## Módulo `event-radar` (Sprint 3) — 1.1-1.4/1.6 implementados, 1.5 schema pronto sem UI (2026-07-27 a 2026-08-01)
 
 Primeiro código real do módulo `event-radar` (Sprint 3, `.dev/specs/event-radar/`
 — até esta sessão, 100% `rascunho`, nenhuma tabela existia). Usuário pediu
@@ -4072,9 +4072,10 @@ etapa deste módulo que faz chamada de IA (1.1/1.2/1.3/1.6 são 100% SQL,
   descrita no próprio "Fluxo principal" desse arquivo, então tratada como
   fora de escopo) e `feed_event_feedback`/`schema-integration.md` item 2
   (retroalimentação pós-publicação do analista — precisa de UI própria,
-  não pedida ainda). `schema-integration.md` fica com status `rascunho`
-  só por causa desse item 2 — seu item 1 (escrita em `feed_events`) já foi
-  implementado como parte do próprio código de 1.4.
+  não pedida ainda — ver "1.5 `feed_event_feedback`" abaixo pro schema,
+  adicionado numa sessão seguinte). `schema-integration.md` continua
+  `rascunho` — seu item 1 (escrita em `feed_events`) já foi implementado
+  como parte do próprio código de 1.4.
 - **Efeito colateral real**: `aggregated-metrics`'s `get_active_highlights`
   (bloco `highlights` do envelope, `_pending.md` gap #8) já pode ser ligada
   agora — `feed_events` existe e está sendo populada pela primeira vez.
@@ -4086,6 +4087,44 @@ etapa deste módulo que faz chamada de IA (1.1/1.2/1.3/1.6 são 100% SQL,
   contra ambiente de verdade. `npm:@anthropic-ai/sdk` importado sem pin de
   versão (Deno resolve pra latest em build) — revisar se um deploy futuro
   quebrar por breaking change do SDK.
+
+### 1.5 `feed_event_feedback` (2026-08-01) — schema pronto, sem UI
+
+Pedido do usuário na sessão seguinte: "1.6" (já implementada — esclarecido
+no chat) → escolheu seguir com `feed_event_feedback` (`schema-integration.md`
+item 2) dentre as duas pendências reais restantes do módulo (a outra era
+`aggregated-metrics-integration.md`, ainda intocada). Migration
+`20260801000000_event_radar_feed_event_feedback.sql` — só schema/RLS,
+schema exatamente como já especificado em `data-model.md`.
+
+- **Sem Edge Function, de propósito** — diferente de praticamente toda
+  outra escrita deste projeto (que passa por Edge Function mesmo em casos
+  simples), `data-model.md` já especificava este INSERT como direto do
+  cliente: `feedback_type` restrito por `CHECK` constraint (não enum
+  Postgres — extensibilidade sem migration, mesma razão de
+  `communication_types`), `user_id = auth.uid()` garantido pela policy de
+  `INSERT`, isolamento de organização via subquery no FK pai
+  (`feed_event_id`). Toda validação cabe em RLS/`CHECK` (Princípio técnico
+  2 permite isso), então não havia necessidade real de uma função nova —
+  primeira tabela do projeto com esse padrão de escrita.
+- **Sem UPDATE/DELETE** — "um feedback é um registro imutável"
+  (`data-model.md`), sem exceção.
+- **Nenhuma UI existe pra usar isso ainda** — nem pra dar feedback, nem
+  pra sequer ver um card de `feed_events` em primeiro lugar. O bloco
+  `highlights` do envelope (`get_active_highlights`, `aggregated-metrics`,
+  `_pending.md` gap #8) continua sem function SQL — sem ele, nenhuma
+  página do frontend renderiza um card de `feed_events`, então não há
+  onde pendurar um botão de "dar feedback" hoje. `schema-integration.md`
+  continua `rascunho` por causa disso — schema pronto pros 2 itens do
+  arquivo, UI pendente pros 2.
+- **`data-model.md` passou a `implementado`** — as 3 entidades do arquivo
+  (`radar_staging_events`, `feed_events`, `feed_event_feedback`) têm
+  migration agora, mesmo critério já usado antes neste arquivo (status
+  reflete o schema, não necessariamente toda UI/consumidor rio abaixo).
+- **Verificação**: migration revisada manualmente linha por linha — sem
+  acesso a um Supabase real nesta sessão (mesma limitação recorrente),
+  não executada contra um banco de verdade. Sem componente TypeScript/
+  frontend (SQL puro, sem Edge Function).
 
 ### Módulo `entities` — spec completa + `data-model.md` implementado + seed real de partidos/parlamentares (2026-07-13)
 
@@ -4234,6 +4273,54 @@ commitado (parse por nome do deputado), não regerados, para garantir que
 cada conta aponta pra Entity certa. Ver `entities/data-model.md` para o
 detalhe completo.
 
+**Follow-up, mesmo dia**: pedido do usuário: "Em entities renomeie o campo
+descrição para cargo, inclua um novo campo chamado partido, crie um campo
+chamado ideologia (popule com direita, esquerda, centro, centro direita,
+centro esquerda) e reorganize os dados nessas novas colunas." Migration
+`supabase/migrations/20260731050000_entities_cargo_partido_ideologia.sql`:
+
+- `alter table entities rename column description to cargo` — dado
+  preservado, coluna não recriada.
+- 2 colunas novas: `partido text`, `ideologia text` (+ índices).
+- **Reorganização, não nova busca**: todo o dado já estava semeado pelas 2
+  migrations anteriores. `cargo`/`partido` dos 593 parlamentares migrados
+  de `entity_tags` (`office`/`party`, criados pelo seed original) para as
+  colunas novas via `UPDATE ... FROM entity_tags`; as 2 linhas de
+  `entity_tags` correspondentes foram **removidas** depois (dado vive só
+  num lugar, não duplicado — `state` continua em `entity_tags`, fora do
+  pedido). Os 21 partidos tiveram `cargo` zerado (a coluna guardava o nome
+  completo do partido antes da renomeação — ex: "Movimento Democrático
+  Brasileiro" — sem sentido numa coluna chamada "cargo").
+- **`ideologia`**: diferente de `cargo`/`partido`/`estado` (direto da
+  Câmara/Senado), esta é a primeira coluna do módulo sem fonte oficial em
+  lote — decisão consciente de reverter a cautela da sessão anterior
+  ("`political_spectrum`... classificação contestável — não apresentada
+  como fato sem fonte verificada"), porque agora é um pedido explícito e
+  direto do usuário, não mais uma inferência própria. Os 21 partidos foram
+  classificados por caracterização amplamente citada na ciência política/
+  imprensa brasileira (linha editorial, composição de blocos parlamentares,
+  posicionamento em pautas econômicas/de costumes — não uma fonte única
+  verificável como as migrations anteriores), documentado explicitamente
+  como classificação de melhor esforço/revisável no comentário da migration
+  e em `data-model.md`, não apresentado como dado oficial. Os 593
+  parlamentares **herdam a ideologia do próprio partido** (`UPDATE ...`
+  casando `entities.partido` com o `name` da linha `type = 'party'`
+  correspondente) — não é uma avaliação individual por parlamentar.
+- Verificação extra desta migration (além do padrão de sempre — sem vírgula
+  solta, etc.): confirmado **programaticamente** (script Node, não só por
+  leitura) que as 21 siglas usadas na classificação de ideologia batem
+  exatamente, caractere a caractere incl. acentos (`MISSÃO`/`UNIÃO`), com
+  as 21 siglas já gravadas pelo seed anterior — 0 divergências.
+- Specs atualizadas em conjunto: `entities/data-model.md` (tabela de
+  campos, vocabulário de `entity_tags` sem `party`/`office`/
+  `political_spectrum`), `entities/entity-registration.md` (formulário
+  ganha Cargo/Partido/Ideologia em "Dados básicos", saem de "Classificação"),
+  `entities/author-linking.md` (`AuthorRow` ganha `entity_cargo`/
+  `entity_partido`/`entity_ideologia` como campos fixos, não mais só
+  genéricos via `entity_tags`), `entities/overview.md`, `_glossary.md`,
+  `_index.md`, `_architecture.md`. Não executada contra um banco real
+  (mesma limitação recorrente).
+
 ### `/narratives` retornando vazio — `page_cache` desabilitado, depois causa raiz real encontrada e corrigida (2026-07-14)
 
 User report: `get-page-narratives` devolvendo `narratives: []` para uma
@@ -4327,6 +4414,41 @@ ambiente, mesma limitação recorrente de toda sessão sem acesso ao
 Supabase Dashboard; `git push` para `develop` (fluxo já estabelecido) é o
 próximo passo para isso rodar de verdade e confirmar `/narratives`
 voltando a popular. Ver `_pending.md`, gap #34, pro registro completo.
+
+### Sentimento por narrativa ignorava o balde Neutro predominante (2026-07-14)
+
+Follow-up na mesma sessão, depois do fix acima: usuário reportou, com
+screenshot, que os cards "Direita"/"Esquerda" e a tabela "Todas as
+Narrativas" mostravam "Negativo -20"/"Negativo -29", contradizendo a
+própria barra pos/neu/neg do mesmo card — Direita tinha `neu 44.2%` (maior
+que `pos 22.3%` e `neg 33.5%`), Esquerda tinha `neu 47.7%` (maior que `pos
+18.5%` e `neg 33.8%`). Confirmado matematicamente: `net_sentiment` era
+`(positivo - negativo) / (positivo + negativo) * 100` — Direita:
+`(22.3-33.5)/(22.3+33.5)*100 = -20.07`, Esquerda:
+`(18.5-33.8)/(18.5+33.8)*100 = -29.25` — bate exatamente com os números
+mostrados. A fórmula estava funcionando exatamente como projetada, só que
+nunca considerava se Neutro era o balde predominante antes de calcular o
+skew só entre positivo/negativo (as duas minorias, no caso). Diferente
+dos 2 bugs de sentimento já corrigidos em 2026-07-25 (janela de tempo
+divergente, depois duas fontes divergentes) — este é um terceiro
+problema, novo: a fórmula certa aplicada ao par errado de categorias.
+
+Fixed na migration `20260731050000` (mesma assinatura de
+`20260731040000`, só `sentiment_final`/`sentiment_labeled` mudam):
+`sentiment_label` agora checa primeiro se Neutro é o balde predominante
+(`>=` positivo E `>=` negativo, com alguma menção neutra de verdade) — se
+for, o rótulo é sempre `'neutral'` e o `net_sentiment` reportado é `0`
+(pra não ficar "Neutro -20" contraditório na UI). Só quando Neutro não é
+predominante o skew positivo/negativo volta a decidir o rótulo, nas
+mesmas 7 faixas de sempre. `risk_inputs.sentiment_risk` herda a correção
+automaticamente (lê `sl.net_sentiment`) — uma Narrativa dominada por
+cobertura neutra agora produz `sentiment_risk = 50` (neutro) em vez de
+inflar o risco por causa de uma pequena minoria desbalanceada. Verificado
+por diff isolado contra `20260731040000`: só as duas CTEs de sentimento
+mudam, todo o resto (scope/momentum/tendência/risco/tags) é idêntico.
+`npx tsc --noEmit` limpo (SQL puro). **Não executado contra um banco
+real** — mesma limitação recorrente de toda sessão sem credenciais de
+deploy; `git push` pra `develop` é o próximo passo.
 
 ## Directory structure
 

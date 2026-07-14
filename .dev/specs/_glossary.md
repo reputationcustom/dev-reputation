@@ -147,11 +147,14 @@ exatos em variáveis, componentes, tabelas e comentários.
 
 ### entity_tags (tag_type / tag_value)
 - **Definição**: Classificação EAV (Entity-Attribute-Value) de uma Entity —
-  cada dimensão de classificação (partido, espectro político, cargo, estado,
-  instituição/braço de poder etc.) é um par `tag_type`/`tag_value`. Uma **nova
-  dimensão de classificação é um INSERT em `entity_tags`, nunca uma
-  migration**. Vocabulário sugerido de `tag_type` (não enforçado) em
-  [entities/data-model.md](entities/data-model.md).
+  cada dimensão de classificação (estado, instituição/braço de poder,
+  postura em relação ao candidato etc.) é um par `tag_type`/`tag_value`.
+  Uma **nova dimensão de classificação é um INSERT em `entity_tags`, nunca
+  uma migration**. ⚠️ **Cargo, partido e ideologia não são mais
+  `entity_tags` (2026-07-13)** — viraram colunas próprias de `entities`
+  (`cargo`/`partido`/`ideologia`), pedido explícito do usuário; ver
+  [entities/data-model.md](entities/data-model.md). Vocabulário sugerido
+  do restante de `tag_type` (não enforçado) no mesmo arquivo.
 - **Tabela no banco**: `entity_tags`
 - **Spec de dados**: [entities/data-model.md](entities/data-model.md)
 

@@ -228,6 +228,29 @@ observado — **sem `query_id`** (revertido 2026-07-13, ver nota abaixo).
 > números. `risk_score`'s `sentiment_risk` herda a correção automaticamente
 > (lê `sentiment_labeled.net_sentiment`, sem mudança própria).
 >
+> ✅ **Correção #3 (2026-07-14, migration `20260731050000`)**: a promessa
+> de "por construção nunca mais discorda da barra" da Correção #2 ainda
+> tinha um buraco real, achado via screenshot novo (cards "Direita"/
+> "Esquerda": `neu` era o balde MAIOR — 44,2%/47,7% — mas o rótulo mostrava
+> "Negativo -20"/"Negativo -29"). A fórmula `(positivo - negativo) /
+> (positivo + negativo) * 100` em si estava correta e batendo com os
+> números — só nunca checava se Neutro era o balde predominante antes de
+> calcular o skew só entre as duas MINORIAS (positivo e negativo).
+> Matematicamente: Direita `(22.3-33.5)/(22.3+33.5)*100 = -20.07`,
+> Esquerda `(18.5-33.8)/(18.5+33.8)*100 = -29.25` — a fórmula funcionava
+> exatamente como projetada, "projetada" é que nunca cobria esse caso.
+> Diferente das Correções #1/#2 (janela de tempo divergente, depois duas
+> fontes divergentes) — este é um terceiro problema, novo: o par certo de
+> dados (`sentiment_positive_pct`/etc.) aplicado à pergunta errada
+> ("quem vence entre positivo e negativo" em vez de "qual dos 3 baldes
+> vence"). **Corrigido**: `sentiment_label` agora checa primeiro se Neutro
+> é o balde predominante (`>=` positivo E `>=` negativo, com alguma menção
+> neutra de fato) — se for, o rótulo é sempre `'neutral'` e `net_sentiment`
+> reportado é `0` (evita um "Neutro -20" contraditório na UI). Só quando
+> Neutro não é predominante o skew positivo/negativo volta a decidir o
+> rótulo, nas mesmas 7 faixas de sempre. `risk_inputs.sentiment_risk`
+> herda a correção automaticamente.
+>
 > ⚠️ **Fora de escopo desta correção**: `public.narratives_overview.
 > sentiment_bucket`/`net_sentiment` (view usada só para `sov_percent`/
 > `total_mentions` em `get_narratives_table`'s `latest_day`, e espelhada em

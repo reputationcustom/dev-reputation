@@ -3,24 +3,34 @@ tipo: feature-spec
 módulo: event-radar
 funcionalidade: schema-integration
 status: rascunho
-atualizado: 2026-07-31
+atualizado: 2026-08-01
 ---
 
 # Integração com o Schema Existente
 
-> ⚠️ **Item 1 implementado (2026-07-31), item 2 continua rascunho** — a
-> escrita em `feed_events` descrita no "Fluxo principal" item 1 abaixo foi
+> ⚠️ **Item 1 implementado (2026-07-31), item 2 implementado no schema
+> (2026-08-01), UI de nenhum dos dois existe ainda** — a escrita em
+> `feed_events` descrita no "Fluxo principal" item 1 abaixo foi
 > implementada como parte do próprio código de 1.4
 > (`event-radar-agent-orchestrator`, ver `agent-orchestrator.md`), não como
 > uma etapa/função separada — a spec original já descrevia isso como o
 > próprio passo 4 do "Fluxo principal" de `agent-orchestrator.md` ("recebe
 > a resposta e grava conforme schema-integration.md"), então implementar
-> 1.4 sem essa escrita não faria sentido. `feed_event_feedback` (item 2 —
-> retroalimentação pós-publicação do analista) **não** foi implementado —
-> precisa de uma UI própria (analista dando feedback num card já
-> publicado), não pedida ainda. Status deste arquivo continua `rascunho`
-> por causa do item 2; ver `data-model.md` pro schema real de `feed_events`
-> já em produção.
+> 1.4 sem essa escrita não faria sentido.
+>
+> `feed_event_feedback` (item 2 — retroalimentação pós-publicação do
+> analista) ganhou schema/RLS (migration `20260801000000`,
+> **deliberadamente sem Edge Function** — INSERT direto do cliente,
+> validado por RLS + CHECK constraint, exatamente como `data-model.md` já
+> especificava), mas **nenhuma UI existe pra usá-lo** — nem pra dar
+> feedback, nem pra ver os cards de `feed_events` em primeiro lugar. O
+> bloco `highlights` do envelope (`get_active_highlights`,
+> `aggregated-metrics`) ainda não foi implementado — sem ele, não há
+> nenhuma página do frontend renderizando um card de `feed_events` pra
+> pendurar um botão de feedback. Status deste arquivo continua `rascunho`
+> por causa disso — schema pronto para os dois itens, UI pendente para os
+> dois. Ver `data-model.md` pro schema real de `feed_events`/
+> `feed_event_feedback` já em produção.
 
 ## Objetivo
 

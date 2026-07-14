@@ -43,6 +43,17 @@ atualizado: 2026-07-13
 > contas em 4 plataformas. Sem fonte equivalente para os 81 Senadores (API
 > do Senado confirmadamente não expõe esse dado) — ver `data-model.md`
 > para o detalhe completo.
+>
+> ✅ **Campos reorganizados no mesmo dia** (migration `20260731050000`),
+> pedido do usuário: `description` → renomeada para `cargo`; `partido` e
+> `ideologia` viraram colunas novas de `entities` (antes só
+> `entity_tags`/inexistente); os 593 parlamentares e 21 partidos já
+> semeados tiveram o dado reorganizado nas colunas novas (nada buscado de
+> novo). `ideologia` é a primeira classificação de melhor esforço
+> (não-oficial) do módulo — os 21 partidos foram classificados por
+> caracterização amplamente citada, parlamentares herdam a do próprio
+> partido. Ver `data-model.md` para a lista completa e a ressalva de
+> confiabilidade.
 
 ## Objetivo
 
@@ -50,10 +61,12 @@ Dar aos administradores da plataforma um cadastro estruturado das pessoas,
 veículos de imprensa, partidos, instituições, empresas e movimentos mais
 relevantes para o debate público monitorado — "pessoas importantes de
 monitorar", no pedido original — e classificá-los em múltiplos espectros
-simultâneos (posicionamento político, partido, cargo/função, poder/
-instituição a que pertence, estado, nível de influência sobre a campanha
-monitorada, e qualquer nova dimensão que surgir no futuro, sem migration).
-Diferente do ranking de autores já nativo da Brandwatch (`bw_query_top_authors`/
+simultâneos: campos estruturados próprios (`cargo`/`partido`/`ideologia`/
+`influence_level` — ver `data-model.md`) para as dimensões centrais e mais
+consultadas, mais classificação livre via `entity_tags` (ex: estado,
+poder/instituição a que pertence, postura em relação ao candidato, e
+qualquer nova dimensão que surgir no futuro, sem migration). Diferente do
+ranking de autores já nativo da Brandwatch (`bw_query_top_authors`/
 `bw_query_top_tweeters`, ver `foundation/data-model.md`) — que é
 **automático e exaustivo** (todo autor com volume relevante aparece) —, o
 Cadastro de Entidades é **manual e curado**: só entra quem um administrador

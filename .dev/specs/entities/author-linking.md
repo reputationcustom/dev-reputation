@@ -61,11 +61,24 @@ calculado, e, quando casar, `LEFT JOIN entities`/`entity_tags` para trazer:
 
 - `entity_id` (já existia no envelope, passa a ser preenchido de fato).
 - `entity_type` (novo — `entities.type`, `null` quando não há vínculo).
+- `entity_cargo` (novo — `entities.cargo`, ex: "Deputado Federal";
+  ✅ **atualizado 2026-07-13** junto da reorganização de campos de
+  `data-model.md` — antes desta nota este campo se chamava `description`).
+- `entity_partido` (novo — `entities.partido`, sigla, ex: "PT"; ✅
+  adicionado 2026-07-13, coluna nova).
+- `entity_ideologia` (novo — `entities.ideologia`, ex:
+  "centro-esquerda"; ✅ adicionado 2026-07-13, coluna nova — ver
+  `data-model.md` para a ressalva de que é classificação de melhor
+  esforço, não uma fonte oficial como cargo/partido).
 - `entity_influence_level` (novo — `entities.influence_level`, `null`
   quando não há vínculo **ou** quando a Entity vinculada nunca teve esse
   campo avaliado).
 - `entity_tags` (novo — array de `{tag_type, tag_value}`, um item por
-  linha de `entity_tags` daquela Entity; `[]` quando não há vínculo).
+  linha de `entity_tags` daquela Entity — hoje cobre `state`/
+  `power_branch`/`stance_to_candidate` e qualquer dimensão nova que surgir;
+  **não** inclui mais `party`/`office`, que viraram `entity_partido`/
+  `entity_cargo` acima e foram removidos de `entity_tags` na mesma
+  migration; `[]` quando não há vínculo).
 
 Só considera Entities com `is_active = true` — uma Entity desativada
 (`entity-registration.md`, "Regras de negócio") deixa de enriquecer o
@@ -81,15 +94,23 @@ campo novo). `AuthorRow` ganha:
 
 ```
 entity_type: string | null            // entities.type, rótulo cru (ex: "person")
+entity_cargo: string | null           // entities.cargo (ex: "Deputado Federal")
+entity_partido: string | null         // entities.partido (sigla, ex: "PT")
+entity_ideologia: string | null       // entities.ideologia (ex: "centro-esquerda")
 entity_influence_level: string | null // entities.influence_level (low|medium|high|critical)
 entity_tags: { tag_type: string; tag_value: string }[]  // sempre array, nunca null
 ```
 
-Formato genérico (espelha `entity_tags` linha a linha, não campos fixos
-tipo `party`/`spectrum`) de propósito — a taxonomia é extensível por
-design (`data-model.md`), então o envelope não pode assumir nomes fixos de
-dimensão sem recriar, no lado do contrato, a mesma rigidez que
-`entity_tags` foi desenhada para evitar no lado do banco.
+`entity_cargo`/`entity_partido`/`entity_ideologia` são campos fixos (não
+genéricos) porque, desde 2026-07-13, viraram colunas estruturadas de
+`entities` — não fazem mais parte de `entity_tags` (ver `data-model.md`,
+"⚠️ `party`/`office`/`political_spectrum` saíram desta tabela"). O array
+`entity_tags` continua genérico (espelha `entity_tags` linha a linha, sem
+campos fixos) só para as dimensões que **continuam** EAV (`state`/
+`power_branch`/`stance_to_candidate` e qualquer dimensão nova) — a
+taxonomia dessas seguem extensível por design, então o envelope não pode
+assumir nomes fixos pra elas sem recriar, no lado do contrato, a mesma
+rigidez que `entity_tags` foi desenhada para evitar no lado do banco.
 
 ## Onde isso aparece
 

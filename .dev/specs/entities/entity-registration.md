@@ -47,18 +47,29 @@ autenticado é bloqueado ao tentar acessar `/admin/entities` (ver
    `CLAUDE.md`, "Full prototype re-import... full nav IA").
 2. Tabela com todas as Entidades cadastradas (por padrão, só `is_active =
    true` — ver "Interface"): **Nome**, **Tipo** (badge com o rótulo em
-   português do enum `entity_type`), **Influência** (badge, quando
-   avaliada — "—" quando `null`), **Contas** (contagem — ex: "2 contas" —
-   ou "Nenhuma"), **Status** (Ativa/Inativa), **Ações**.
+   português do enum `entity_type`), **Cargo**, **Partido**, **Ideologia**
+   (badge — "—" quando `null`, ver "Interface" para a paleta), **Influência**
+   (badge, quando avaliada — "—" quando `null`), **Contas** (contagem — ex:
+   "2 contas" — ou "Nenhuma"), **Status** (Ativa/Inativa), **Ações**.
 3. Filtros acima da tabela: **Busca por nome** (texto livre, client-side
    sobre a lista já carregada), **Tipo** (todos os valores de
-   `entity_type`), **Mostrar inativas** (toggle, desligado por padrão).
+   `entity_type`), **Partido** (todos os valores distintos já cadastrados),
+   **Ideologia** (os 5 valores em uso — `esquerda`/`centro-esquerda`/
+   `centro`/`centro-direita`/`direita`), **Mostrar inativas** (toggle,
+   desligado por padrão).
 4. Botão "Nova Entidade" → abre o modal `EntityFormModal`, com 3 seções:
    - **Dados básicos**: Tipo (obrigatório, select com os 7 valores de
-     `entity_type`), Nome (obrigatório), Descrição (opcional, textarea),
-     URL da foto (opcional), Nível de influência sobre o candidato
-     (opcional, select com os 4 níveis — ver `data-model.md`,
-     `influence_level`).
+     `entity_type`), Nome (obrigatório), Cargo (opcional, texto livre —
+     ex: "Deputado Federal", "Senadora", "Colunista"; não se aplica a
+     `type = 'party'`, campo fica desabilitado/oculto nesse caso), Partido
+     (opcional, texto livre com sugestões dos partidos já cadastrados como
+     `type = 'party'` — não se aplica ao próprio partido), Ideologia
+     (opcional, select com os 5 valores em uso —
+     `esquerda`/`centro-esquerda`/`centro`/`centro-direita`/`direita` —
+     mais "Outra..." em texto livre, já que a coluna não é um enum
+     travado, ver `data-model.md`), URL da foto (opcional), Nível de
+     influência sobre o candidato (opcional, select com os 4 níveis — ver
+     `data-model.md`, `influence_level`).
    - **Contas nas redes** (repetível, 0 ou mais linhas): Plataforma (texto
      livre com sugestões das plataformas já conhecidas —
      twitter/instagram/facebook/tiktok/reddit/linkedin/news/blog),
@@ -66,14 +77,17 @@ autenticado é bloqueado ao tentar acessar `/admin/entities` (ver
      aparece na Brandwatch, sem `@` a menos que a Brandwatch use `@`),
      URL do perfil (opcional). Botão "+ Adicionar conta" adiciona uma
      linha vazia; cada linha tem um "✕" para remover.
-   - **Classificação** (repetível, 0 ou mais linhas): Dimensão (`tag_type`
-     — select com o vocabulário sugerido de `data-model.md` **mais** um
-     campo "Outra dimensão..." que aceita texto livre, já que
-     `entity_tags` é extensível por design), Valor (`tag_value`, texto
-     livre, com sugestões quando a dimensão escolhida já tem valores
-     usados por outras Entities — ex: digitar "party" sugere as siglas já
-     cadastradas). Botão "+ Adicionar classificação"/"✕" por linha, mesmo
-     padrão da seção de contas.
+   - **Classificação adicional** (repetível, 0 ou mais linhas — para
+     dimensões que não têm coluna própria): Dimensão (`tag_type` — select
+     com o vocabulário sugerido de `data-model.md`, ex: `state`/
+     `power_branch`/`stance_to_candidate`, **mais** um campo "Outra
+     dimensão..." que aceita texto livre, já que `entity_tags` é
+     extensível por design), Valor (`tag_value`, texto livre, com
+     sugestões quando a dimensão escolhida já tem valores usados por
+     outras Entities). Botão "+ Adicionar classificação"/"✕" por linha,
+     mesmo padrão da seção de contas. ✅ **`party`/`office` não aparecem
+     mais como opções de Dimensão** (2026-07-13) — viraram os campos
+     Partido/Cargo de "Dados básicos" acima, ver `data-model.md`.
 5. Submit → Edge Function `create-entity` (ver "Dependências técnicas") →
    insere `entities` + todas as linhas de `entity_accounts`/`entity_tags`
    preenchidas na mesma chamada.
@@ -117,7 +131,12 @@ autenticado é bloqueado ao tentar acessar `/admin/entities` (ver
   Postgres `severity_level` só no valor de banco, **com rótulo próprio**
   ("Baixa"/"Média"/"Alta"/"Muito alta" — ver `data-model.md`, nota em
   `influence_level`) — implementar como um componente novo
-  (`InfluenceBadge`), não reaproveitar `RiskBadge` diretamente.
+  (`InfluenceBadge`), não reaproveitar `RiskBadge` diretamente. Badge de
+  Ideologia (`IdeologiaBadge`, novo componente): cor neutra/informativa
+  por valor (não é um score de bom/ruim — não reaproveitar a paleta de
+  sentimento, que implicaria positivo/negativo onde não há); "—" quando
+  `null`. Cargo/Partido renderizam como texto simples, sem badge — não são
+  classificações com paleta própria, só texto factual.
 - **`EntityFormModal`**: 3 seções do "Fluxo principal" passo 4, botão
   "Salvar" desabilitado + spinner durante o envio (regra transversal #5),
   erros de validação inline por campo/linha (regra transversal #4). Seções

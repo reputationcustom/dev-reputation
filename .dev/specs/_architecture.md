@@ -1,6 +1,6 @@
 ---
 tipo: architecture-map
-atualizado: 2026-07-31
+atualizado: 2026-08-01
 ---
 
 # Mapa de Arquitetura — Digital Intelligent Communication
@@ -114,6 +114,11 @@ fallback), mas fica mais completo com ela.
 > ✅ **`entity_accounts` dos 512 Deputados Federais populada no mesmo dia** (migration
 > `20260731030000`) — fonte oficial real por deputado (`redeSocial`, Câmara), não os 81 Senadores
 > (sem fonte oficial equivalente, confirmado nesta sessão). Ver `entities/data-model.md`.
+>
+> ✅ **Campos reorganizados no mesmo dia** (migration `20260731050000`) — `description` renomeada
+> para `cargo`; `partido`/`ideologia` viraram colunas novas (a segunda é a primeira classificação
+> de melhor esforço/não-oficial do módulo, ver `entities/data-model.md`). Dado já semeado
+> reorganizado nas colunas novas, nada buscado de novo.
 
 > ✅ **`event-radar` passou a verde em 2026-07-31** — 5 das 6 funcionalidades do módulo
 > implementadas em sessões consecutivas (2026-07-27 a 2026-07-31): `detection-engine` (1.1),
@@ -121,10 +126,12 @@ fallback), mas fica mais completo com ela.
 > 1.4 por dependência real, não por ordem numérica) e `agent-orchestrator` (1.4 — primeira e única
 > Edge Function do módulo, Claude Haiku 4.5, primeira migration de `feed_events`). Mesmo critério
 > já usado para `aggregated-metrics` (verde com `ai-synthesis.md` ainda pendente): só falta
-> `schema-integration.md` item 2 (`feed_event_feedback`, retroalimentação pós-publicação do
-> analista — precisa de UI própria, não pedida ainda) — item 1 do mesmo arquivo (escrita em
-> `feed_events`) já foi implementado como parte do código de 1.4. Ver `CLAUDE.md`, "Módulo
-> `event-radar`", pro detalhe completo de cada etapa.
+> `schema-integration.md` (a única funcionalidade que continua `rascunho`) — não por falta de
+> schema (os dois itens do arquivo, escrita em `feed_events` e `feed_event_feedback`, têm código/
+> migration desde 2026-08-01), mas porque nenhuma UI existe pra renderizar um card de
+> `feed_events` nem pra dar feedback nele (depende do bloco `highlights`/`get_active_highlights`
+> de `aggregated-metrics`, não implementado). Ver `CLAUDE.md`, "Módulo `event-radar`", pro
+> detalhe completo de cada etapa.
 
 `threshold-engine` e `intelligent-feed` (módulos que existiam na tabela original de `_index.md`,
 Sprint 3) não aparecem como nós próprios — foram **absorvidos por `event-radar`** antes de

@@ -2,7 +2,7 @@
 tipo: module-overview
 módulo: event-radar
 status: rascunho
-atualizado: 2026-07-31
+atualizado: 2026-08-01
 ---
 
 # Módulo: Radar de Eventos
@@ -24,9 +24,13 @@ atualizado: 2026-07-31
 > migration nesta mesma sessão — ver `agent-orchestrator.md`/`data-model.md`).
 > Status do módulo continua `rascunho` só por causa de 1.5
 > (`schema-integration`) — mas seu item 1 (escrita em `feed_events`) já
-> foi implementado como parte do próprio código de 1.4; só o item 2
-> (`feed_event_feedback`, retroalimentação do analista) segue em aberto.
-> `aggregated-metrics`'s `get_active_highlights` (bloco `highlights`) já
+> foi implementado como parte do próprio código de 1.4, e seu item 2
+> (`feed_event_feedback`) ganhou schema/RLS em 2026-08-01 (migration
+> `20260801000000`, sem Edge Function — INSERT direto do cliente validado
+> por RLS/CHECK). **Nenhuma UI existe pra nenhum dos dois ainda** — sem o
+> bloco `highlights` (`get_active_highlights`, `aggregated-metrics`) não há
+> página nenhuma renderizando um card de `feed_events` pra pendurar um
+> botão de feedback. `aggregated-metrics`'s `get_active_highlights` (bloco `highlights`) já
 > pode ser ligada — `feed_events` existe e está sendo populada.
 
 > ✅ **Absorve `threshold-engine`/`intelligent-feed`** (Sprint 3 em `_index.md`, nunca tiveram
@@ -59,7 +63,7 @@ exata.
 
 | Funcionalidade                    | Descrição resumida                                              | Status    | Spec                                                                |
 |-------------------------------------|--------------------------------------------------------------------|-----------|------------------------------------------------------------------------|
-| Modelo de dados (`radar_staging_events`, `feed_events`, `feed_event_feedback`) | Schema completo consolidado (2026-07-25) — só `radar_staging_events` tem migration | rascunho  | [data-model.md](data-model.md) |
+| Modelo de dados (`radar_staging_events`, `feed_events`, `feed_event_feedback`) | Schema completo consolidado (2026-07-25) — as 3 entidades têm migration | implementado  | [data-model.md](data-model.md) |
 | `detection-engine`                  | Views/functions SQL que calculam janelas de comparação e regras   | implementado  | [detection-engine.md](detection-engine.md)                                 |
 | `deduplication-grouping`            | Dedup determinístico antes de qualquer chamada de IA               | implementado  | [deduplication-grouping.md](deduplication-grouping.md)             |
 | `severity`                          | Score 0-100 determinístico + mapeamento para categoria de risco    | implementado  | [severity.md](severity.md)                                         |

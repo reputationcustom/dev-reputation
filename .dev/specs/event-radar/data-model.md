@@ -1,8 +1,8 @@
 ---
 tipo: data-model
 módulo: event-radar
-status: rascunho
-atualizado: 2026-07-31
+status: implementado
+atualizado: 2026-08-01
 ---
 
 # Modelo de Dados — Radar de Eventos
@@ -37,8 +37,10 @@ atualizado: 2026-07-31
 > `severity_level` (`low`\|`medium`\|`high`\|`critical`,
 > `foundation_schema.sql`), corrigido na tabela abaixo. ✅ **`feed_events`
 > implementado em 2026-07-31** (migration `20260731020000`, junto com 1.4
-> `agent-orchestrator`) — ver seção própria abaixo. `feed_event_feedback`
-> continua rascunho, sem migration.
+> `agent-orchestrator`) — ver seção própria abaixo. ✅ **`feed_event_feedback`
+> implementado em 2026-08-01** (migration `20260801000000`) — as 3
+> entidades deste arquivo têm migration agora, ver seção própria abaixo
+> pra ressalva sobre a UI ainda não existir.
 
 Staging interno do motor de detecção (etapa 1.1) — **nunca lido pelo frontend**, só por
 `deduplication-grouping` (1.2), `severity` (1.3) e `agent-orchestrator` (1.4). Ver
@@ -120,6 +122,18 @@ orquestrador, 1.4/1.5) escreve, mesmo padrão de toda tabela gravada exclusivame
 backend neste projeto (ex: `bw_query_metrics_daily`).
 
 ### `feed_event_feedback`
+
+> ✅ **Implementado (2026-08-01)** — migration
+> `20260801000000_event_radar_feed_event_feedback.sql`, schema exatamente
+> como especificado abaixo. ⚠️ **Sem UI ainda** — não há nenhuma página do
+> frontend renderizando cards de `feed_events` (o bloco `highlights` do
+> envelope, `get_active_highlights`, não foi implementado), então não há
+> onde pendurar um botão de "dar feedback" hoje. `schema-integration.md`
+> continua `rascunho` por causa disso — o schema/RLS deste item estão
+> prontos, falta só a interface. Deliberadamente **sem Edge Function** —
+> diferente da maioria das escritas deste projeto, este INSERT é direto do
+> cliente (supabase-js), validado inteiramente por RLS + CHECK constraint,
+> exatamente como este arquivo já especificava.
 
 Feedback do analista sobre um card já publicado (`schema-integration.md`, item 4) — tabela nova,
 nome não definido em nenhum spec anterior até esta revisão.
