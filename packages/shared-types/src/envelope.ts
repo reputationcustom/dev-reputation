@@ -231,6 +231,16 @@ export interface AuthorRow {
   // quando o escopo é a Query inteira (sem Narrativa associada). Ver
   // get_authors_ranking, migration 20260721030000.
   narrative_labels: string[];
+  // ✅ Adicionados 2026-08-08 (widget "Quem move a conversa", ver
+  // narratives-exploration.md, "Formação e propagação"). followers = perfil
+  // do autor (twitterFollowers, único campo confirmado no endpoint Top
+  // Authors — nunca somado entre categorias, ver get_authors_ranking),
+  // `null` quando o autor não tem esse campo sincronizado. platforms =
+  // plataforma(s) com sinal real em platform_stats (bw_top_author_platform_tags),
+  // sempre array (vazio, não fabricado, quando nenhuma chave conhecida está
+  // presente no jsonb já sincronizado).
+  followers: number | null;
+  platforms: string[];
 }
 
 export interface Highlight {

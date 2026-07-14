@@ -238,7 +238,13 @@ export function NarrativeDetailContent({
       <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
         <WidgetCard title="Formação e propagação — principais disseminadores" status={status} onRetry={retry}>
           <div className="flex flex-col gap-4">
-            <AuthorsList authors={envelope?.authors ?? []} />
+            {/* ✅ 2026-08-08 (pedido do usuário: "quem está movimentando essa
+                narrativa. Engajamento, reposts, comentários etc.") —
+                variante "disseminators" de AuthorsList, focada em
+                Plataforma/Papel na conversa/Seguidores/Publicações/
+                Engajamento em vez de Partido/Ideologia/Alcance/Sentimento
+                (colunas já cobertas por "full", reusada noutras páginas). */}
+            <AuthorsList authors={envelope?.authors ?? []} variant="disseminators" />
             {(envelope?.authors ?? []).length > 0 && <DisseminationStanceLists authors={envelope?.authors ?? []} />}
           </div>
         </WidgetCard>

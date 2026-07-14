@@ -173,6 +173,81 @@ export function entitySegment(author: Pick<AuthorRow, "entity_tags">): string | 
   return author.entity_tags.find((t) => t.tag_type === "segment")?.tag_value ?? null;
 }
 
+// "Papel na conversa" — widget "Quem move a conversa" (Formação e
+// propagação, narratives-exploration.md). Combina o que já existe, sem
+// nenhum cálculo novo de backend: quando o autor tem uma Entity vinculada
+// de um tipo institucional (imprensa/instituição/partido), o papel é o
+// próprio tipo — mais informativo que sentimento pra esses casos (um
+// veículo de imprensa não é "crítico" ou "apoiador", é imprensa). Sem esse
+// vínculo (a maioria dos autores, tipicamente pessoas físicas), o papel cai
+// pro sentimento dominante já calculado (dominantSentiment) — mesma lógica
+// já usada por Detratores/Impulsionadores positivos (dissemination-stance-lists.tsx).
+// `null` (nunca um valor inventado) quando não há Entity institucional
+// vinculada E não há dado de sentimento suficiente pra classificar.
+export type AuthorRole = "imprensa" | "institucional" | "partidario" | "critico" | "apoiador" | "neutro";
+
+const ENTITY_TYPE_ROLE: Partial<Record<EntityType, AuthorRole>> = {
+  media_outlet: "imprensa",
+  institution: "institucional",
+  party: "partidario",
+};
+
+export const AUTHOR_ROLE_LABEL: Record<AuthorRole, string> = {
+  imprensa: "Imprensa",
+  institucional: "Institucional",
+  partidario: "Partidário",
+  critico: "Crítico",
+  apoiador: "Apoiador",
+  neutro: "Neutro",
+};
+
+export const AUTHOR_ROLE_HEX: Record<AuthorRole, string> = {
+  imprensa: ENTITY_TYPE_HEX.media_outlet,
+  institucional: ENTITY_TYPE_HEX.institution,
+  partidario: ENTITY_TYPE_HEX.party,
+  critico: SENTIMENT_HEX.negative,
+  apoiador: SENTIMENT_HEX.positive,
+  neutro: SENTIMENT_HEX.neutral,
+};
+
+export function authorRole(
+  author: Pick<AuthorRow, "entity_type" | "sentiment_positive" | "sentiment_neutral" | "sentiment_negative">,
+): AuthorRole | null {
+  const entityRole = author.entity_type ? ENTITY_TYPE_ROLE[author.entity_type as EntityType] : undefined;
+  if (entityRole) return entityRole;
+  const sentiment = dominantSentiment(author);
+  if (sentiment === "negative") return "critico";
+  if (sentiment === "positive") return "apoiador";
+  if (sentiment === "neutral") return "neutro";
+  return null;
+}
+
+// Plataforma(s) do autor — `AuthorRow.platforms`, ver get_authors_ranking/
+// bw_top_author_platform_tags (só reporta uma plataforma quando há sinal
+// real no platform_stats já sincronizado, nunca fabricada). Mais de uma
+// plataforma junta com " · ", mesmo separador visual já usado noutros
+// lugares deste componente (ex: chips de narrativa).
+export const PLATFORM_TAG_ORDER = ["twitter", "instagram", "facebook", "tiktok", "linkedin", "bluesky"] as const;
+export type PlatformTag = (typeof PLATFORM_TAG_ORDER)[number];
+
+export const PLATFORM_TAG_LABEL: Record<PlatformTag, string> = {
+  twitter: "X / Twitter",
+  instagram: "Instagram",
+  facebook: "Facebook",
+  tiktok: "TikTok",
+  linkedin: "LinkedIn",
+  bluesky: "Bluesky",
+};
+
+function isPlatformTag(value: string): value is PlatformTag {
+  return (PLATFORM_TAG_ORDER as readonly string[]).includes(value);
+}
+
+export function formatPlatforms(platforms: string[]): string {
+  const labels = platforms.filter(isPlatformTag).map((tag) => PLATFORM_TAG_LABEL[tag]);
+  return labels.length > 0 ? labels.join(" · ") : "—";
+}
+
 export function authorInitials(name: string): string {
   const parts = name
     .replace(/[#0-9]/g, "")

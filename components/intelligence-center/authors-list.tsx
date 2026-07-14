@@ -7,9 +7,13 @@ import { Pagination, DEFAULT_PAGE_SIZE } from "@/components/ui/pagination";
 import {
   authorColorHex,
   authorInitials,
+  AUTHOR_ROLE_HEX,
+  AUTHOR_ROLE_LABEL,
+  authorRole,
   dominantSentiment,
   entitySegment,
   entityTypeLabel,
+  formatPlatforms,
   ideologyBadgeClass,
   ideologyLabel,
   SENTIMENT_HEX,
@@ -23,14 +27,14 @@ import {
 // get_authors_ranking — sem fórmula de risco por autor ainda, distinto de
 // `entity_influence_level`, ver authors-and-influencers.md).
 //
-// ✅ Redesenhado 2026-08-01 (interativo/ordenável/paginado) e novamente
-// 2026-08-08 (redesenho em 2 guias — ver `variant` abaixo): a tabela agora
-// tem 3 conjuntos de colunas, escolhidos por `variant`, todos sobre o mesmo
-// dado já buscado, nenhum re-fetch:
+// ✅ Redesenhado 2026-08-01 (interativo/ordenável/paginado), 2026-08-08
+// (redesenho em 2 guias) e novamente 2026-08-08 (variant "disseminators" —
+// ver `variant` abaixo): a tabela agora tem 4 conjuntos de colunas,
+// escolhidos por `variant`, todos sobre o mesmo dado já buscado, nenhum
+// re-fetch:
 //   - `full` (default) — as 7 colunas de sempre (Autor/Partido/Ideologia/
-//     Menções/Alcance/Engaj./Sentimento). Usada por Pautas Eleitorais e
-//     detalhe de Narrativa, que nunca pediram a mudança — comportamento
-//     inalterado pra essas 2 páginas.
+//     Menções/Alcance/Engaj./Sentimento). Usada por Pautas Eleitorais, que
+//     nunca pediu a mudança — comportamento inalterado.
 //   - `general` — guia "Visão Geral" de /authors: sem Partido/Ideologia
 //     (assunto da outra guia), foco em menções/alcance/engajamento/
 //     sentimento/narrativas.
@@ -39,6 +43,16 @@ import {
 //     empresa/movimento/outro, ver author-color.ts) antes de Partido/
 //     Ideologia, já que esta guia existe justamente pra "não só partido,
 //     mas imprensa e outras organizações" (pedido do usuário, 2026-08-08).
+//   - `disseminators` — "Formação e propagação — principais disseminadores"
+//     do detalhe de Narrativa ("quem move a conversa", pedido do usuário
+//     2026-08-08): Autor/Plataforma/Papel na conversa/Seguidores/
+//     Publicações/Engajamento. `platforms`/`role` são derivados
+//     (`author-color.ts`) de dado já real — `AuthorRow.platforms`
+//     (get_authors_ranking, só reporta uma plataforma com sinal de fato
+//     presente em `platform_stats`, nunca fabricada) e
+//     `entity_type`/sentimento dominante (nunca um cálculo novo de
+//     backend). Ordenação padrão por Seguidores (não por Alcance, que esta
+//     variante não exibe).
 //
 // `narrative_labels` (chips soltos abaixo do nome) = a quais
 // Narrativas/pautas o autor está associado no escopo atual — só populado
@@ -53,9 +67,20 @@ import {
 // enriquecido" — o badge simplesmente não aparece, nunca mostra um valor
 // inventado.
 
-export type AuthorsListVariant = "full" | "general" | "entity";
+export type AuthorsListVariant = "full" | "general" | "entity" | "disseminators";
 
-type SortKey = "name" | "entity_type" | "entity_partido" | "entity_ideologia" | "mentions" | "reach" | "engagement" | "sentiment";
+type SortKey =
+  | "name"
+  | "entity_type"
+  | "entity_partido"
+  | "entity_ideologia"
+  | "mentions"
+  | "reach"
+  | "engagement"
+  | "sentiment"
+  | "platforms"
+  | "role"
+  | "followers";
 
 const COLUMNS_BY_VARIANT: Record<AuthorsListVariant, { key: SortKey; label: string; numeric?: boolean }[]> = {
   full: [
@@ -84,6 +109,21 @@ const COLUMNS_BY_VARIANT: Record<AuthorsListVariant, { key: SortKey; label: stri
     { key: "engagement", label: "Engaj.", numeric: true },
     { key: "sentiment", label: "Sentimento" },
   ],
+  disseminators: [
+    { key: "name", label: "Autor" },
+    { key: "platforms", label: "Plataforma" },
+    { key: "role", label: "Papel na conversa" },
+    { key: "followers", label: "Seguidores", numeric: true },
+    { key: "mentions", label: "Publicações", numeric: true },
+    { key: "engagement", label: "Engajamento", numeric: true },
+  ],
+};
+
+const DEFAULT_SORT_BY_VARIANT: Record<AuthorsListVariant, SortKey> = {
+  full: "reach",
+  general: "reach",
+  entity: "reach",
+  disseminators: "followers",
 };
 
 const numberFormat = new Intl.NumberFormat("pt-BR");
@@ -95,6 +135,12 @@ function sortValue(author: AuthorRow, key: SortKey): string | number {
     if (!s) return -1;
     return (author.sentiment_positive ?? 0) - (author.sentiment_negative ?? 0);
   }
+  if (key === "role") {
+    const role = authorRole(author);
+    return role ? AUTHOR_ROLE_LABEL[role] : "";
+  }
+  if (key === "platforms") return formatPlatforms(author.platforms);
+  if (key === "followers") return author.followers ?? -1;
   if (key === "entity_type") return entityTypeLabel(author.entity_type) ?? "";
   if (key === "entity_partido") return author.entity_partido ?? "";
   if (key === "entity_ideologia") return author.entity_ideologia ?? "";
@@ -112,7 +158,10 @@ export function AuthorsList({
   onSelectAuthor?: (author: AuthorRow) => void;
   variant?: AuthorsListVariant;
 }) {
-  const [sort, setSort] = useState<{ key: SortKey; direction: "asc" | "desc" }>({ key: "reach", direction: "desc" });
+  const [sort, setSort] = useState<{ key: SortKey; direction: "asc" | "desc" }>(() => ({
+    key: DEFAULT_SORT_BY_VARIANT[variant],
+    direction: "desc",
+  }));
   const [page, setPage] = useState(1);
   const columns = COLUMNS_BY_VARIANT[variant];
 
@@ -165,6 +214,7 @@ export function AuthorsList({
             {pageItems.map((author) => {
               const sentiment = dominantSentiment(author);
               const ideoBadge = ideologyBadgeClass(author.entity_ideologia);
+              const role = authorRole(author);
               const subtitle = variant === "general" ? author.entity_cargo : author.entity_cargo ?? entitySegment(author);
               return (
                 <tr
@@ -176,7 +226,12 @@ export function AuthorsList({
                     <div className="flex items-center gap-2.5">
                       <span
                         className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full text-[10px] font-bold text-white"
-                        style={{ backgroundColor: authorColorHex(author, variant === "entity" ? "entity_type" : "ideologia") }}
+                        style={{
+                          backgroundColor: authorColorHex(
+                            author,
+                            variant === "entity" ? "entity_type" : variant === "disseminators" ? "sentimento" : "ideologia",
+                          ),
+                        }}
                         aria-hidden
                       >
                         {authorInitials(author.name)}
@@ -206,7 +261,10 @@ export function AuthorsList({
                   {variant === "entity" && (
                     <td className="px-4 py-3 text-xs text-text-secondary">{entityTypeLabel(author.entity_type) ?? "—"}</td>
                   )}
-                  {variant !== "general" && (
+                  {variant === "disseminators" && (
+                    <td className="px-4 py-3 text-xs text-text-secondary">{formatPlatforms(author.platforms)}</td>
+                  )}
+                  {(variant === "full" || variant === "entity") && (
                     <td className="px-4 py-3">
                       {author.entity_partido ? (
                         <span className="inline-flex items-center gap-1.5 text-xs font-medium text-text-secondary">
@@ -222,7 +280,7 @@ export function AuthorsList({
                       )}
                     </td>
                   )}
-                  {variant !== "general" && (
+                  {(variant === "full" || variant === "entity") && (
                     <td className="px-4 py-3">
                       {ideoBadge ? (
                         <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold ${ideoBadge.bg} ${ideoBadge.text}`}>
@@ -233,19 +291,40 @@ export function AuthorsList({
                       )}
                     </td>
                   )}
+                  {variant === "disseminators" && (
+                    <td className="px-4 py-3">
+                      {role ? (
+                        <span className="inline-flex items-center gap-1.5 text-xs font-medium" style={{ color: AUTHOR_ROLE_HEX[role] }}>
+                          <span className="h-2 w-2 rounded-full" style={{ backgroundColor: AUTHOR_ROLE_HEX[role] }} aria-hidden />
+                          {AUTHOR_ROLE_LABEL[role]}
+                        </span>
+                      ) : (
+                        <span className="text-xs text-text-tertiary">—</span>
+                      )}
+                    </td>
+                  )}
+                  {variant === "disseminators" && (
+                    <td className="px-4 py-3 text-right text-text-secondary">
+                      {author.followers === null ? "—" : numberFormat.format(author.followers)}
+                    </td>
+                  )}
                   <td className="px-4 py-3 text-right text-text-secondary">{numberFormat.format(author.mentions)}</td>
-                  <td className="px-4 py-3 text-right text-text-secondary">{numberFormat.format(author.reach)}</td>
+                  {variant !== "disseminators" && (
+                    <td className="px-4 py-3 text-right text-text-secondary">{numberFormat.format(author.reach)}</td>
+                  )}
                   <td className="px-4 py-3 text-right text-text-secondary">{decimalFormat.format(author.engagement)}</td>
-                  <td className="px-4 py-3">
-                    {sentiment ? (
-                      <span className="inline-flex items-center gap-1.5 text-xs font-medium" style={{ color: SENTIMENT_HEX[sentiment] }}>
-                        <span className="h-2 w-2 rounded-full" style={{ backgroundColor: SENTIMENT_HEX[sentiment] }} aria-hidden />
-                        {SENTIMENT_LABEL[sentiment]}
-                      </span>
-                    ) : (
-                      <span className="text-xs text-text-tertiary">sem dado</span>
-                    )}
-                  </td>
+                  {variant !== "disseminators" && (
+                    <td className="px-4 py-3">
+                      {sentiment ? (
+                        <span className="inline-flex items-center gap-1.5 text-xs font-medium" style={{ color: SENTIMENT_HEX[sentiment] }}>
+                          <span className="h-2 w-2 rounded-full" style={{ backgroundColor: SENTIMENT_HEX[sentiment] }} aria-hidden />
+                          {SENTIMENT_LABEL[sentiment]}
+                        </span>
+                      ) : (
+                        <span className="text-xs text-text-tertiary">sem dado</span>
+                      )}
+                    </td>
+                  )}
                 </tr>
               );
             })}

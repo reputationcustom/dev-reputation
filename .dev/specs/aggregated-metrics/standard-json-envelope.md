@@ -3,7 +3,7 @@ tipo: feature-spec
 módulo: aggregated-metrics
 funcionalidade: standard-json-envelope
 status: implementado
-atualizado: 2026-07-14
+atualizado: 2026-08-08
 ---
 
 # Contrato do Envelope JSON (formato único de resposta de página)
@@ -157,6 +157,11 @@ exibidos na UI ficam em português:
   — `state`/`power_branch`/`stance_to_candidate` — já que essa taxonomia é extensível por design),
   e `mentions` (`number`, nunca nulo — soma de menções do autor, existia internamente na function
   desde sempre só pra ordenar o ranking, nunca tinha sido exposta ao client).
+  ✅ **2 campos aditivos a mais (2026-08-08)**, widget "Quem move a conversa" (ver
+  `intelligence-center/narratives-exploration.md`, "Formação e propagação"): `followers`
+  (`number | null`, `bw_query_top_authors`/`top_tweeters.followers`, `max()` entre categorias — não
+  soma, ver `sql-aggregation.md`) e `platforms` (`string[]`, sempre presente — pode ser `[]` — só
+  reporta uma plataforma quando há sinal real em `platform_stats`, nunca fabricada).
 - **`highlights`**: cards de evento já publicados pelo módulo `event-radar`, lidos direto de
   `feed_events` — este bloco NUNCA recalcula insight, apenas filtra e ordena o que o radar já
   publicou (ver seção "Integração com event-radar" abaixo). Cada item usa o mesmo formato de

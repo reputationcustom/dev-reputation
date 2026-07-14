@@ -3,7 +3,7 @@ tipo: feature-spec
 módulo: intelligence-center
 funcionalidade: narratives-exploration
 status: pronto
-atualizado: 2026-07-25
+atualizado: 2026-08-08
 ---
 
 # Exploração de Narrativas (lista + detalhe)
@@ -319,6 +319,56 @@ não que alguma tivesse menção no período.
   como "tipo", `reach`/`engagement`/`mentions`, badge "Influente"). Não é
   um ranking próprio de "quem propagou a Narrativa" — é o ranking geral de
   autores já filtrado a essa Narrativa, ordenado por padrão por alcance.
+  - ✅ **"Quem move a conversa" — redesenho da tabela (2026-08-08)**,
+    pedido do usuário ("quem está movimentando essa narrativa. Engajamento,
+    reposts, comentários etc."), com um mockup próprio de referência
+    (colunas Autor/Plataforma/Papel na conversa/Seguidores/Publicações/
+    Engajamento). `AuthorsList` ganhou uma 4ª variante,
+    `variant="disseminators"`, usada só nesta seção (as outras 3 páginas
+    que reusam o componente continuam com `full`/`general`/`entity`, sem
+    mudança de comportamento):
+    - **Plataforma** — campo novo `AuthorRow.platforms` (`get_authors_ranking`,
+      migration `20260808020000`), derivado de
+      `bw_top_author_platform_tags(platform_stats)`: só reporta uma
+      plataforma quando há uma chave real daquele vocabulário
+      (`twitterFollowers`/`instagramFollowerCount`/`facebookLikes`/
+      `tiktokLikes`/`linkedinLikes`/`blueskyFollowers`, mesmo vocabulário de
+      `mentions.engagement`) presente no `platform_stats` já sincronizado
+      daquele autor — nunca inferida/fabricada. ⚠️ Só `twitter*` é
+      confirmado contra a documentação da Brandwatch para o endpoint Top
+      Authors (ver `foundation/data-model.md`); as demais plataformas só
+      aparecem quando o payload real trouxer essas chaves, o que não está
+      documentado como garantido — pode ficar "—" (sem sinal conhecido)
+      para autores fora do X/Twitter, mesmo que ativos noutra rede.
+    - **Papel na conversa** — nenhum dado novo de backend, 100%
+      presentation-layer (`authorRole()`, `components/intelligence-center/
+      author-color.ts`): quando o autor tem uma Entity vinculada de tipo
+      `media_outlet`/`institution`/`party`, o papel é "Imprensa"/
+      "Institucional"/"Partidário"; sem Entity institucional vinculada
+      (a maioria — pessoas físicas), cai pro sentimento dominante já
+      calculado (`dominantSentiment()`, mesma fonte já usada por
+      Detratores/Impulsionadores logo abaixo): "Crítico" (negativo),
+      "Apoiador" (positivo), "Neutro" (neutro). `—` (nunca inventado)
+      quando não há Entity institucional **e** não há dado de sentimento
+      suficiente pra classificar — mesma limitação de cobertura do
+      enriquecimento de sentimento por autor já documentada abaixo.
+    - **Seguidores** — campo novo `AuthorRow.followers`
+      (`bw_query_top_authors`/`bw_query_top_tweeters.followers`, de
+      `twitterFollowers` — já sincronizado desde `20260710050000`, nunca
+      exposto por esta function até agora). `max()` entre categorias que
+      casam com o autor (nunca soma — é um atributo de perfil, não de
+      atividade, diferente de alcance/engajamento/menções, que já somam
+      por design).
+    - **Publicações**/**Engajamento** reusam `mentions`/`engagement`
+      (mesmos campos já existentes, só relabeled nesta variante — nenhuma
+      mudança de cálculo).
+    - Ordenação padrão por Seguidores (não por Alcance, que esta variante
+      não exibe) — `DEFAULT_SORT_BY_VARIANT`, `authors-list.tsx`.
+    - Colunas Partido/Ideologia/Alcance/Sentimento (variante `full`) não
+      aparecem nesta variante — já cobertas noutro lugar da mesma página
+      (`Detratores`/`Impulsionadores` logo abaixo, que continuam sentimento-
+      only) e não fazem parte do que foi pedido para este widget
+      específico.
   - **Detratores / Impulsionadores positivos**: ✅ **Implementado
     (2026-07-14)**. Derivado no frontend, sem chamada de rede adicional,
     a partir do mesmo bloco `authors` já buscado acima: entre os autores

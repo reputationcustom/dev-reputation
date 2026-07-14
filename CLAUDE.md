@@ -6959,6 +6959,178 @@ narrativa fora da categoria "Pautas"). Sem automação de browser disponível
 não foram confirmados visualmente num navegador real, mesma limitação já
 registrada em toda sessão anterior de `intelligence-center` neste arquivo.
 
+### SOV não mudava ao trocar de período — snapshot de um único dia, não agregado (2026-08-08)
+
+User report: "SOV precisa mudar de acordo com o período que o usuário
+selecionou. Por exemplo, estou no mensal e mudo para diário, a proporção
+de SOV precisa mudar, não faz sentido se manter a mesma. Verifique e
+corrija doc e implementação."
+
+**Causa raiz confirmada por leitura direta de `get_narratives_table`**
+(última versão antes desta sessão, `20260805010000`): `sov_pct`/
+`total_mentions` vinham de `latest_day` — um `distinct on (narrative_id)
+order by metric_date desc` sobre `public.narratives_overview`, que usava
+`p_period_start`/`p_period_end` só pra filtrar QUAIS dias são elegíveis,
+nunca pra somar sobre eles; o `distinct on` descarta todos os dias menos
+o mais recente dentro da janela e devolve o `sov_percent` **daquele único
+dia**. Como todo preset de período no header (Diário/Semanal/Mensal)
+termina em "hoje" (`header-context.tsx`), "o dia mais recente dentro da
+janela" é sempre o mesmo dia nos 3 modos — daí o SOV nunca mudar ao
+trocar de período, exatamente o sintoma relatado. Não é uma regressão do
+bug de escopo já corrigido em 2026-07-11 (`20260711080000` — denominador
+por `organization_id` em vez de `query_id`, esse sim já corrigido e
+correto) — é uma granularidade diferente, sempre presente desde que essa
+função existe: SOV nunca foi agregado pelo período pedido, só amostrado
+num único dia dentro dele. `.dev/specs/aggregated-metrics/sql-aggregation.md`
+descrevia isso como projeto original ("dado bruto por dia", contrastado
+com os 3 scores "período-dependentes" calculados dentro da function) — a
+própria spec documentava o bug como se fosse a decisão correta.
+
+**Fix** (migration `20260808030000`, sem `drop function` — mesma
+assinatura de `20260805010000`, só o cálculo interno de 2 colunas muda):
+`sov_pct`/`total_mentions` passam a vir de `period_agg.vol_current` (soma
+de `total_mentions` da Narrativa sobre `p_period_start..p_period_end` —
+essa soma já existia há tempos dentro de `period_agg`, usada só por
+Momentum, nunca por SOV) dividido por um novo `query_period_totals` (mesmo
+agregado, por `query_id`, sobre **todas** as Narrativas daquela Query —
+mesma definição de denominador que `public.narratives_overview.sov_percent`
+já usa por dia, só que somada ao longo do período em vez de lida de um
+único dia). `total_mentions` também precisou virar `period_agg.vol_current`
+junto — se só `sov_pct` mudasse, a mesma linha mostraria um SOV
+período-agregado ao lado de um "total de menções" ainda snapshot de um
+dia só, quebrando a consistência aritmética entre as duas colunas na
+mesma tela. `latest_day`/`public.narratives_overview` continuam sendo
+lidas (só pra resolver `title`/`query_id`/existência da linha, âncora do
+`join scope`) — só deixaram de ser a fonte de `sov_pct`/`total_mentions`
+em si. Nenhum outro score (Momentum/Tendência/Sentimento/Risco) foi
+tocado.
+
+**Efeito colateral esperado, correto**: combinado com o fix de
+`NarrativesTable` do mesmo dia (linhas com `sov_pct` zerado/nulo agora
+ocultadas, ver seção "Autores e Influenciadores redesenhada em 2 guias..."
+acima) — agora que SOV genuinamente muda por período, trocar pra um
+período curto (Diário) vai legitimamente esconder mais Narrativas sem
+menção naquele dia específico, o que é o comportamento correto, não um
+bug novo.
+
+**Documentação**: `sql-aggregation.md` (linha da tabela de functions,
+`get_narratives_table` — nota dedicada explicando o antes/depois).
+
+**Verificação**: sem componente TypeScript/frontend nesta mudança (SQL
+puro, mesma assinatura de entrada/saída — nenhuma Edge Function/tipo
+precisou mudar). Migration revisada manualmente (diff isolado contra
+`20260805010000` conferido — só `period_agg` ganhando `max(query_id)`, a
+CTE nova `query_period_totals`, e as 2 colunas do select final trocando
+de fonte, todo o resto byte-a-byte idêntico) — **não executada contra um
+banco real** nesta sessão, mesma limitação recorrente de toda sessão sem
+credenciais de deploy neste ambiente. `git push` para `develop` é o
+próximo passo; o sinal de que funcionou é o SOV de uma mesma Narrativa
+mostrando valores diferentes ao alternar Diário/Semanal/Mensal no header.
+
+### "Quem move a conversa" — plataforma/papel na conversa/seguidores no widget de disseminadores (2026-08-08)
+
+User request, com um mockup próprio de referência: "no detalhamento da
+narrativa precisamos da seguinte informação, quem está movimentando essa
+narrativa. Engajamento, reposts, comentários etc. Coloque essa
+visualização em Formação e propagação — principais disseminadores."
+
+**Auditoria antes do código**: "Formação e propagação — principais
+disseminadores" (`narrative-detail-content.tsx`) já reusa
+`get_authors_ranking`/`AuthorsList` (variante `full`: Autor/Partido/
+Ideologia/Menções/Alcance/Engaj./Sentimento — ver entrada "Detalhe de
+Narrativa — detratores/impulsionadores..." acima). O mockup do usuário
+pede um recorte de colunas diferente e mais focado (Autor/Plataforma/
+Papel na conversa/Seguidores/Publicações/Engajamento) — 2 campos reais
+faltavam por trás (`followers`/plataforma), 1 era presentation-layer puro
+("Papel na conversa").
+
+- **`followers`** — `bw_query_top_authors`/`top_tweeters.followers` (de
+  `twitterFollowers`, único campo de seguidores confirmado no envelope do
+  endpoint Top Authors, já sincronizado desde `20260710050000`) nunca
+  tinha sido exposto por `get_authors_ranking`. Migration
+  `20260808020000`: `max(r.followers)` no `group by` de `grouped` — `max`,
+  não `sum`, porque é um atributo de perfil estático (não deveria dobrar
+  quando o mesmo autor casa com mais de uma Narrativa no escopo, diferente
+  de alcance/engajamento/menções, que já somam por design e já têm esse
+  trade-off documentado).
+- **Plataforma** — nenhuma coluna de plataforma existia nesta function,
+  apesar de `platform_stats` (jsonb bruto por autor, mesmo endpoint) já
+  ser sincronizado desde a criação da tabela. Nova function auxiliar
+  `bw_top_author_platform_tags(platform_stats jsonb) returns text[]`: só
+  reporta uma plataforma quando há uma chave real daquele vocabulário
+  (mesmo já usado em `mentions.engagement`: `twitterFollowers`/
+  `twitterTweets`/`twitterRetweets`, `instagramFollowerCount`/
+  `instagramLikeCount`/`instagramCommentCount`, `facebookLikes/Comments/
+  Shares`, `tiktokLikes/Comments/Shares`, `linkedinLikes/Comments/Shares/
+  Impressions`, `blueskyFollowers/Likes/Replies/Reposts`) presente no
+  jsonb já sincronizado — nunca inferida/fabricada. Agregada por autor via
+  `platforms_flat`/`platforms_agg` (unnest + `array_agg(distinct ...)`,
+  já que um autor pode casar com mais de uma Category no escopo pedido).
+  ⚠️ **Limitação real, documentada em vez de escondida**: só `twitter*` é
+  confirmado contra a documentação da Brandwatch para este endpoint
+  especificamente (ver `foundation/data-model.md`) — as demais plataformas
+  só aparecem se o payload real trouxer essas chaves, o que não está
+  garantido pela doc; um autor genuinamente ativo fora do X/Twitter pode
+  ficar com `platforms: []` ("—" na UI) em vez de mostrar a rede certa.
+  Preferível a inventar uma plataforma sem sinal real (mesma premissa
+  project-wide de nunca fabricar dado que a Brandwatch não confirma).
+- **"Papel na conversa"** — 100% presentation-layer, nenhum dado novo de
+  backend (`authorRole()`, `components/intelligence-center/author-color.ts`):
+  quando o autor tem uma Entity vinculada de tipo `media_outlet`/
+  `institution`/`party` (já existente desde `entities/author-linking.md`,
+  2026-08-01), o papel é "Imprensa"/"Institucional"/"Partidário" — mais
+  informativo que sentimento pra esses casos (um veículo de imprensa não é
+  "crítico" ou "apoiador", é imprensa). Sem esse vínculo (a maioria dos
+  autores — pessoas físicas), cai pro sentimento dominante já calculado
+  (`dominantSentiment()`, mesma fonte que já alimenta Detratores/
+  Impulsionadores logo abaixo no mesmo widget): "Crítico"/"Apoiador"/
+  "Neutro". `—` (nunca inventado) quando não há Entity institucional
+  **nem** dado de sentimento suficiente — mesma limitação de cobertura já
+  documentada pra Detratores/Impulsionadores (`sentiment_positive/neutral/
+  negative` só populado pros top 10 autores por volume da Query inteira).
+- **`AuthorsList` ganhou uma 4ª variante, `variant="disseminators"`**
+  (`components/intelligence-center/authors-list.tsx`) — Autor/Plataforma/
+  Papel na conversa/Seguidores/Publicações/Engajamento, ordenação padrão
+  por Seguidores (não Alcance, que esta variante não exibe). "Publicações"/
+  "Engajamento" reusam `mentions`/`engagement` (mesmos campos já
+  existentes, só relabeled). Refatorado o corpo da tabela pra gate por
+  variante em cada célula (`variant === "disseminators"` liga Plataforma/
+  Papel/Seguidores e desliga Partido/Ideologia/Alcance/Sentimento) — as
+  outras 3 variantes (`full`/`general`/`entity`, usadas por Pautas
+  Eleitorais e as 2 guias de `/authors`) continuam com exatamente o mesmo
+  comportamento de antes. Só `narrative-detail-content.tsx` passa a usar
+  `variant="disseminators"` na seção "Formação e propagação — principais
+  disseminadores" — `DisseminationStanceLists` (Detratores/Impulsionadores)
+  continua logo abaixo, inalterada.
+- Propagação (Princípio técnico 5): `AuthorRow`
+  (`packages/shared-types/src/envelope.ts`), a cópia canônica
+  (`supabase/functions-shared-source/aggregated-metrics-service.ts` —
+  `AuthorRow`, `AuthorRankingRow`, `fetchAuthors`) e as **8** cópias
+  inline nas Edge Functions que usam `AuthorRow` (`get-page-{overview,
+  narratives,sentiment,platforms,themes,authors}`, `get-narrative-detail`,
+  `compose-narrative-synthesis` — este último não estava na lista de "7"
+  documentada em `entities/author-linking.md` até agora, corrigido pra 8
+  na mesma revisão) ganharam `followers`/`platforms` via um script Node de
+  uso único, mesma técnica já usada em sessões anteriores — 3 âncoras
+  exatas substituídas nos 8 arquivos, contagem de ocorrências (1 por
+  arquivo) conferida antes de aplicar.
+
+**Documentação**: `intelligence-center/narratives-exploration.md`
+("Formação e propagação", novo bloco ✅), `aggregated-metrics/
+sql-aggregation.md` e `standard-json-envelope.md` (campos novos do bloco
+`authors`), `foundation/data-model.md` (`bw_query_top_authors.followers`/
+`platform_stats`, novo consumidor).
+
+**Verificação**: `npx tsc --noEmit` e `npm run build` (com `rm -rf .next`
+antes) passam limpos — 21 rotas, mesma contagem de antes (nenhuma rota
+nova/removida, só um widget numa página já existente). Migration
+`20260808020000` revisada manualmente, não executada contra um banco real
+nesta sessão — mesma limitação recorrente de toda sessão sem credenciais
+de deploy neste ambiente. `git push` para `develop` é o próximo passo; o
+sinal de que funcionou é a coluna "Plataforma" mostrando "X / Twitter"
+pra autores com esse sinal sincronizado, e "Seguidores" deixando de
+mostrar "—" pra qualquer autor cujo `followers` já esteja sincronizado.
+
 ## Directory structure
 
 ```

@@ -1043,7 +1043,7 @@ ver nota de sampling em §5 acima). Adicionada em `20260710010000`.
 | `volume` | `integer` | sim | default `0` |
 | `reach_estimate` | `bigint` | não | corrigido de `integer` pra `bigint` em `20260712000000` (bug de overflow) |
 | `impact` | `numeric` | não | |
-| `followers` | `integer` | não | de `twitterFollowers` — único campo de seguidores confirmado no envelope deste endpoint (Facebook/Reddit não têm campo de seguidores documentado aqui). Adicionado `20260710050000` |
+| `followers` | `integer` | não | de `twitterFollowers` — único campo de seguidores confirmado no envelope deste endpoint (Facebook/Reddit não têm campo de seguidores documentado aqui). Adicionado `20260710050000`. ✅ Exposto via `get_authors_ranking` (2026-08-08, migration `20260808020000`) — widget "Quem move a conversa", `AuthorRow.followers` |
 | `is_influential` | `boolean` | sim | gerada, `coalesce(followers, 0) >= 100000` — adicionado `20260710050000`, pedido do usuário ("mais de 100000 seguidores... os mais influentes") |
 | `tweets` | `integer` | não | de `twitterTweets` — contagem de posts do autor. ✅ Implementado 2026-07-11, migration `20260711060000` |
 | `retweets` | `integer` | não | de `twitterRetweets` — contagem de reposts do autor. Mesmo migration que `tweets` acima |
@@ -1051,7 +1051,7 @@ ver nota de sampling em §5 acima). Adicionada em `20260710010000`.
 | `account_type` | `text` | não | de `authorAccountType` — confirmado no envelope do endpoint (ex: valores tipo governo/empresa/pessoal, exatos ainda não catalogados). ✅ Implementado 2026-07-11, migration `20260711060000` — habilita filtros tipo "Government Verification"/"Business Verification" já vistos num dashboard real da Brandwatch |
 | `country_code` / `country_name` | `text` | não | de `countryCode`/`countryName` — país do autor (não do conteúdo da mention). Mesma migration que `account_type`, habilita "distribuição geográfica dos autores" (distinto de §5's demografia por *mention*) |
 | `sentiment_positive`/`neutral`/`negative` | `integer` | sim | default `0` |
-| `platform_stats` | `jsonb` | sim | objeto `data` inteiro devolvido pelo endpoint por autor (twitter*/facebook*/reddit* etc.) — mesmo raciocínio de `mentions.engagement`, sem coluna por campo. `account_type`/`country_code`/`country_name` acima são extrações de campos que já vivem aqui, não chamada nova |
+| `platform_stats` | `jsonb` | sim | objeto `data` inteiro devolvido pelo endpoint por autor (twitter*/facebook*/reddit* etc.) — mesmo raciocínio de `mentions.engagement`, sem coluna por campo. `account_type`/`country_code`/`country_name` acima são extrações de campos que já vivem aqui, não chamada nova. ✅ **Lido pela primeira vez em agregação (2026-08-08, migration `20260808020000`)**: `bw_top_author_platform_tags(platform_stats)` deriva `AuthorRow.platforms` a partir das chaves realmente presentes neste jsonb (`twitterFollowers`/`instagramFollowerCount`/`facebookLikes`/`tiktokLikes`/`linkedinLikes`/`blueskyFollowers`, mesmo vocabulário de `mentions.engagement`) — nunca fabrica uma plataforma sem sinal real; só `twitter*` é confirmado contra a documentação da Brandwatch para este endpoint especificamente, as demais são melhor esforço sobre o que já estiver sincronizado |
 | `metric_week` | `date` | sim | mesmo caráter de snapshot que `bw_query_topics.metric_week` |
 | `synced_at` | `timestamptz` | sim | |
 
