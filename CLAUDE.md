@@ -5822,6 +5822,87 @@ não foram testados contra uma chamada real — revisar via logs
 deploy pra confirmar que o tom de fato mudou na prática, não só na
 instrução.
 
+### `daily_metrics` nunca completava a fase — corte silencioso de 1000 linhas do PostgREST na checagem de frescor (2026-08-06)
+
+User report, com log real colado do Supabase: `bw-sync` retornando
+`{"ok":true,"skipped":true,"reason":"brandwatch_rate_limit_near_ceiling","lastRateLimitUsed":27}`
+em invocações alternadas, e nas invocações que de fato rodavam, a fase
+`daily_metrics` reprocessava **exatamente as mesmas 8 categoryIds** a
+cada heartbeat de 15min (32827164/32844977/32844976/32752127/32752126/
+32827165/32827163/32752234), sempre terminando em `invocation:step_done
+{"stayOnStep":true,"nextStep":"daily_metrics","cycleComplete":false}` —
+nunca avançando pra `hourly_metrics`/`topics`/`top_authors`/`platform_by_narrative`/
+`x_insights`/`top_sites`/`demographics`/`sov`/`full_text_enrichment`. Daí
+o sintoma relatado: "os dados não estão sendo atualizados completamente".
+
+**Causa raiz**: `fetchDailySentimentFreshness()` (bw-sync/index.ts,
+throttle de burst da 2026-07-22 — `MAX_SENTIMENT_TARGETS_PER_INVOCATION =
+8`/`DAILY_SENTIMENT_FRESH_WINDOW_MS = 25min`) decidia quais Narrativas
+pular (já sincronizadas há menos de 25min) com um `select category_id,
+synced_at from bw_query_metrics_daily where ... category_id in (...)`
+**sem `order()` nem `limit()`**, computando o `MAX(synced_at)` por
+categoria no lado do client (TypeScript). `bw_query_metrics_daily`
+acumula histórico indefinidamente por design (ver "Data storage is
+historical by design" acima) — ~196 dias por categoria desde
+`BRANDWATCH_MENTIONS_START_DATE` — e `supabase/config.toml` já fixa
+`max_rows = 1000` (o limite padrão do PostgREST). Esta organização tem
+mais de 8 Narrativas ativas para a Query; 8+ categorias × ~196 linhas
+cada ultrapassa 1000 linhas facilmente, e **sem `ORDER BY` o Postgres não
+garante qual subconjunto de linhas sobrevive ao corte de `max_rows`** —
+para as categorias cujas linhas mais recentes ficavam fora das primeiras
+1000 devolvidas, o `MAX(synced_at)` calculado no client saía incompleto
+ou ausente, fazendo essas categorias parecerem **sempre** "não
+sincronizadas recentemente", mesmo tendo acabado de ser processadas.
+Como o loop de `runDailyMetricsStep()` itera `narrativeCategoryIds` em
+ordem fixa e capa em 8 chamadas reais por invocação, as mesmas primeiras
+8 categorias "vítimas" do corte eram reprocessadas para sempre — nenhuma
+categoria além da 8ª nunca chegava a ser sequer tentada, e a fase nunca
+liberava `stayOnStep`. Efeito colateral: cada invocação gastava 9
+chamadas reais à Brandwatch (8 categorias + query inteira) só repetindo
+trabalho já feito, empurrando `lastRateLimitUsed` perto do teto (27/30) e
+acionando o gate proativo de 2026-07-21 na invocação seguinte — as duas
+falhas (fase presa + rate limit) eram o mesmo bug, não dois problemas
+separados.
+
+**Fix** (migration `20260806010000`): a query bruta (sujeita ao corte
+`max_rows`) foi substituída por uma function `language sql` nova,
+`bw_query_metrics_daily_category_freshness(p_project_id, p_query_id,
+p_category_ids)` — `GROUP BY category_id` executado no próprio Postgres
+devolve no máximo `len(category_ids)` linhas, nunca mais que isso,
+imune ao `max_rows` independentemente de quanto histórico a tabela
+acumule (a mesma classe de garantia que uma agregação SQL sempre dá sobre
+uma seleção bruta paginada). `fetchDailySentimentFreshness()` agora chama
+essa function via `.rpc(...)` em vez de `.from(...).select(...)`.
+Acrescentado também um índice de suporte,
+`bw_query_metrics_daily_project_query_category_synced_idx (project_id,
+query_id, category_id, synced_at desc)` — prevenção, não reação: a mesma
+classe de "tabela grande sem índice cuja coluna líder sirva o filtro
+real" já causou um `statement timeout` real em `event-radar` (ver
+"`run_event_detection()` nunca gravava nada", 2026-08-03), e sem esse
+índice o `GROUP BY` novo ficaria lento (não haveria erro, só voltaria a
+degradar como esta mesma classe de tabela já degradou antes).
+
+**Nenhuma outra checagem de frescor no arquivo tem o mesmo risco** —
+auditado explicitamente: `isGrainStale()`/`isQueryGroupSovStale()`/
+`isTopicsStale()`/`isTopAuthorsStale()`/`isXInsightsStale()` sempre usam
+`.order("synced_at", desc).limit(1)` escopadas a **uma** categoria por
+chamada (nunca um `IN (...)` multi-categoria sem `ORDER BY`/`LIMIT`) —
+`fetchDailySentimentFreshness()` era a única função fazendo um `select`
+multi-linha sem paginação/ordenação explícita neste arquivo.
+
+**Verificação**: `npx tsc --noEmit` e `npm run build` passam limpos (21
+rotas — mudança é Deno-only, fora do escopo do `tsconfig.json` do
+Next.js, então o build não valida a sintaxe Deno diretamente; revisado
+manualmente linha por linha). Migration `20260806010000` revisada
+manualmente (parênteses/marcadores `$$` balanceados), não executada
+contra um banco real nesta sessão — mesma limitação recorrente de toda
+sessão sem credenciais de deploy neste ambiente. `git push` para
+`develop` é o próximo passo para isso rodar de verdade — o sinal de que
+funcionou é `sync_cursors.next_step` deixando de ficar preso em
+`"daily_metrics"` entre heartbeats sucessivos, e as fases seguintes
+(`hourly_metrics`/`topics`/`top_authors`/etc.) voltando a aparecer nos
+logs `[bw-sync] invocation:step_start`.
+
 ## Directory structure
 
 ```

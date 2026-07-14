@@ -2951,6 +2951,26 @@ const DAILY_SENTIMENT_FRESH_WINDOW_MS = 25 * 60 * 1000;
 // syncSentimentMetrics(), então o MAX(synced_at) por categoria já reflete
 // "a última vez que o sentimento dessa Narrativa foi buscado", não
 // precisa filtrar por data.
+//
+// ⚠️ 2026-08-06: bug real de produção corrigido aqui — esta função ANTES
+// fazia `select category_id, synced_at from bw_query_metrics_daily where
+// ... category_id in (...)` (sem order/limit) e computava o MAX(synced_at)
+// por categoria no client. `bw_query_metrics_daily` acumula histórico
+// indefinidamente (~196 dias por categoria desde 2026-01-01) e
+// `supabase/config.toml` fixa `max_rows = 1000` (padrão do PostgREST) —
+// com mais de ~5 categorias essa query já ultrapassa 1000 linhas e é
+// silenciosamente truncada, sem garantia de quais linhas sobrevivem ao
+// corte (sem ORDER BY). Resultado: para organizações com mais de 8
+// Narrativas, o cálculo de frescor ficava sistematicamente errado para as
+// categorias cujas linhas recentes caíam fora do corte — elas nunca eram
+// marcadas "fresh", então o loop de `runDailyMetricsStep()` reprocessava
+// SEMPRE as mesmas primeiras 8 categorias (MAX_SENTIMENT_TARGETS_PER_INVOCATION),
+// nunca avançava para as demais, e a fase `daily_metrics` nunca liberava
+// `stayOnStep` — o pipeline inteiro ficava preso nela, sem nunca alcançar
+// hourly_metrics/topics/top_authors/etc. Fix: agregação feita no Postgres
+// via RPC (`bw_query_metrics_daily_category_freshness`, migration
+// `20260806010000`) — devolve no máximo `categoryIds.length` linhas
+// (GROUP BY), nunca sujeita ao corte de `max_rows`.
 async function fetchDailySentimentFreshness(
   supabase: SupabaseClient,
   projectId: number,
@@ -2959,25 +2979,19 @@ async function fetchDailySentimentFreshness(
   maxAgeMs: number,
 ): Promise<Set<number>> {
   if (categoryIds.length === 0) return new Set();
-  const { data, error } = await supabase
-    .from("bw_query_metrics_daily")
-    .select("category_id, synced_at")
-    .eq("project_id", projectId)
-    .eq("query_id", queryId)
-    .in("category_id", categoryIds);
+  const { data, error } = await supabase.rpc("bw_query_metrics_daily_category_freshness", {
+    p_project_id: projectId,
+    p_query_id: queryId,
+    p_category_ids: categoryIds,
+  });
   if (error) throw new Error(`Erro checando frescor de bw_query_metrics_daily (sentimento): ${error.message}`);
-
-  const latestByCategory = new Map<number, number>();
-  for (const row of (data ?? []) as { category_id: number; synced_at: string }[]) {
-    const ts = new Date(row.synced_at).getTime();
-    const prev = latestByCategory.get(row.category_id);
-    if (prev === undefined || ts > prev) latestByCategory.set(row.category_id, ts);
-  }
 
   const fresh = new Set<number>();
   const nowMs = Date.now();
-  for (const [categoryId, ts] of latestByCategory) {
-    if (nowMs - ts < maxAgeMs) fresh.add(categoryId);
+  for (const row of (data ?? []) as { category_id: number; latest_synced_at: string | null }[]) {
+    if (!row.latest_synced_at) continue;
+    const ts = new Date(row.latest_synced_at).getTime();
+    if (nowMs - ts < maxAgeMs) fresh.add(row.category_id);
   }
   return fresh;
 }
