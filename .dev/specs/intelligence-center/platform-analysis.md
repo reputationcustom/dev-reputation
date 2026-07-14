@@ -36,6 +36,14 @@ atualizado: 2026-07-18
 > reconfirmados ao vivo contra `developers.brandwatch.com/docs/twitter-insights`
 > nesta sessão (iguais aos já documentados em `foundation/data-model.md`
 > desde 2026-07-11/13, agora com uma segunda confirmação independente).
+>
+> ✅ **"Principais tópicos positivos"/"Principais tópicos negativos"
+> adicionados (2026-07-14)** — pedido do usuário: "em todas as páginas é
+> importante existir os principais tópicos positivos e negativos".
+> `PAGE_BLOCKS.platforms` ganhou `term_signals`; novo par de widgets logo
+> antes do painel "Insights", reusando `PositiveDriversList`/
+> `NegativeDriversList` (mesmos componentes de `/sentiment`,
+> `get_term_signals` sem filtro de Narrativa — cobre a Query inteira).
 
 > Cobre "Página 4 — Análise por Plataforma" / item "10. Visualizações
 > recomendadas" do documento de estrutura do protótipo. Sem protótipo

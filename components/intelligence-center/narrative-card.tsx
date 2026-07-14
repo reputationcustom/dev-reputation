@@ -92,6 +92,44 @@ export function NarrativeCard({ narrative }: { narrative: NarrativeRow }) {
         </div>
       )}
 
+      {/* Mapeamento tópico↔Narrativa por polaridade — pedido do usuário
+          2026-07-14 ("é importantíssimo esse mapeamento dos tópicos com a
+          narrativa para melhorar o entendimento... do usuário final"),
+          narrative.positive_topics/negative_topics (get_narratives_table,
+          migration 20260805010000). Capado a 3 chips por lado aqui (card
+          compacto) — a lista completa (até 5) fica disponível no detalhe
+          da Narrativa via os widgets "Drivers positivos/negativos". */}
+      {(narrative.positive_topics.length > 0 || narrative.negative_topics.length > 0) && (
+        <div className="flex flex-col gap-1.5">
+          {narrative.positive_topics.length > 0 && (
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="text-xs font-semibold text-text-tertiary">Tópicos +</span>
+              {narrative.positive_topics.slice(0, 3).map((topic) => (
+                <span
+                  key={topic}
+                  className="rounded-full bg-sentiment-positive-bg px-2.5 py-1 text-xs font-semibold text-sentiment-positive"
+                >
+                  {topic}
+                </span>
+              ))}
+            </div>
+          )}
+          {narrative.negative_topics.length > 0 && (
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="text-xs font-semibold text-text-tertiary">Tópicos -</span>
+              {narrative.negative_topics.slice(0, 3).map((topic) => (
+                <span
+                  key={topic}
+                  className="rounded-full bg-sentiment-negative-bg px-2.5 py-1 text-xs font-semibold text-sentiment-negative"
+                >
+                  {topic}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {narrative.tags.length > 0 && (
         <div className="flex flex-wrap gap-2">
           {narrative.tags.map((tag) => (

@@ -12,7 +12,7 @@ import { TrendLineChart } from "@/components/intelligence-center/charts/trend-li
 import { AuthorsList } from "@/components/intelligence-center/authors-list";
 import { DisseminationStanceLists } from "@/components/intelligence-center/dissemination-stance-lists";
 import { DisseminationGraphPanel } from "@/components/intelligence-center/dissemination-graph";
-import { TermSignalsList } from "@/components/intelligence-center/term-signals-list";
+import { TermSignalsList, PositiveDriversList, NegativeDriversList } from "@/components/intelligence-center/term-signals-list";
 import { SentimentBadge, RiskBadge, TrendIndicator, MomentumLabel } from "@/components/intelligence-center/score-badges";
 import { KPI_TOOLTIPS } from "@/components/intelligence-center/metric-card";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -254,6 +254,20 @@ export function NarrativeDetailContent({
           emptyMessage="Nenhum termo/frase em destaque para esta Narrativa neste período."
         />
       </WidgetCard>
+
+      {/* ✅ Adicionado 2026-07-14 (pedido do usuário: "no caso das
+          narrativas é importantíssimo esse mapeamento dos tópicos com a
+          narrativa para melhorar o entendimento da IA e do usuário final")
+          — mesmo `term_signals` acima (já escopado a esta Narrativa via
+          filters.narratives), separado por polaridade. */}
+      <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+        <WidgetCard title="Tópicos positivos da narrativa" status={status} onRetry={retry}>
+          <PositiveDriversList signals={envelope?.term_signals ?? []} />
+        </WidgetCard>
+        <WidgetCard title="Tópicos negativos da narrativa" status={status} onRetry={retry}>
+          <NegativeDriversList signals={envelope?.term_signals ?? []} />
+        </WidgetCard>
+      </div>
 
       <WidgetCard title="Menções relevantes" status={status} onRetry={retry}>
         <EmptyState message="Lista de menções relevantes ainda não implementada — sem bloco correspondente no envelope atual." />

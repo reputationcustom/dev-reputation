@@ -5596,6 +5596,102 @@ agora — não foi o que o usuário reportou ver.
 **Verificação**: `npx tsc --noEmit` limpo. Sem mudança de SQL/Edge
 Function nesta sessão.
 
+### Mapeamento tópico↔Narrativa por polaridade + Drivers de sentimento em todas as páginas (2026-07-14)
+
+User request, 2 partes na mesma mensagem: (1) "Na integração com a
+brandwatch temos os topics vinculados com as narrativas. Esses tópicos
+precisam aparecer no envelope das narrativas para que a IA consiga
+utilizar em sua análise... No caso das narrativas é importantíssimo esse
+mapeamento dos tópicos com a narrativa para melhorar o entendimento da IA
+e do usuário final"; (2) "em todas as páginas é importante existir os
+principais tópicos positivos e negativos."
+
+**Auditoria antes do código** confirmou que os dois pedidos apontavam
+para gaps reais, distintos: `get_narratives_table.tags` já mapeava
+tópico→Narrativa desde `20260721010000`, mas sem nenhuma polaridade — não
+dava pra responder "quais termos especificamente puxam o sentimento desta
+Narrativa" a partir da tabela/card. `get_term_signals` já resolve
+sentimento por termo (classificação por maioria, corrigida em
+`20260726030000`), mas só escopado a 1 Narrativa por vez
+(`filters.narratives`) — inviável para preencher N linhas simultâneas da
+tabela de Narrativas sem N chamadas. E `PAGE_BLOCKS` só incluía
+`term_signals` em `sentiment`/`themes`/`narrative_detail` — `overview`,
+`narratives` e `platforms` não tinham o bloco de forma alguma, confirmando
+o segundo pedido como um gap real de wiring, não uma percepção errada do
+usuário.
+
+**Migration `20260805010000`** — `get_narratives_table` ganhou (`drop
+function` necessário, mesma regra de sempre para aumento de colunas de
+saída) `positive_topics`/`negative_topics` (`text[]`, até 5 itens cada):
+mesmo universo de `tags` (`bw_query_topics`, `topic_type in ('hashtags',
+'phrases', 'words')`, semana mais recente sincronizada), classificados
+pela **mesma regra de maioria já usada por `get_term_signals`**
+(`sentiment_positive`/`neutral`/`negative`, o balde com mais menções
+vence) — só aplicada por Narrativa (`category_id`) em vez de por filtro
+arbitrário, ranqueados por `volume` (mesmo critério de `tags`, não
+`trending` — aqui o objetivo é "quais termos mais citados puxam esse
+sentimento", não "quais estão crescendo mais rápido"). Sempre array,
+nunca `null`; `{}` quando não há termo com sentimento predominante nesse
+lado no período sincronizado.
+
+`narrative_summary_build_payload` (o job `narrative-summary-composer` que
+escreve `narratives.description`) ganhou os 2 campos no mesmo objeto
+`scores` que já lia de `get_narratives_table` (`create or replace`, mesma
+assinatura/retorno `jsonb`, sem `drop function`) — a IA que escreve o
+resumo executivo de cada Narrativa agora vê explicitamente quais termos
+puxam o sentimento pra cada lado, não só a lista neutra de `tags`. Como
+`positive_topics`/`negative_topics` também fazem parte do bloco
+`narratives` do envelope padrão, chegam automaticamente ao payload da IA
+de síntese geral (`toAiPayload`/Camada 1 de `ai-synthesis.md`) em toda
+página cujo `PAGE_BLOCKS` inclua `'narratives'` — satisfaz "para que a IA
+consiga utilizar em sua análise" sem nenhuma chamada adicional.
+
+**Propagação (Princípio técnico 5)**: `NarrativeRow`
+(`packages/shared-types/src/envelope.ts`), a cópia canônica
+(`supabase/functions-shared-source/aggregated-metrics-service.ts` —
+`NarrativeRow` **e** `NarrativeTableRow`, as duas interfaces do lado Deno
+que espelham o mesmo shape) e as 7 Edge Functions deployadas
+(`get-page-{overview,narratives,sentiment,platforms,themes,authors}`,
+`get-narrative-detail`) ganharam os 2 campos — propagação mecânica via
+script Node de uso único (substituição por igualdade de string exata,
+contando ocorrências pra garantir 1 match por arquivo antes de aplicar),
+mesma técnica já usada na sessão da Fase B (2026-08-02). Confirmado por
+`diff` contra o canônico depois: só as diferenças já conhecidas/esperadas
+(comentário do cabeçalho, linha de import, um comentário citando o nome
+da página) sobraram, nada da propagação divergiu.
+
+**`PAGE_BLOCKS`** ganhou `'term_signals'` em `overview`/`narratives`/
+`platforms` (mesma propagação) — `themes`/`narrative_detail` já tinham o
+bloco (só para a nuvem de palavras `TermSignalsList`, sem separação de
+polaridade). Novo par de widgets "Principais tópicos positivos"/
+"Principais tópicos negativos" (`overview`, `narratives`, `platforms`) e
+"Tópicos positivos/negativos por pauta"/"da narrativa" (`themes`,
+`narrative_detail`) — todos reusando `PositiveDriversList`/
+`NegativeDriversList` (`components/intelligence-center/term-signals-list.tsx`,
+já existentes desde `/sentiment`, 2026-07-17) sem nenhuma mudança nesses
+componentes. `NarrativeCard` (`components/intelligence-center/narrative-card.tsx`)
+ganhou 2 linhas de chips coloridos (verde/vermelho, até 3 termos por
+lado) acima da linha neutra de `tags` já existente, usando
+`positive_topics`/`negative_topics` — mapeamento tópico↔Narrativa visível
+diretamente no card, sem abrir o detalhe.
+
+**Especificações atualizadas**: `aggregated-metrics/sql-aggregation.md`
+(nova seção "Mapeamento tópico↔Narrativa por polaridade"),
+`standard-json-envelope.md` (`narratives`/`term_signals`),
+`block-mapping-per-page.md` (linha `term_signals` da tabela + nota de
+topo), `intelligence-center/narratives-exploration.md` (card + detalhe),
+`executive-overview.md`, `platform-analysis.md`, `electoral-themes.md`,
+`sentiment-analysis.md` (nota de que o widget deixou de ser exclusivo
+desta página).
+
+**Verificação**: `npx tsc --noEmit` e `npm run build` (com `rm -rf .next`
+antes) passam limpos — 21 rotas, nenhuma rota nova (só widgets
+adicionais em páginas já existentes). Migration `20260805010000` revisada
+manualmente, não executada contra um banco real nesta sessão (mesma
+limitação recorrente de toda sessão sem credenciais de deploy neste
+ambiente) — `git push` para `develop` (fluxo já estabelecido) é o próximo
+passo para isso rodar de verdade.
+
 ## Directory structure
 
 ```

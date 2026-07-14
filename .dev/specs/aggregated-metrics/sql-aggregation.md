@@ -653,6 +653,65 @@ de risco, texto de resumo e barra de sentimento positivo/neutro/negativo.
   é candidato natural para `summary`/`ai-synthesis` (classificação feita
   pela IA sobre o conjunto já sincronizado), não um cálculo local novo.
 
+### Mapeamento tópico↔Narrativa por polaridade (2026-07-14, migration `20260805010000`)
+
+✅ **Implementado** — pedido do usuário: "esses tópicos precisam aparecer
+no envelope das narrativas para que a IA consiga utilizar em sua
+análise... No caso das narrativas é importantíssimo esse mapeamento dos
+tópicos com a narrativa". `tags` (acima) já mapeia tópico→Narrativa, mas
+sem polaridade — não dava pra responder "quais termos especificamente
+puxam o sentimento desta Narrativa pra baixo/pra cima" sem uma segunda
+chamada (`get_term_signals`, que só escopa 1 Narrativa por vez via
+`filters.narratives`, inviável para preencher N linhas simultâneas da
+tabela). `get_narratives_table` ganhou mais 2 colunas de saída (`drop
+function` necessário, mesma regra de sempre para aumento de colunas):
+
+- `positive_topics`/`negative_topics` (`text[]`, até 5 itens cada): mesmo
+  universo de termos de `tags` (`bw_query_topics`, `topic_type in
+  ('hashtags', 'phrases', 'words')`, semana mais recente sincronizada),
+  classificados por maioria entre `sentiment_positive`/`neutral`/
+  `negative` — **exatamente a mesma regra de classificação já usada por
+  `get_term_signals`** (não uma segunda fórmula divergente), só aplicada
+  por Narrativa (`category_id`) em vez de por filtro arbitrário. Ranking
+  dentro de cada balde por `volume` desc (mesmo critério de `tags`, não
+  `trending`/crescimento — aqui o objetivo é "quais termos mais citados
+  puxam esse sentimento", não "quais estão crescendo mais rápido", esse
+  segundo caso já é coberto por `get_term_signals`/Drivers). Sempre array
+  (nunca `null`); `{}` quando a Narrativa não tem nenhum termo com aquele
+  sentimento predominante no período sincronizado — nunca inventado.
+
+**Dois consumidores**, ambos parte deste mesmo pedido:
+1. **`NarrativeRow.positive_topics`/`negative_topics`** — chega ao
+   frontend via `fetchNarratives` (sem mapeamento adicional, já vem pronto
+   da RPC) e ao card de Narrativa (`NarrativeCard`, até 3 chips por lado,
+   verde/vermelho — mesma paleta de `DriverChip`/`term-signals-list.tsx`).
+   Como faz parte do bloco `narratives` do envelope, também chega
+   automaticamente ao payload da IA (`toAiPayload`/Camada 1 de
+   `ai-synthesis.md`) em toda página cujo `PAGE_BLOCKS` inclua
+   `'narratives'` (overview/narratives/themes/reports) — satisfaz "para
+   que a IA consiga utilizar em sua análise" sem precisar de nenhuma
+   chamada adicional.
+2. **`narrative_summary_build_payload`** (`narrative-summary-composer`,
+   o job que escreve `narratives.description`/`summary` — ver
+   "`narratives.description` finally gets a producer" em `CLAUDE.md`)
+   ganhou os dois campos no objeto `scores` que já lê de
+   `get_narratives_table` (`create or replace`, mesma assinatura/retorno
+   `jsonb`, sem `drop function`) — a IA que escreve o resumo executivo de
+   cada Narrativa agora vê explicitamente quais termos puxam o sentimento
+   pra cada lado, não só a lista neutra de `tags`.
+
+**Também estendido a todas as páginas** (segunda parte do pedido do
+usuário: "em todas as páginas é importante existir os principais tópicos
+positivos e negativos") — `PAGE_BLOCKS` (`service-layer-aggregation.md`)
+ganhou `'term_signals'` em `overview`/`narratives`/`platforms` (antes só
+`sentiment`/`themes`/`narrative_detail`), reusando os mesmos componentes
+`PositiveDriversList`/`NegativeDriversList` (`term-signals-list.tsx`, já
+existentes desde `/sentiment`) — nenhuma function/coluna nova precisou
+disso, só o wiring que já faltava. `themes` e `narrative_detail` (que já
+tinham `term_signals` só para a nuvem de palavras, `TermSignalsList`)
+ganharam os mesmos 2 widgets de Drivers ao lado da nuvem existente. Ver
+`block-mapping-per-page.md` para a tabela atualizada.
+
 A barra de risco do card usa a mesma cor/faixa de `risk_label`
 (`_design-tokens.md`) já usada pelo badge ao lado do título — não uma
 paleta nova. A borda esquerda do card usa só 3 estados (verde/vermelho/

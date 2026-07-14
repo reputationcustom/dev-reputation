@@ -142,6 +142,17 @@ Mesmo público das demais páginas deste módulo.
   `people`/`places`/`organisations`) num só ranking, sem filtrar
   especificamente por `phrases` — não é um gap (a spec nunca pediu só
   frases), mas fica registrado caso o produto queira restringir no futuro.
+  ✅ **Deixou de ser exclusividade desta página (2026-07-14)** — pedido do
+  usuário: "em todas as páginas é importante existir os principais
+  tópicos positivos e negativos". Os mesmos `PositiveDriversList`/
+  `NegativeDriversList` desta página agora também renderizam em
+  `overview`/`narratives`/`platforms`/`themes`/`narrative_detail` (ver
+  `aggregated-metrics/block-mapping-per-page.md`) — nada mudou aqui, só
+  deixou de ser a única página com esse widget. Para o mapeamento
+  tópico↔Narrativa individual (não a visão agregada deste widget), ver
+  `narratives-exploration.md` e `aggregated-metrics/sql-aggregation.md`,
+  "Mapeamento tópico↔Narrativa por polaridade" (`NarrativeRow.positive_topics`/
+  `negative_topics`, campo novo separado deste bloco `term_signals`).
   ✅ **Bug real corrigido (2026-07-25, migration `20260726030000`)**:
   usuário reportou "Drivers positivos não aparecem". Causa raiz —
   `get_term_signals` ordenava TODOS os termos (de qualquer sentimento) por

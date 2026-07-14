@@ -137,6 +137,19 @@ atualizado: 2026-07-25
 > real dos widgets contra dados autenticados não foi verificado
 > visualmente (mesma limitação já registrada em `CLAUDE.md` para toda a
 > leva de `intelligence-center`).
+>
+> ✅ **"Principais tópicos positivos"/"Principais tópicos negativos"
+> adicionados (2026-07-14)** — pedido do usuário: "em todas as páginas é
+> importante existir os principais tópicos positivos e negativos".
+> `PAGE_BLOCKS.overview` ganhou `term_signals` (antes só `sentiment`/
+> `themes`/`narrative_detail`); novo par de widgets logo abaixo da tabela
+> de Narrativas, reusando `PositiveDriversList`/`NegativeDriversList`
+> (`get_term_signals`, sem filtro de Narrativa — cobre a Query inteira da
+> organização, mesmo escopo do resto da página). Ver
+> `aggregated-metrics/sql-aggregation.md`, "Mapeamento tópico↔Narrativa por
+> polaridade", para o campo irmão por Narrativa (`positive_topics`/
+> `negative_topics` em `get_narratives_table`, usado pelo card de
+> Narrativa e por "Top 3 Narrativas" desta mesma página).
 
 > ✅ **Movida de `foundation/executive-overview.md` para cá (2026-07-12)** —
 > era a única página de UI especificada dentro de um módulo que, por

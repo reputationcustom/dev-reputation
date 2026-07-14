@@ -10,6 +10,7 @@ import { NarrativesTable } from "@/components/intelligence-center/narratives-tab
 import { NarrativeCard } from "@/components/intelligence-center/narrative-card";
 import { NarrativeTextPanel } from "@/components/intelligence-center/insights-panel";
 import { RecentEventsPanel } from "@/components/intelligence-center/recent-events-panel";
+import { PositiveDriversList, NegativeDriversList } from "@/components/intelligence-center/term-signals-list";
 import { ScoreLegend } from "@/components/intelligence-center/score-badges";
 import { EmptyState } from "@/components/ui/empty-state";
 
@@ -80,6 +81,21 @@ export default function OverviewPage() {
             </div>
           </div>
         </WidgetCard>
+
+        {/* ✅ Adicionado 2026-07-14 (pedido do usuário: "em todas as
+            páginas é importante existir os principais tópicos positivos e
+            negativos") — mesmo dado/componentes já usados em /sentiment
+            (get_term_signals, sem filtro de Narrativa aqui: cobre a Query
+            inteira da organização, mesmo escopo das outras métricas desta
+            página). */}
+        <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+          <WidgetCard title="Principais tópicos positivos" status={status} onRetry={retry}>
+            <PositiveDriversList signals={envelope?.term_signals ?? []} />
+          </WidgetCard>
+          <WidgetCard title="Principais tópicos negativos" status={status} onRetry={retry}>
+            <NegativeDriversList signals={envelope?.term_signals ?? []} />
+          </WidgetCard>
+        </div>
 
         {/* event-radar/frontend-highlights-feed.md — janela FIXA de 72h,
             independente do período selecionado no header acima (por isso

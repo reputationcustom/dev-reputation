@@ -165,7 +165,13 @@ Mesmo público das demais páginas deste módulo.
   (`account_type` nativo da Brandwatch, quando presente), sem inventar a
   taxonomia própria.
 - **Termos emergentes**: de `bw_query_topics` filtrado por `category_id` da
-  pauta, ordenado por `trending` desc — sem gap.
+  pauta, ordenado por `trending` desc — sem gap. ✅ **Ganhou "Tópicos
+  positivos por pauta"/"Tópicos negativos por pauta" (2026-07-14)** —
+  pedido do usuário ("em todas as páginas é importante existir os
+  principais tópicos positivos e negativos"), mesmo `term_signals` já
+  buscado para "Termos emergentes", só separado por polaridade
+  (`PositiveDriversList`/`NegativeDriversList`, mesmos componentes de
+  `/sentiment`) — sem chamada adicional.
 - **Comparação entre períodos**: ver "Fluxo principal" item 5.
 
 ## Regras de negócio

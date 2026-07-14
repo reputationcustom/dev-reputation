@@ -6,6 +6,7 @@ import { WidgetCard } from "@/components/intelligence-center/widget-card";
 import { PlatformParticipationBars } from "@/components/intelligence-center/charts/breakdown-panel";
 import { TrendLineChart } from "@/components/intelligence-center/charts/trend-line-chart";
 import { NarrativeTextPanel } from "@/components/intelligence-center/insights-panel";
+import { PositiveDriversList, NegativeDriversList } from "@/components/intelligence-center/term-signals-list";
 import { EmptyState } from "@/components/ui/empty-state";
 
 // Análise por Plataforma (`/platforms`, intelligence-center/platform-analysis.md).
@@ -64,6 +65,18 @@ export default function PlatformsPage() {
         <WidgetCard title="Conteúdos de destaque" status={status} onRetry={retry}>
           <EmptyState message="Lista de mentions em destaque ainda não implementada — sem bloco correspondente no envelope atual." />
         </WidgetCard>
+
+        {/* ✅ Adicionado 2026-07-14 (pedido do usuário: "em todas as
+            páginas é importante existir os principais tópicos positivos e
+            negativos"). */}
+        <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+          <WidgetCard title="Principais tópicos positivos" status={status} onRetry={retry}>
+            <PositiveDriversList signals={envelope?.term_signals ?? []} />
+          </WidgetCard>
+          <WidgetCard title="Principais tópicos negativos" status={status} onRetry={retry}>
+            <NegativeDriversList signals={envelope?.term_signals ?? []} />
+          </WidgetCard>
+        </div>
 
         <WidgetCard title="Insights" status={status} onRetry={retry}>
           <NarrativeTextPanel text={envelope?.narrative_text ?? null} />

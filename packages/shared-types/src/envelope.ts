@@ -157,6 +157,18 @@ export interface NarrativeRow {
   // oficial da Brandwatch, nunca amostrado) — nunca inclui um marcador de
   // emoção (sem fonte não-amostrada pra isso, ver get_narratives_table).
   tags: string[];
+  // ✅ Adicionados 2026-07-14 (pedido do usuário: mapear os tópicos da
+  // Brandwatch à Narrativa, por polaridade, tanto pra IA quanto pro
+  // usuário final) — top 5 termos/hashtags de `tags` cujo sentimento
+  // predominante (bw_query_topics.sentiment_positive/neutral/negative,
+  // mesma classificação por maioria de `get_term_signals`) é positivo/
+  // negativo. Sempre array (nunca null); `[]` quando a Narrativa não tem
+  // nenhum termo com esse sentimento predominante no período sincronizado.
+  // Usado pelo card de Narrativa (NarrativeCard) e por
+  // narrative_summary_build_payload (payload da IA que escreve
+  // `summary`) — ver sql-aggregation.md.
+  positive_topics: string[];
+  negative_topics: string[];
 }
 
 // Item de AuthorRow.entity_tags — espelha entity_tags linha a linha (state/

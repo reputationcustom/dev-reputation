@@ -25,7 +25,14 @@ atualizado: 2026-07-18
 > — pedido do usuário para identificar "termos/phrases mais citados" por
 > Narrativa; a function já suportava escopo por Narrativa, só faltava o
 > wiring em `PAGE_BLOCKS` (ver `narratives-exploration.md`, "Termos e
-> frases mais citados").
+> frases mais citados"). ✅ **`term_signals` estendido a `overview`/
+> `narratives`/`platforms` (2026-07-14, mesmo dia)** — segundo pedido do
+> usuário na mesma sessão: "em todas as páginas é importante existir os
+> principais tópicos positivos e negativos"; `themes`/`narrative_detail`
+> ganharam os widgets de Drivers (positivo/negativo) ao lado da nuvem de
+> palavras que já tinham. Ver `sql-aggregation.md`, "Mapeamento
+> tópico↔Narrativa por polaridade", pro campo correspondente por
+> Narrativa (`narratives[].positive_topics`/`negative_topics`).
 
 ## Objetivo
 
@@ -47,7 +54,7 @@ de preencher os marcados como obrigatórios.
 | `narratives`             | ● (top narrativas) | ● (tabela completa) | — | — | ● (narrativas dominantes por plataforma) | ● (narrativas dentro da pauta) | — | — | ● |
 | `authors`                | — | — | ● (principais disseminadores) | — | ● (perfis relevantes por plataforma) | ● (autores/comunidades por pauta) | ● (ranking completo) | — | — |
 | `highlights`             | ● (insights + recomendações) | — | — | ● (mudanças de sentimento) | — | ● (comparação entre períodos) | — | ● (todos os alertas ativos) | ● |
-| `term_signals`           | — | — | ● (termos/frases mais citados) | ● (drivers de sentimento) | — | ● (termos emergentes) | — | — | — |
+| `term_signals`           | ● (drivers de sentimento) | ● (drivers de sentimento) | ● (termos/frases mais citados + drivers) | ● (drivers de sentimento) | ● (drivers de sentimento) | ● (termos emergentes + drivers) | — | — | — |
 | `graph`                  | — | — | ● (obrigatório) | — | — | — | — | — | — |
 | `x_insights`             | — | — | — | — | ● (Top Hashtags/Emojis/Stories/Most Mentioned X Posters) | — | — | — | — |
 | `narrative_text`         | ● | — | ● | ● | ● | ● | — | — | ● |

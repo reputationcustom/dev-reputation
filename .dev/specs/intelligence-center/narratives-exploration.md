@@ -131,6 +131,20 @@ Ver `aggregated-metrics/sql-aggregation.md`, "Campos do card de Narrativa",
 para de onde vem cada campo novo (`sentiment_positive_pct`/`summary`/`tags`
 em `get_narratives_table`).
 
+✅ **Mapeamento de tópicos por polaridade (2026-07-14)**, pedido do
+usuário: "no caso das narrativas é importantíssimo esse mapeamento dos
+tópicos com a narrativa para melhorar o entendimento da IA e do usuário
+final." `NarrativeCard` ganhou 2 novas linhas de chips coloridos, acima
+da linha neutra de `tags` já existente — `positive_topics`/
+`negative_topics` (`get_narratives_table`, migration `20260805010000`,
+até 3 termos por lado no card, verde/vermelho, mesma paleta de
+`DriverChip`), mesma classificação por maioria de `get_term_signals` só
+que calculada por Narrativa. Ver `aggregated-metrics/sql-aggregation.md`,
+"Mapeamento tópico↔Narrativa por polaridade", para a fórmula completa e
+para como isso também alimenta a IA (`narrative_summary_build_payload` e
+o payload de `ai-synthesis` Camada 1, via o bloco `narratives` do
+envelope).
+
 ✅ **Cards agrupados por categoria (2026-07-25)**, pedido do usuário: "os
 cards que ficam abaixo, devem ser organizados pela categoria. Podemos
 utilizar raia ou outro componente que achar mais apropriado para facilitar
@@ -272,7 +286,13 @@ já aceito para `filtrosOpen` no header.
   "Termos emergentes" em `/themes`) — mistura `words`/`phrases`/
   `hashtags`/etc. sem filtrar só `topic_type = 'phrases'` (mesma nota já
   registrada em `_pending.md` gap #24 para as demais páginas que usam
-  este bloco).
+  este bloco). ✅ **Ganhou também "Tópicos positivos"/"Tópicos negativos"
+  (2026-07-14, mesma sessão)** — mesmo `term_signals` já escopado à
+  Narrativa, só separado por polaridade (`PositiveDriversList`/
+  `NegativeDriversList`, mesmos componentes de `/sentiment`) — pedido do
+  usuário de "importantíssimo esse mapeamento dos tópicos com a
+  narrativa" aplicado também ao detalhe, ao lado da nuvem de palavras
+  (que mistura todo `topic_type` sem indicar sentimento).
 - **Menções relevantes**: lista via `narrative_matched_mentions(narrative_id)`
   (função já definida em `foundation/data-model.md`) ordenada por
   `reach_estimate`/`impact` — uso de dado por mention individual (não

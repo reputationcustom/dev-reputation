@@ -108,6 +108,13 @@ exibidos na UI ficam em português:
   `trend_score`/`trend_label` (2026-07-22, migration `20260722010000`)** — mesmo campo/posição no
   envelope, só troca de nome/método (regressão estatística em vez de snapshot 3h-vs-3h) e de
   cardinalidade do rótulo (3 valores em vez de 5) — ver `sql-aggregation.md`, "Tendência".
+  ✅ **`positive_topics`/`negative_topics` adicionados (2026-07-14, migration `20260805010000`)**
+  — `text[]`, até 5 termos/hashtags cada (mesmo universo de `tags`, `bw_query_topics`), cujo
+  sentimento predominante (mesma classificação por maioria de `get_term_signals`) é positivo/
+  negativo. Sempre array, nunca `null`. Mapeamento tópico↔Narrativa por polaridade — pedido do
+  usuário para que a IA (`narrative_summary_build_payload`) e o usuário final (card de Narrativa)
+  vejam quais termos específicos puxam o sentimento de cada Narrativa, não só a lista neutra de
+  `tags` — ver `sql-aggregation.md`, "Mapeamento tópico↔Narrativa por polaridade".
 - **`authors`**: ranking de autores/influenciadores. Cada item tem `entity_id` (nulo até
   `entities`, Sprint 2, existir e enriquecer — o ranking em si não depende disso, ver
   `sql-aggregation.md`), `name`, `type`, `reach`, `engagement`, `risk_level`,
@@ -142,9 +149,11 @@ exibidos na UI ficam em português:
   `recommendation` (quando aplicável), `confidence`, `tags`, e
   `related_narrative_id`/`related_entity_id`. Itens de uma página são os N mais severos dentro
   do escopo/filtro daquela página, já dentro do cap diário aplicado pelo radar.
-- **`term_signals`**: termos/temas emergentes ou "drivers" de sentimento (usado em Sentimento e
-  em Pautas Eleitorais) — de `bw_query_topics`, ver `sql-aggregation.md`. Cada item tem `term`,
-  `growth_pct`, `sentiment_associated`.
+- **`term_signals`**: termos/temas emergentes ou "drivers" de sentimento — de `bw_query_topics`,
+  ver `sql-aggregation.md`. Cada item tem `term`, `growth_pct`, `sentiment_associated`.
+  ✅ **Estendido a `overview`/`narratives`/`platforms` (2026-07-14)** — antes só preenchido em
+  `sentiment`/`themes`/`narrative_detail`; pedido do usuário ("em todas as páginas é importante
+  existir os principais tópicos positivos e negativos"). Ver `block-mapping-per-page.md`.
 - **`graph`**: grafo de disseminação simplificado — só preenchido na página de detalhamento de
   narrativa, mesma fonte e mesma rotulagem de "amostra das mentions sincronizadas" já decidida em
   `intelligence-center/narratives-exploration.md` (não um novo cálculo). Formato:

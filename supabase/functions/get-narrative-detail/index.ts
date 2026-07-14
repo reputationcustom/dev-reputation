@@ -150,6 +150,12 @@ export interface NarrativeRow {
   summary: string | null
   // Top termos/hashtags reais (bw_query_topics), nunca amostrados.
   tags: string[]
+  // ✅ Adicionados 2026-07-14 — top 5 termos/hashtags de `tags` cujo
+  // sentimento predominante é positivo/negativo (get_narratives_table,
+  // migration 20260805010000). Sempre array; usado pelo card de
+  // Narrativa e pelo payload de narrative_summary_build_payload (IA).
+  positive_topics: string[]
+  negative_topics: string[]
 }
 
 export interface AuthorEntityTag {
@@ -280,16 +286,21 @@ type BlockKey =
   | 'x_insights'
   | 'narrative_text'
 
+// ✅ 'term_signals' estendido a overview/narratives/platforms (2026-07-14,
+// pedido do usuário: "em todas as páginas é importante existir os
+// principais tópicos positivos e negativos") — Drivers positivos/negativos
+// (get_term_signals) deixam de ser exclusividade de /sentiment; ver
+// narratives-exploration.md/executive-overview.md/platform-analysis.md.
 export const PAGE_BLOCKS: Record<PageKey, BlockKey[]> = {
-  overview: ['metrics', 'breakdowns', 'trends', 'narratives', 'highlights', 'narrative_text'],
-  narratives: ['narratives'],
+  overview: ['metrics', 'breakdowns', 'trends', 'narratives', 'highlights', 'term_signals', 'narrative_text'],
+  narratives: ['narratives', 'term_signals'],
   // ✅ 'term_signals' adicionado 2026-07-14 (pedido do usuário: "termos/
   // phrases mais citados" por Narrativa) — get_term_signals já suportava
   // escopo por Narrativa via filters.narratives, só faltava o wiring aqui.
   // Ver narratives-exploration.md, "Termos e frases mais citados".
   narrative_detail: ['breakdowns', 'trends', 'authors', 'term_signals', 'graph', 'narrative_text'],
   sentiment: ['breakdowns', 'trends', 'highlights', 'term_signals', 'narrative_text'],
-  platforms: ['breakdowns', 'trends', 'narrative_text'],
+  platforms: ['breakdowns', 'trends', 'term_signals', 'narrative_text'],
   themes: ['breakdowns', 'trends', 'narratives', 'authors', 'highlights', 'term_signals', 'narrative_text'],
   authors: ['authors', 'x_insights'],
   alerts: ['highlights'],
@@ -416,6 +427,8 @@ interface NarrativeTableRow {
   risk_label: string | null
   summary: string | null
   tags: string[] | null
+  positive_topics: string[] | null
+  negative_topics: string[] | null
 }
 
 interface AuthorRankingRow {
@@ -713,7 +726,12 @@ async function fetchNarratives(page: PageKey, supabase: SupabaseClient, ctx: Pag
       p_scope: narrativesScopeForPage(page),
     })
     if (error) throw error
-    return ((data ?? []) as NarrativeTableRow[]).map((row) => ({ ...row, tags: row.tags ?? [] }))
+    return ((data ?? []) as NarrativeTableRow[]).map((row) => ({
+      ...row,
+      tags: row.tags ?? [],
+      positive_topics: row.positive_topics ?? [],
+      negative_topics: row.negative_topics ?? [],
+    }))
   } catch (err) {
     console.error('[aggregated-metrics] fetchNarratives failed', err)
     return []
