@@ -8,6 +8,21 @@ atualizado: 2026-08-05
 # Data model: finops
 
 > ✅ **Implementado (2026-08-05)** — migration `20260805000000_finops_schema.sql`.
+>
+> ✅ **Correção (2026-07-14)** — usuário reportou que `/admin/finops` não
+> mostrava nenhum consumo de IA. Causa raiz: `narrative-summary-composer`
+> (existente desde 2026-07-14, roda a cada 30min via `pg_cron`, chama
+> Claude de verdade pra gerar `narratives.description`) nunca tinha sido
+> instrumentado quando este módulo foi criado — só
+> `event-radar-agent-orchestrator`/`composeLayer1NarrativeText` gravavam em
+> `ai_usage_log`. Diferente dessas duas (que só chamam a IA sob condição —
+> evento enfileirado / 2+ highlights), `narrative-summary-composer` roda
+> incondicionalmente a cada ciclo, então era plausivelmente a maior fonte
+> real de gasto de IA, invisível ao painel. Corrigido: migration
+> `20260805020000` alarga o `check` de `source` pra incluir
+> `'narrative_summary_composer'` + a function ganhou sua própria cópia de
+> `recordAiUsage()` (Princípio técnico 5). Ver CLAUDE.md, "FinOps não
+> mostrava consumo de IA", para o relato completo.
 
 ## `ai_usage_log`
 
@@ -18,7 +33,7 @@ momento da chamada, a partir do `response.usage.input_tokens`/
 | Coluna | Tipo | Notas |
 |---|---|---|
 | `id` | `uuid` | PK |
-| `source` | `text` | `check in ('event_radar_agent_orchestrator', 'ai_synthesis_narrative')` — texto, não enum, pelo mesmo motivo de `communication_types`: se um terceiro ponto de chamada de IA aparecer no futuro, um novo valor de `check` é mais barato de adicionar que um enum (`alter type ... add value`, que não pode rodar dentro de uma transação em algumas versões do Postgres) |
+| `source` | `text` | `check in ('event_radar_agent_orchestrator', 'ai_synthesis_narrative', 'narrative_summary_composer')` — texto, não enum, pelo mesmo motivo de `communication_types`: um novo valor de `check` é mais barato de adicionar que um enum (`alter type ... add value`, que não pode rodar dentro de uma transação em algumas versões do Postgres). A terceira fonte (`narrative_summary_composer`) foi adicionada em `20260805020000`, depois de faltar na primeira versão deste schema (ver correção acima) |
 | `model` | `text` | Ex: `claude-haiku-4-5` — nunca hardcoded no schema, vem do parâmetro real usado na chamada |
 | `input_tokens` | `integer` | `check >= 0` |
 | `output_tokens` | `integer` | `check >= 0` |

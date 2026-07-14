@@ -1,6 +1,9 @@
 export type FinopsCostRecurrence = "one_time" | "monthly" | "annual";
 
-export type FinopsUsageSource = "event_radar_agent_orchestrator" | "ai_synthesis_narrative";
+export type FinopsUsageSource =
+  | "event_radar_agent_orchestrator"
+  | "ai_synthesis_narrative"
+  | "narrative_summary_composer";
 
 export interface FinopsManualCost {
   id: string;
@@ -45,6 +48,7 @@ export interface FinopsOverview {
 export const FINOPS_SOURCE_LABELS: Record<FinopsUsageSource, string> = {
   event_radar_agent_orchestrator: "Radar de Eventos (IA)",
   ai_synthesis_narrative: "Síntese narrativa (IA)",
+  narrative_summary_composer: "Resumo executivo de Narrativa (IA)",
 };
 
 export const FINOPS_RECURRENCE_LABELS: Record<FinopsCostRecurrence, string> = {

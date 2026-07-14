@@ -85,6 +85,50 @@ interface DueNarrative {
   narrative_id: string;
 }
 
+// finops/data-model.md — registro de uso real de IA (nunca estimativa),
+// gravado a partir do `usage` retornado pela própria API da Anthropic.
+// Duplicado em cada Edge Function que chama Claude (Princípio técnico 5) —
+// `event-radar-agent-orchestrator/index.ts` e `aggregated-metrics-service.ts`
+// têm suas próprias cópias idênticas. Achado real (2026-08-05): esta
+// function nunca tinha esse registro, apesar de já existir e chamar a
+// Anthropic desde 2026-07-14 — o painel /admin/finops (criado depois,
+// 2026-08-05) só instrumentou os outros dois pontos de chamada, deixando
+// o custo desta function (a única das três sem gate condicional de dado —
+// roda a cada 30min processando toda Narrativa "due") de fora do painel.
+const AI_MODEL_PRICING: Record<string, { inputPerMToken: number; outputPerMToken: number }> = {
+  "claude-haiku-4-5": { inputPerMToken: 1.0, outputPerMToken: 5.0 },
+};
+
+function computeAiCostUsd(model: string, inputTokens: number, outputTokens: number): number {
+  const pricing = AI_MODEL_PRICING[model];
+  if (!pricing) {
+    console.error(`[ai-usage] preço desconhecido para o modelo "${model}" — custo gravado como 0`);
+    return 0;
+  }
+  return (inputTokens / 1_000_000) * pricing.inputPerMToken + (outputTokens / 1_000_000) * pricing.outputPerMToken;
+}
+
+async function recordAiUsage(
+  supabase: ReturnType<typeof createClient>,
+  params: {
+    model: string;
+    inputTokens: number;
+    outputTokens: number;
+    referenceId?: string | null;
+  },
+): Promise<void> {
+  const costUsd = computeAiCostUsd(params.model, params.inputTokens, params.outputTokens);
+  const { error } = await supabase.from("ai_usage_log").insert({
+    source: "narrative_summary_composer",
+    model: params.model,
+    input_tokens: params.inputTokens,
+    output_tokens: params.outputTokens,
+    cost_usd: costUsd,
+    reference_id: params.referenceId ?? null,
+  });
+  if (error) console.error("[ai-usage] recordAiUsage insert failed", error);
+}
+
 Deno.serve(async (_req: Request) => {
   log("invocation:start");
 
@@ -157,6 +201,15 @@ Deno.serve(async (_req: Request) => {
             }`,
           },
         ],
+      });
+
+      // finops/data-model.md — grava o uso real (billado pela Anthropic
+      // independente do que acontece depois: refusal, parse, update etc.)
+      await recordAiUsage(supabase, {
+        model: SUMMARY_MODEL,
+        inputTokens: response.usage.input_tokens,
+        outputTokens: response.usage.output_tokens,
+        referenceId: narrativeId,
       });
 
       if (response.stop_reason === "refusal") {

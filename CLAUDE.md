@@ -5692,6 +5692,51 @@ limitação recorrente de toda sessão sem credenciais de deploy neste
 ambiente) — `git push` para `develop` (fluxo já estabelecido) é o próximo
 passo para isso rodar de verdade.
 
+### FinOps não mostrava consumo de IA — terceira função de IA nunca foi instrumentada (2026-07-14)
+
+User report: "FinOps não está mostrando o cálculo do consumo de IA até o
+momento." Confirmado ao vivo contra o projeto Supabase real
+(`NEXT_PUBLIC_SUPABASE_URL` de `.env.local`) que `get_finops_overview` já
+está deployada e responde — a função em si não é o problema, e a migration
+do módulo (`20260805000000`) já rodou.
+
+**Causa raiz real**: quando o módulo `finops` foi construído, a sessão
+instrumentou "os dois únicos pontos do produto que chamam Claude" —
+`event-radar-agent-orchestrator` e `composeLayer1NarrativeText`
+(`aggregated-metrics-service.ts`, Camada 1 de `ai-synthesis`) — mas essa
+premissa já estava desatualizada: `narrative-summary-composer` (ver
+"`narratives.description` finally gets a producer", 2026-07-14 — a mesma
+data de hoje) já existia havia semanas de sessão e já chama
+`anthropic.messages.create()` de verdade, a cada 30 minutos via
+`pg_cron`, para gerar o resumo executivo de cada Narrativa `due`. Nunca foi
+revisitada quando `finops` foi criado, então seu custo real nunca era
+gravado em `ai_usage_log`. Pior: das três funções que chamam Claude, esta é
+a **única sem gate condicional de dado** —
+`event-radar-agent-orchestrator` só roda quando há eventos reais
+enfileirados (`radar_staging_events.queued_for_agent_at`), e a Camada 1 de
+`ai-synthesis` só roda com 2+ highlights — enquanto `narrative-summary-composer`
+roda incondicionalmente a cada ciclo processando toda Narrativa "due". Ou
+seja, esta era plausivelmente a maior (ou única) fonte real de gasto de IA
+em produção, e ficava inteiramente invisível ao painel.
+
+**Fix**: migration `20260805020000` (alarga o `check` de
+`ai_usage_log.source` pra incluir `'narrative_summary_composer'`) +
+`recordAiUsage()`/`AI_MODEL_PRICING`/`computeAiCostUsd` duplicados dentro
+de `narrative-summary-composer/index.ts` (Princípio técnico 5 — mesma
+cópia idêntica das outras duas, chamada logo após receber a resposta da
+Anthropic, antes de checar `stop_reason`/parse — uso já foi cobrado ali
+independente do que acontece depois). `FinopsUsageSource`/
+`FINOPS_SOURCE_LABELS` (`app/(intelligence-center)/admin/finops/types.ts`)
+ganharam a terceira fonte ("Resumo executivo de Narrativa (IA)") — nenhuma
+mudança em `get_finops_overview` (já agrupa por `source` genericamente, o
+valor novo aparece automaticamente em "Uso de IA por origem").
+
+**Verificação**: `npx tsc --noEmit` passa limpo. Migration revisada
+manualmente, não executada contra o banco real nesta sessão — mesma
+limitação recorrente de toda sessão sem credenciais de deploy; `git push`
+pra `develop` é o próximo passo para o campo `source` novo ser aceito de
+verdade (até lá, um `insert` desta function falharia no `check` antigo).
+
 ## Directory structure
 
 ```
