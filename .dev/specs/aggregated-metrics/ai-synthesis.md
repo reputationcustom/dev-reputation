@@ -420,9 +420,18 @@ sempre preferindo reaproveitar texto já gerado antes de pagar por uma nova cham
 Quando a página tem exatamente 0 ou 1 highlight relevante no escopo, `narrative_text` é montado
 por template determinístico, sem chamar IA. Exemplo de template:
 
-- 0 highlights: `"Sem eventos relevantes detectados no período. Volume {trend_direction} de
-  {delta_pct}% em relação ao período anterior."`
-- 1 highlight: usa diretamente o `summary`/`explanation` daquele highlight, sem modificação.
+- 0 highlights, `period.mode` = `weekly`/`monthly` (ou ausente): `"Sem eventos relevantes
+  detectados no período. Volume {trend_direction} de {delta_pct}% em relação ao período
+  anterior."`
+- 0 highlights, `period.mode` = `daily`: ✅ **branch dedicado (2026-07-14)** — user report: "ao
+  selecionar o período diário o resumo executivo ainda está aparecendo com comparação histórica
+  e não um resumo do dia selecionado". A frase de weekly/monthly acima é sempre uma comparação
+  percentual, que não descreve o próprio dia. Template: `"O dia registrou {current_value}
+  menções, {trend_direction} {delta_pct}% em relação ao dia anterior. Nenhum evento relevante
+  detectado no período."` — leva com o valor absoluto do dia, a variação vira cláusula
+  secundária. Mesma fonte (`get_volume_delta`), só uma frase de apresentação diferente.
+- 1 highlight: usa diretamente o `summary`/`explanation` daquele highlight, sem modificação
+  (mesmo comportamento em qualquer `period.mode`).
 
 ### Camada 1 — Composição em lote, armazenada em banco (páginas com múltiplos highlights)
 

@@ -72,6 +72,21 @@ export function HighlightsPanel({ highlights }: { highlights: Highlight[] }) {
 // não precisa mais esperar o refresh automático (por tempo ou por evento
 // novo do radar, ver ai-synthesis.md) pra forçar uma recomposição agora.
 //
+// ✅ Escondido por padrão fora do período `custom`, atrás de uma
+// preferência pessoal do admin (2026-07-14, sessão seguinte — pedido do
+// usuário: "oculte todos os botões... exceto o botão que aparece na opção
+// custom... coloque uma opção no usuário admin para marcar quando quiser
+// mostrar o botão e desmarcar quando não quiser, pois em apresentação do
+// produto o ideal é não aparecer, porém em desenvolvimento ou em testes é
+// importante aparecer"). `user_profiles.show_ai_refresh_button`
+// (migration `20260809110000`, default `false`), editável em `/perfil`
+// via `update-my-refresh-button-preference` — o botão só aparece fora do
+// `custom` quando o próprio admin logado já ligou essa preferência. O
+// botão em período `custom` ("Analisar período com IA") é uma ação
+// diferente (composição sob demanda pra um intervalo que nunca dispara IA
+// sozinho, ver o botão logo acima) e nunca foi afetado por essa
+// preferência — continua sempre visível pra qualquer usuário.
+//
 // ✅ `blankOnCustom` adicionado 2026-07-14 (pedido do usuário, uso no
 // toggle "Resumo executivo" de `RecentEventsPanel`/Radar de Eventos):
 // "Exceto para período Custom que deve aparecer em branco apenas com o
@@ -96,10 +111,10 @@ export function NarrativeTextPanel({
   blankOnCustom?: boolean;
 }) {
   const { organizationId, period, periodMode } = useIntelligenceCenterHeader();
-  const { isAdmin } = useUserProfile();
+  const { isAdmin, showAiRefreshButton } = useUserProfile();
   const [isGenerating, setIsGenerating] = useState(false);
   const [toast, setToast] = useState<{ type: "success" | "error"; message: string } | null>(null);
-  const canManuallyRefresh = periodMode === "custom" || isAdmin;
+  const canManuallyRefresh = periodMode === "custom" || (isAdmin && showAiRefreshButton);
 
   async function handleGenerate() {
     if (!organizationId) return;

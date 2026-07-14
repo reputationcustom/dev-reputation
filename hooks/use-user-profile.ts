@@ -10,6 +10,7 @@ export interface UserProfile {
   isPrincipal: boolean;
   timezone: string;
   defaultOrganizationId: string | null;
+  showAiRefreshButton: boolean;
 }
 
 type LoadState = "loading" | "error" | "loaded";
@@ -20,6 +21,7 @@ const FALLBACK_PROFILE: UserProfile = {
   isPrincipal: false,
   timezone: DEFAULT_TIMEZONE,
   defaultOrganizationId: null,
+  showAiRefreshButton: false,
 };
 
 // Hook global de perfil do usuário logado (CLAUDE.md, "Fuso horário do
@@ -65,7 +67,7 @@ export function useUserProfile() {
 
       const { data, error } = await supabase
         .from("user_profiles")
-        .select("full_name, is_admin, is_principal, timezone, default_organization_id")
+        .select("full_name, is_admin, is_principal, timezone, default_organization_id, show_ai_refresh_button")
         .eq("id", user.id)
         .maybeSingle();
 
@@ -84,6 +86,7 @@ export function useUserProfile() {
           isPrincipal: data.is_principal,
           timezone: data.timezone ?? DEFAULT_TIMEZONE,
           defaultOrganizationId: data.default_organization_id,
+          showAiRefreshButton: data.show_ai_refresh_button ?? false,
         },
       });
     }

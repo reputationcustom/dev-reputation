@@ -17,9 +17,10 @@ const TIMEZONES: string[] =
     : [DEFAULT_TIMEZONE];
 
 export default function PerfilPage() {
-  const { status, timezone, retry } = useUserProfile();
+  const { status, timezone, isAdmin, showAiRefreshButton, retry } = useUserProfile();
   const [selectedTimezone, setSelectedTimezone] = useState(timezone);
   const [saving, setSaving] = useState(false);
+  const [savingRefreshButton, setSavingRefreshButton] = useState(false);
   const [toast, setToast] = useState<{ type: "success" | "error"; message: string } | null>(
     null,
   );
@@ -46,6 +47,27 @@ export default function PerfilPage() {
       });
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function handleToggleRefreshButton() {
+    setSavingRefreshButton(true);
+    try {
+      await callFunction("update-my-refresh-button-preference", { show: !showAiRefreshButton });
+      setToast({
+        type: "success",
+        message: !showAiRefreshButton
+          ? "Botão 'Atualizar resumo executivo' visível fora do período personalizado."
+          : "Botão 'Atualizar resumo executivo' oculto fora do período personalizado.",
+      });
+      retry();
+    } catch (err) {
+      setToast({
+        type: "error",
+        message: err instanceof Error ? err.message : BACKEND_ERROR_MESSAGE,
+      });
+    } finally {
+      setSavingRefreshButton(false);
     }
   }
 
@@ -97,6 +119,27 @@ export default function PerfilPage() {
                 {saving && <Spinner className="h-4 w-4 text-white" />}
                 Salvar
               </button>
+
+              {isAdmin && (
+                <div className="flex flex-col gap-1 border-t border-border-default pt-4">
+                  <label className="flex items-start gap-2 text-sm font-medium text-text-primary">
+                    <input
+                      type="checkbox"
+                      checked={showAiRefreshButton}
+                      disabled={savingRefreshButton}
+                      onChange={handleToggleRefreshButton}
+                      className="mt-0.5 h-4 w-4 rounded border-border-default disabled:opacity-60"
+                    />
+                    Mostrar botão &quot;Atualizar resumo executivo&quot; fora do período
+                    personalizado
+                    {savingRefreshButton && <Spinner className="h-4 w-4 text-accent-blue" />}
+                  </label>
+                  <p className="text-xs text-text-tertiary">
+                    Fica desligado por padrão (não aparece em apresentações do produto). Ligue
+                    para forçar a recomposição do resumo executivo em desenvolvimento/testes.
+                  </p>
+                </div>
+              )}
             </div>
           )}
         </div>

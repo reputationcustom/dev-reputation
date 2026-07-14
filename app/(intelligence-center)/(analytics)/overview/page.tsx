@@ -135,7 +135,12 @@ export default function OverviewPage() {
           <h2 className="text-sm font-bold text-text-primary">Radar de Eventos</h2>
           <p className="text-xs text-text-tertiary">Últimas 72 horas</p>
           <div className="mt-4">
-            <RecentEventsPanel narrativeText={envelope?.narrative_text ?? null} page="overview" onGenerated={retry} />
+            <RecentEventsPanel
+              narrativeText={envelope?.narrative_text ?? null}
+              page="overview"
+              onGenerated={retry}
+              defaultView="summary"
+            />
           </div>
         </div>
       </div>

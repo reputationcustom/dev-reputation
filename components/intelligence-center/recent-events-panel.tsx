@@ -46,6 +46,40 @@ const FEEDBACK_OPTIONS: { type: string; label: string }[] = [
   { type: "wrong_explanation", label: "Explicação incorreta" },
 ];
 
+// ✅ Reintroduzido 2026-07-14 — pedido do usuário: as KPIs "Quantidade de
+// alertas por risco" (existiam na 1ª versão do "Resumo executivo",
+// 2026-08-08, antes de ele virar só o texto de IA em 2026-07-14 mais
+// cedo) tinham desaparecido junto com o resto daquele resumo derivado.
+// Volta só a contagem por severidade — 100% derivada dos mesmos
+// `highlights` já buscados por `useRecentHighlights` (nenhuma chamada
+// nova, Princípio técnico 2), sem o restante do resumo antigo (Eventos
+// por tipo/Principais eventos), que o texto de IA já cobre em prosa.
+const SEVERITY_LABEL: Record<string, string> = {
+  critical: "Críticos",
+  high: "Altos",
+  medium: "Médios",
+  low: "Baixos",
+};
+
+function severityCounts(highlights: RecentHighlight[]) {
+  const counts: Record<string, number> = { critical: 0, high: 0, medium: 0, low: 0 };
+  for (const highlight of highlights) {
+    if (highlight.severity && highlight.severity in counts) {
+      counts[highlight.severity] += 1;
+    }
+  }
+  return counts;
+}
+
+function SummaryStat({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="rounded-lg bg-bg-page p-2 text-center sm:p-3">
+      <p className="text-lg font-bold text-text-primary">{value}</p>
+      <p className="text-xs text-text-tertiary">{label}</p>
+    </div>
+  );
+}
+
 // ✅ Duas visualizações alternáveis (2026-07-14, pedido do usuário: "Radar
 // de Eventos deve ter duas possibilidades — a lista dos eventos como está
 // hoje e o resumo executivo"). O toggle vive aqui (não em cada página que
@@ -83,15 +117,20 @@ export function RecentEventsPanel({
   narrativeText,
   page,
   onGenerated,
+  defaultView = "list",
 }: {
   narrativeText: string | null;
   page: PageKey;
   onGenerated?: () => void;
+  // ✅ 2026-07-14, pedido do usuário: /overview deve abrir o widget já no
+  // "Resumo executivo" — /radar continua abrindo em "Lista" (default),
+  // já que lá o feed completo de 72h é o próprio propósito da página.
+  defaultView?: RecentEventsView;
 }) {
   const { organizationId } = useIntelligenceCenterHeader();
   const { timezone } = useUserProfile();
   const { status, highlights, retry } = useRecentHighlights(organizationId);
-  const [view, setView] = useState<RecentEventsView>("list");
+  const [view, setView] = useState<RecentEventsView>(defaultView);
 
   if (status === "loading") {
     return (
@@ -106,6 +145,8 @@ export function RecentEventsPanel({
   if (status === "error") {
     return <ErrorMessage message="Não foi possível carregar os eventos recentes." onRetry={retry} />;
   }
+
+  const bySeverity = severityCounts(highlights);
 
   return (
     <div className="flex flex-col gap-4">
@@ -135,7 +176,15 @@ export function RecentEventsPanel({
           </div>
         )
       ) : (
-        <NarrativeTextPanel text={narrativeText} page={page} onGenerated={onGenerated} blankOnCustom />
+        <div className="flex flex-col gap-4">
+          <div className="grid grid-cols-5 gap-2 sm:gap-3">
+            <SummaryStat label="Total de eventos" value={highlights.length} />
+            {(["critical", "high", "medium", "low"] as const).map((severity) => (
+              <SummaryStat key={severity} label={SEVERITY_LABEL[severity]} value={bySeverity[severity]} />
+            ))}
+          </div>
+          <NarrativeTextPanel text={narrativeText} page={page} onGenerated={onGenerated} blankOnCustom />
+        </div>
       )}
     </div>
   );

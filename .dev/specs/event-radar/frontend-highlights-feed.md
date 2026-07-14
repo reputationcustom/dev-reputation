@@ -8,6 +8,62 @@ atualizado: 2026-07-14
 
 # Radar de Eventos — Feed das Últimas 72h (frontend)
 
+> ✅ **Seletor de período escondido em `/radar` + botão "Atualizar resumo
+> executivo" atrás de uma preferência de admin (2026-07-14, mesma data,
+> 3ª sessão)** — 2 pedidos do usuário: (1) "exclusivamente para a página
+> radar de eventos, não mostre a opção de seleção do período" —
+> `PageHeaderBar` ganhou `hidePeriodSelector` (default `false`, esconde só
+> o segmented control Diário/Semanal/Mensal + o `CustomRangePicker`, nunca
+> o seletor de organização/Filtros), passado só por `radar/page.tsx`; o
+> período em si continua existindo no contexto global (herdado da última
+> seleção feita em outra página), só o controle de troca não aparece
+> aqui — coerente com o efeito já majoritariamente invisível do período
+> nesta página (nenhum efeito sobre "Lista", só indireto sobre "Resumo
+> executivo" via `narrative_text`). (2) "Oculte todos os botões
+> 'Atualizar resumo executivo', exceto o botão que aparece na opção
+> custom... coloque uma opção no usuário admin para marcar quando quiser
+> mostrar o botão e desmarcar quando não quiser" — `NarrativeTextPanel`'s
+> `canManuallyRefresh` deixou de ser `periodMode === "custom" || isAdmin`
+> e passou a ser `periodMode === "custom" || (isAdmin &&
+> showAiRefreshButton)`, onde `showAiRefreshButton` é uma preferência
+> pessoal nova (`user_profiles.show_ai_refresh_button`, migration
+> `20260809110000`, default `false` — "o ideal é não aparecer" em
+> apresentação de produto), editável só por admin em `/perfil` (checkbox,
+> toggle imediato) via a Edge Function `update-my-refresh-button-preference`
+> (mesmo padrão self-service de `update-my-timezone`/
+> `update-my-default-organization`, restrita a `is_admin` server-side). O
+> botão em período `custom` ("Analisar período com IA") não foi afetado —
+> continua sempre visível pra qualquer usuário, é uma ação diferente
+> (composição sob demanda pra um intervalo que nunca dispara IA sozinho).
+> Efeito: por padrão, "Atualizar resumo executivo" some em qualquer
+> período fora do `custom` pra todo admin (até que ele mesmo ligue a
+> preferência em `/perfil`) — inclusive no widget "Resumo executivo" desta
+> mesma página (`RecentEventsPanel`/`NarrativeTextPanel`, ver blockquote
+> logo abaixo).
+
+> ✅ **KPIs de "Quantidade de alertas por risco" reintroduzidas na aba
+> "Resumo executivo" (2026-07-14, mesma data, sessão seguinte)** — user
+> report: a reformulação "de estatísticas pra texto" (blockquote logo
+> abaixo) removeu `RecentEventsExecutiveSummary` inteira, incluindo a
+> contagem de eventos por severidade (Total/Críticos/Altos/Médios/Baixos)
+> — a intenção original era só substituir o *texto* ausente pelo
+> `narrative_text` de verdade, não também derrubar as KPIs numéricas, que
+> o usuário pediu de volta. A aba "Resumo executivo" agora mostra os 2
+> juntos: a mesma linha de 5 `SummaryStat`s (`grid-cols-5`, layout já
+> fixado em 2026-08-08, "Radar de Eventos: KPIs em uma linha única") logo
+> acima do `NarrativeTextPanel` — contagem derivada dos mesmos
+> `highlights` de 72h já buscados por `useRecentHighlights` (nenhuma
+> chamada nova, Princípio técnico 2), igual à versão original. Não voltou
+> "Eventos por tipo"/"Principais eventos" (o restante da
+> `RecentEventsExecutiveSummary` antiga) — o texto de IA já cobre esse
+> nível de detalhe em prosa, e o pedido do usuário citou especificamente
+> "quantidade de alertas por risco". Também alterado, mesmo pedido: o
+> widget de `/overview` agora abre direto na aba "Resumo executivo"
+> (`RecentEventsPanel` ganhou um prop opcional `defaultView`, default
+> `"list"` — só a chamada em `overview/page.tsx` passa `"summary"`;
+> `/radar` continua abrindo em "Lista", já que o feed completo de 72h é o
+> propósito da própria página).
+
 > ✅ **"Resumo executivo" reformulado — de estatísticas pra texto
 > período-escopado (2026-07-14, mesmo dia da implementação original)** —
 > 2 problemas reais relatados pelo usuário: (1) "não está aparecendo o

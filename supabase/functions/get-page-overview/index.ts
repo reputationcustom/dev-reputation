@@ -1011,6 +1011,25 @@ async function fetchLayer0NarrativeText(
     if (error) throw error
     const row = ((data ?? [])[0] ?? null) as VolumeDeltaRow | null
     if (!row) return null
+    // ✅ 2026-07-14 — user report: "ao selecionar o período diário o
+    // resumo executivo ainda está aparecendo com comparação histórica e
+    // não um resumo do dia selecionado." Pra `period.mode === 'daily'`
+    // (um único dia), o template leva com o volume absoluto DAQUELE dia
+    // ("O dia registrou N menções"), não com a variação percentual — a
+    // fórmula de comparação contra o período anterior continua correta
+    // pra weekly/monthly (janelas de vários dias, onde "cresceu/caiu X%"
+    // é a leitura natural), só não faz sentido como frase principal pra
+    // um único dia isolado.
+    if (ctx.period.mode === 'daily') {
+      if (row.delta_pct === null) {
+        return `O dia registrou ${row.current_value} menções — sem dado do dia anterior para comparação. Nenhum evento relevante detectado no período.`
+      }
+      const trendClause =
+        row.trend === 'stable'
+          ? 'volume estável em relação ao dia anterior'
+          : `${NARRATIVE_TEXT_TREND_WORDS[row.trend]} ${Math.abs(row.delta_pct)}% em relação ao dia anterior`
+      return `O dia registrou ${row.current_value} menções, ${trendClause}. Nenhum evento relevante detectado no período.`
+    }
     if (row.delta_pct === null) {
       return `${row.current_value} menções no período — sem dado do período anterior para comparação.`
     }

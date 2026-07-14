@@ -8331,6 +8331,60 @@ deixar de citar picos/quedas de volume ou momentum e passar a mostrar só
 eventos de mudança de sentimento, e "Mudança de sentimento" (texto de IA)
 parar de descrever eventos alheios a sentimento.
 
+### Camada 0 de `ai-synthesis.md` — template de "Diário" descrevia comparação histórica em vez do próprio dia (2026-07-14)
+
+User report: "Ao selecionar o período diário o resumo executivo ainda
+está aparecendo com comparação histórica e não um resumo do dia
+selecionado." Causa raiz confirmada em `fetchLayer0NarrativeText()`
+(Camada 0, `aggregated-metrics-service.ts`) — pra 0 highlights no
+período (o caso comum), o único template existente sempre era "Sem
+eventos relevantes detectados no período. Volume {cresceu|caiu} de X%
+em relação ao período anterior.", **independente** de `period.mode`. Pra
+`daily` (um único dia), essa frase é sempre uma comparação percentual
+contra o dia anterior, nunca uma descrição do próprio dia — exatamente o
+sintoma relatado. `get_volume_delta` (a fonte deste template) só devolve
+`current_value`/`previous_value`/`delta_pct`/`trend`, nada além disso —
+nenhuma function/bloco novo necessário, só uma segunda frase de
+apresentação pro mesmo dado.
+
+**Fix**: `fetchLayer0NarrativeText()` ganhou um branch específico pra
+`ctx.period.mode === 'daily'` — leva com o valor absoluto do próprio dia
+("O dia registrou N menções"), com o `trend`/`delta_pct` como cláusula
+secundária ("...N menções, cresceu X% em relação ao dia anterior.") em
+vez de frase principal. `weekly`/`monthly` mantêm a frase original
+("Volume cresceu/caiu X% em relação ao período anterior") — janelas de
+vários dias onde a comparação percentual é a leitura natural, sem
+mudança de comportamento aí.
+
+Propagado (Princípio técnico 5) na cópia canônica e nas 8 Edge Functions
+deployadas — desta vez via uma substituição de string única e pequena
+(não a técnica "wholesale prefix replace" usada antes), depois de
+confirmar por `grep` que os 8 arquivos ainda tinham exatamente o mesmo
+corpo de `fetchLayer0NarrativeText` do canônico antes de editar (uma
+sessão concorrente havia tocado outros trechos deste mesmo arquivo
+enquanto esta sessão rodava — `entity_name`/truncamento de "Conteúdo em
+destaque" — então uma substituição em bloco arriscaria sobrescrever
+trabalho alheio sem essa checagem prévia).
+
+**Verificação**: `npx tsc --noEmit` limpo (mudança é Deno-only). Diff do
+corpo de `fetchLayer0NarrativeText` extraído de 3 dos 8 arquivos
+deployados contra o canônico — idêntico. `npm run build` não confirmado
+nesta sessão — falhou duas vezes seguidas com erros de arquivo
+inexistente (`.next/server/app/_not-found/page.js.nft.json`,
+`.next/types/.../page.ts not found`), consistente com um processo
+concorrente escrevendo no mesmo diretório `.next` ao mesmo tempo (mesma
+classe de problema já documentada antes neste arquivo, "2 falhas
+transitórias de build por conflito de arquivo com um processo
+concorrente no mesmo diretório") — não repetido pra confirmar, já que
+`tsc` (que não usa `.next` e não conflita com outro processo) já
+confirma que a mudança em si é sintaticamente válida. Sem ambiente
+Deno/Supabase real nesta sessão — não testado contra uma chamada real,
+mesma limitação recorrente; `git push` para `develop` é o próximo passo,
+e o sinal a acompanhar é o texto de "O que os gráficos mostram?" (ou
+qualquer outro widget de `narrative_text`) em período "Diário" começar
+com "O dia registrou N menções" em vez de "Sem eventos relevantes
+detectados no período. Volume cresceu/caiu...".
+
 ## Directory structure
 
 ```

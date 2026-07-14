@@ -33,7 +33,24 @@ const FILTRO_CHIPS = [
 // não duplicar o mesmo texto duas vezes empilhado (só os 3 estados
 // loading/erro/não-encontrado, que não têm h1 próprio, passam um título
 // genérico).
-export function PageHeaderBar({ title, subtitle }: { title?: string; subtitle?: string }) {
+//
+// `hidePeriodSelector` — ✅ 2026-07-14, pedido do usuário, exclusivo pra
+// `/radar`: o seletor de período (Diário/Semanal/Mensal + range custom)
+// não tem efeito sobre a aba "Lista" do widget (janela FIXA de 72h, ver
+// event-radar/frontend-highlights-feed.md) e só afeta a aba "Resumo
+// executivo" de forma indireta (via `get-page-overview`) — mostrar um
+// seletor cujo efeito prático é quase todo invisível nesta página
+// específica confundia mais do que ajudava. Default `false` — toda outra
+// página continua mostrando o seletor normalmente.
+export function PageHeaderBar({
+  title,
+  subtitle,
+  hidePeriodSelector = false,
+}: {
+  title?: string;
+  subtitle?: string;
+  hidePeriodSelector?: boolean;
+}) {
   const {
     organizations,
     organizationsStatus,
@@ -125,25 +142,29 @@ export function PageHeaderBar({ title, subtitle }: { title?: string; subtitle?: 
               </div>
             )}
 
-            <div className="flex rounded-md border border-border-default p-0.5">
-              {PERIOD_MODE_OPTIONS.map((option) => (
-                <button
-                  key={option.mode}
-                  type="button"
-                  onClick={() => setPeriodMode(option.mode)}
-                  className={`rounded px-3 py-1.5 text-sm font-medium transition-colors ${
-                    periodMode === option.mode
-                      ? "bg-accent-blue text-white"
-                      : "text-text-secondary hover:bg-bg-page"
-                  }`}
-                >
-                  {option.label}
-                </button>
-              ))}
-            </div>
+            {!hidePeriodSelector && (
+              <>
+                <div className="flex rounded-md border border-border-default p-0.5">
+                  {PERIOD_MODE_OPTIONS.map((option) => (
+                    <button
+                      key={option.mode}
+                      type="button"
+                      onClick={() => setPeriodMode(option.mode)}
+                      className={`rounded px-3 py-1.5 text-sm font-medium transition-colors ${
+                        periodMode === option.mode
+                          ? "bg-accent-blue text-white"
+                          : "text-text-secondary hover:bg-bg-page"
+                      }`}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
 
-            {periodMode === "custom" && (
-              <CustomRangePicker range={customRange} onChange={setCustomRange} />
+                {periodMode === "custom" && (
+                  <CustomRangePicker range={customRange} onChange={setCustomRange} />
+                )}
+              </>
             )}
           </div>
 
