@@ -10,21 +10,35 @@ atualizado: 2026-07-25
 
 > ✅ **Camada 0 implementada (2026-07-25, gap #27 de `_pending.md`,
 > resolvido)** — `fetchNarrativeText()` (`aggregated-metrics-service.ts`):
-> usa `summary`/`explanation` do highlight quando há exatamente 1 (hoje
-> inalcançável na prática, `get_active_highlights` ainda não existe, ver
-> gap #8 abaixo); caso contrário monta o template determinístico "Sem
-> eventos relevantes detectados no período. Volume {cresceu|caiu} de
-> {delta_pct}% em relação ao período anterior." via nova function SQL
-> `get_volume_delta` (migration `20260725020000`, escopada por
-> `filters.narratives` como `get_sentiment_breakdown`). `narrative_text`
-> deixa de ser sempre `null`. **Camada 1** (`page_narrative_synthesis`,
-> ver "Dados envolvidos" abaixo) continua sem migration — depende de
-> `event-radar` publicar 2+ highlights por página pra fazer sentido, gap
-> #7 de `_pending.md` continua aberto. Achado anterior (2026-07-13, ainda
-> relevante como histórico): o código chegou a ter um comentário afirmando
-> que a Camada 0 "já cobria o texto determinístico" quando na verdade
-> `narrative_text` era gravado `null` incondicionalmente — corrigido junto
-> com a implementação real desta vez.
+> usa `summary`/`explanation` do highlight quando há exatamente 1; caso
+> contrário monta o template determinístico "Sem eventos relevantes
+> detectados no período. Volume {cresceu|caiu} de {delta_pct}% em relação
+> ao período anterior." via nova function SQL `get_volume_delta` (migration
+> `20260725020000`, escopada por `filters.narratives` como
+> `get_sentiment_breakdown`). `narrative_text` deixa de ser sempre `null`.
+> Achado anterior (2026-07-13, ainda relevante como histórico): o código
+> chegou a ter um comentário afirmando que a Camada 0 "já cobria o texto
+> determinístico" quando na verdade `narrative_text` era gravado `null`
+> incondicionalmente — corrigido junto com a implementação real desta vez.
+>
+> ⚠️ **Nota revisada (2026-08-02)** — esta blockquote (originalmente escrita
+> 2026-07-25) ainda dizia "Camada 1 continua sem migration — depende de
+> `event-radar` publicar 2+ highlights por página pra fazer sentido, gap #7
+> de `_pending.md` continua aberto", frase que ficou desatualizada assim
+> que `event-radar` foi implementado (1.1-1.4/1.6, migrations
+> `20260727000000`–`20260731020000`, `feed_events` populada desde
+> 2026-07-31) — corrigida aqui. Estado real hoje: o pré-requisito de
+> `event-radar` está satisfeito (mesma constatação já registrada em
+> `sql-aggregation.md`, topo do arquivo, e em `_pending.md` gap #8) — o que
+> falta não é mais uma dependência externa, é só a implementação em si: a
+> function `get_active_highlights` (bloco `highlights`, ainda não escrita —
+> `fetchHighlights` continua retornando `[]` incondicionalmente) e a tabela
+> `page_narrative_synthesis` (Camada 1, nunca teve migration). Até essas
+> duas existirem, `highlights` é sempre `[]` e a Camada 0 (0 highlights) é
+> o único ramo desta spec que roda de fato — a Camada 1 abaixo descreve o
+> desenho, não o estado atual. `_pending.md` gap #7 tinha o mesmo texto
+> desatualizado ("depende só de `event-radar` publicar") — corrigido na
+> mesma sessão, ver nota cruzada para o gap #8.
 
 ## Objetivo
 
@@ -54,8 +68,10 @@ por template determinístico, sem chamar IA. Exemplo de template:
 
 ### Camada 1 — Composição em lote, armazenada em banco (páginas com múltiplos highlights)
 
-Quando a página tem 2+ highlights relevantes no escopo (tipicamente `Visão Geral`, `Sentimento`,
-`Pautas Eleitorais`), o sistema faz **uma única chamada de composição** que recebe os
+Quando a página tem 2+ highlights relevantes no escopo (`Visão Geral`, `Sentimento`,
+`Pautas Eleitorais` e `Relatórios` — as 4 páginas cujo `PAGE_BLOCKS` inclui `highlights` **e**
+`narrative_text` juntos; `Alertas` também tem `highlights` mas não `narrative_text`, então nunca
+aciona esta camada), o sistema faz **uma única chamada de composição** que recebe os
 `summary`/`explanation` já existentes desses highlights (não os dados brutos de novo) e devolve
 um parágrafo coeso amarrando os eventos. Esta chamada:
 
@@ -157,12 +173,24 @@ deve registrar no spec da página por que a Camada 0 ou 1 não foram suficientes
 
 ## Dependências técnicas
 
-- Módulo `event-radar` implementado e publicando em `feed_events` (pré-requisito — sem
-  ele, todas as páginas caem permanentemente no template de "sem eventos" da Camada 0).
+- Módulo `event-radar` publicando em `feed_events` (pré-requisito — sem ele, todas as páginas
+  caem permanentemente no template de "sem eventos" da Camada 0). ✅ **Satisfeito desde
+  2026-07-31** — `event-radar` 1.1-1.4/1.6 implementados, `feed_events` populada por
+  `event-radar-agent-orchestrator`. Não implementado ainda por causa disso: a function
+  `get_active_highlights` em si (ver `sql-aggregation.md`) e a tabela `page_narrative_synthesis`
+  abaixo — o gate externo caiu, o trabalho interno continua pendente.
 - Tabela própria `page_narrative_synthesis` (ver "Dados envolvidos" acima) — **não** é o mesmo
   mecanismo de cache do envelope (`edge-functions-per-page.md`, TTL 5min); são independentes de
   propósito (um é persistência de texto por período, o outro é cache de resposta HTTP).
-- Skill `humanizer-pt-br` para o tom da composição (Camada 1).
+- ⚠️ **Skill `humanizer-pt-br` não existe** neste projeto (`.claude/skills/` só tem
+  `brandwatch-api`, `frontend-design`, `spec-driven-dev`,
+  `supabase-postgres-best-practices`, `web-app-structure` — confirmado 2026-08-02, ao revisar
+  esta spec antes de implementar a Fase B de `event-radar/fluxo-aggregated-metrics.md`). Nunca
+  existiu no repositório — este texto descrevia uma dependência aspiracional desde que a spec foi
+  escrita, nunca verificada contra o diretório real de skills. Quando a Camada 1 for implementada,
+  o tom da composição deve vir de instrução direta no prompt de sistema da chamada de IA (mesmo
+  padrão já usado por `event-radar/agent-orchestrator.md`'s `SYSTEM_PROMPT`), não de uma skill —
+  atualizar esta linha se uma skill `humanizer-pt-br` real vier a existir depois.
 
 ## Referências relacionadas
 
