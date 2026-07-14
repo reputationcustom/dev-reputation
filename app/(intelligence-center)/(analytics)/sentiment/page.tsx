@@ -14,6 +14,15 @@ import { EmptyState } from "@/components/ui/empty-state";
 // ✅ "Sentimento por Narrativa" resolvido em 2026-07-17 — breakdown type
 // 'narrative' (get_narrative_sentiment_breakdown), split completo
 // positivo/neutro/negativo por Narrativa-folha, ver sql-aggregation.md.
+// ✅ "Mudança de sentimento" wired em 2026-08-03 — ai-synthesis.md
+// Camadas 0/1 implementadas desde 2026-08-02 (aggregated-metrics-service.ts,
+// event-radar/fluxo-aggregated-metrics.md "Fase B"); `/sentiment` é uma das
+// 3 páginas que hoje alcançam a Camada 1 de verdade (highlights + narrative_text
+// juntos em PAGE_BLOCKS, get-page-sentiment já deployada — ver ai-synthesis.md).
+// `narrative_text` já era lido no widget "Insights" no fim da página; movido
+// pra cá (não duplicado) pra ocupar a posição do protótipo original, ao lado
+// de "Distribuição geral" — mesmo padrão de dedup já usado em /overview
+// ("O que os gráficos mostram?").
 // ⚠️ "Menções que mais influenciaram o sentimento" continua fora desta
 // versão — não existe bloco de "mentions em destaque" no contrato do
 // envelope ainda (ver _pending.md #19).
@@ -33,12 +42,11 @@ export default function SentimentPage() {
             />
           </WidgetCard>
           {/* "Mudança de sentimento" (protótipo: callout textual ao lado da
-              distribuição geral) — depende de síntese narrativa
-              (ai-synthesis, não implementado, ver _pending.md #19); mesmo
-              padrão de honestidade do resto da página, EmptyState em vez
-              de inventar o texto. */}
+              distribuição geral) — narrative_text da síntese de IA
+              (ai-synthesis.md, Camadas 0/1), posição exata do protótipo
+              original. */}
           <WidgetCard title="Mudança de sentimento" status={status} onRetry={retry}>
-            <EmptyState message="Análise textual de mudança de sentimento ainda não implementada — depende de síntese narrativa (ai-synthesis, ver _pending.md)." />
+            <NarrativeTextPanel text={envelope?.narrative_text ?? null} />
           </WidgetCard>
         </div>
 
@@ -101,11 +109,11 @@ export default function SentimentPage() {
           <EmptyState message="Lista de menções em destaque ainda não implementada — sem bloco correspondente no envelope atual." />
         </WidgetCard>
 
+        {/* "Insights" só mostra highlights aqui — narrative_text já ocupa o
+            widget "Mudança de sentimento" acima (não duplicado, mesmo
+            padrão de dedup de /overview). */}
         <WidgetCard title="Insights" status={status} onRetry={retry}>
-          <div className="flex flex-col gap-4">
-            <NarrativeTextPanel text={envelope?.narrative_text ?? null} />
-            <HighlightsPanel highlights={envelope?.highlights ?? []} />
-          </div>
+          <HighlightsPanel highlights={envelope?.highlights ?? []} />
         </WidgetCard>
       </div>
     </>

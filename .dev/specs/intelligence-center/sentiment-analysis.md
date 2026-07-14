@@ -3,7 +3,7 @@ tipo: feature-spec
 módulo: intelligence-center
 funcionalidade: sentiment-analysis
 status: implementado
-atualizado: 2026-07-25
+atualizado: 2026-08-03
 ---
 
 # Análise de Sentimento
@@ -51,6 +51,22 @@ atualizado: 2026-07-25
 > corretamente limitado a `net_sentiment` (score único, limitação real da
 > API Brandwatch, ver "Regras de negócio" abaixo), o segundo continua sem
 > bloco no envelope (`_pending.md` #19, ainda aberto).
+
+> ✅ **"Mudança de sentimento" wired (2026-08-03)** — pedido do usuário, a
+> partir do que via na UI: "Análise textual de mudança de sentimento ainda
+> não implementada — depende de síntese narrativa (ai-synthesis, ver
+> _pending.md)." Esse `EmptyState` datava de 2026-07-13 (import do
+> protótipo), quando `ai-synthesis` genuinamente não tinha nenhuma camada
+> implementada. Não era mais verdade desde 2026-08-02 (Camadas 0/1 de
+> `aggregated-metrics/ai-synthesis.md` implementadas, `/sentiment` é uma
+> das 3 páginas que hoje alcançam a Camada 1 de verdade — `highlights` **e**
+> `narrative_text` juntos em `PAGE_BLOCKS`, `get-page-sentiment` já
+> deployada) — só ninguém tinha voltado a esta página pra trocar o
+> `EmptyState` pelo dado real. `narrative_text` já estava sendo lido nesta
+> mesma página, só no widget genérico "Insights" no fim da página — movido
+> (não duplicado) pro widget "Mudança de sentimento", posição exata do
+> protótipo original ao lado de "Distribuição geral". Nenhuma mudança de
+> backend — só o frontend deixou de esconder um dado que já existia.
 
 > Cobre "Página 3 — Análise de Sentimento" / item "9. Visualizações
 > recomendadas" do documento de estrutura do protótipo

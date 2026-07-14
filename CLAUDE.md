@@ -5430,15 +5430,184 @@ abaixo desta entrada, rodados ao final da sessão. Migration
 real — mesma limitação recorrente de toda sessão sem credenciais de
 deploy neste ambiente.
 
+## Módulo `finops` — painel de custo de IA (2026-08-05)
+
+Módulo novo, spec'd e implementado na mesma sessão. Pedido do usuário, na
+sequência direta de uma investigação de custo do `event-radar` (o usuário
+tinha acabado de configurar `ANTHROPIC_API_KEY` e pedido uma estimativa
+manual de custo baseada em pricing público do Claude Haiku 4.5): "faça uma
+página e disponibilize no menu de administração com a estimativa de custo
+tendo em vista o consumo atual... deve ser atualizada diariamente com o
+consumo e com a previsão de gasto... permita tb cadastrar custos extras
+que podem ser pontuais ou mensais ou anuais." Migration
+`20260805000000_finops_schema.sql`, 4 Edge Functions novas, página
+`/admin/finops`. Ver `.dev/specs/finops/` (`overview.md`/`data-model.md`)
+para o spec completo.
+
+- **De estimativa pra medição real**: a resposta anterior desta mesma
+  conversa (a estimativa de custo do `event-radar`) tinha sido só
+  aritmética manual em cima de faixas de tokens chutadas — o pedido desta
+  sessão é o oposto, um painel que reflete o **uso real**, então a
+  primeira decisão foi instrumentar os dois únicos pontos do produto que
+  chamam Claude pra gravar `response.usage.input_tokens`/`output_tokens`
+  (dado que a própria API da Anthropic já retorna, nunca estimado) numa
+  tabela nova, `ai_usage_log`: `event-radar-agent-orchestrator/index.ts`
+  (event-radar 1.4) e `composeLayer1NarrativeText` em
+  `aggregated-metrics-service.ts` (Camada 1 de `ai-synthesis`). Custo em
+  USD calculado no momento da gravação (`AI_MODEL_PRICING`, hoje só
+  `claude-haiku-4-5` — $1/$5 por MTok, confirmado via a skill `claude-api`
+  nesta mesma conversa) — preserva o custo histórico correto mesmo que o
+  preço de um modelo mude no futuro, sem precisar de uma tabela de preços
+  versionada.
+- **`recordAiUsage()` duplicada nos dois pontos de chamada** (Princípio
+  técnico 5 — Edge Functions autossuficientes) e propagada nas 7 cópias
+  deployadas de `aggregated-metrics-service.ts`
+  (`get-page-{overview,narratives,sentiment,platforms,themes,authors}`,
+  `get-narrative-detail`) via um script Node de uso único (não commitado,
+  mesma técnica já usada na sessão da Fase B, 2026-08-02) — verificado com
+  `diff` que as 7 cópias receberam exatamente a mesma mudança, sem
+  divergência mecânica. `composeLayer1NarrativeText` precisou de 3
+  parâmetros novos (`supabase`, `ctx`, `page`) que não tinha antes, só pra
+  poder gravar o uso — `composeAndPersistLayer1` (o único chamador) já
+  tinha os três em escopo, então o call site também mudou. A gravação
+  acontece **logo após receber a resposta da Anthropic**, antes de
+  qualquer verificação de `stop_reason`/parse/persistência subsequente —
+  o uso já foi cobrado naquele ponto, independente do que acontece depois
+  (refusal, erro de parse, falha ao gravar o resultado final). Uma falha
+  ao gravar em `ai_usage_log` em si só loga o erro e nunca derruba o
+  fluxo principal (observabilidade não deve quebrar o que está
+  observando).
+- **Escopo deliberado: plataforma inteira, não por organização** — mesmo
+  modelo de `/admin/users` (`is_admin`, sem seletor de organização), não o
+  modelo das 5 páginas de análise (organização ativa + período do
+  header). O custo de IA é cobrado numa única conta da Anthropic pela
+  plataforma inteira, então não fazia sentido pedir pro admin escolher
+  "qual organização" pra ver esse gasto.
+- **Decisão deliberada: sem tabela de resumo diário materializada + cron
+  novo**, diferente do padrão já usado no projeto pra grão diário
+  (`bw_query_metrics_daily`/`narrative_metrics`, que existe pra evitar
+  reconsultar a API do Brandwatch, sujeita a rate limit). Nenhuma dessas
+  razões se aplica aqui — `ai_usage_log` é local, permanente (sem job de
+  retenção/poda, mesma filosofia de sempre) e o volume esperado é
+  minúsculo (poucas dezenas de chamadas de IA por dia, no teto — o cap
+  diário de 15/organização do event-radar 1.6 já limita isso). Uma
+  consulta live agrupada por dia sobre `ai_usage_log`, dentro de
+  `get_finops_overview()`, é trivial em performance e sempre exata — "
+  atualizada diariamente" (pedido do usuário) é satisfeito por
+  construção, já que a página lê direto do log gravado em tempo real,
+  nunca de um snapshot que poderia atrasar até o próximo job noturno.
+- **`get_finops_overview(p_trend_days integer default 30)` retorna
+  `jsonb`** — mesmo padrão de `get_dissemination_graph`
+  (aggregated-metrics/sql-aggregation.md), a forma mais simples de um
+  único RPC devolver blocos heterogêneos (hoje/mês corrente/projeção/
+  tendência diária/custos extras) numa chamada só. Fórmula de projeção
+  (inferência de MVP, sem nenhum spec prévio definindo isso — mesmo
+  padrão já usado em `event_radar_config()`/`get_volume_trend`,
+  documentada num único lugar pra ser recalibrada com dado real):
+  `avg_daily_ai_cost_usd = gasto_do_mês / dias_decorridos`,
+  `projected_ai_cost_usd = avg_daily × dias_no_mês`, mais os custos extras
+  ativos no mês (mensal cheio, anual/12, pontual se a data cai no mês
+  corrente). `daily_trend` preenche os 30 dias via `generate_series` +
+  `coalesce(..., 0)` — nunca um "buraco" silencioso num dia sem uso de IA.
+- **`manual_costs`** — custos extras cadastrados manualmente
+  (descrição/valor USD/recorrência pontual-mensal-anual/data efetiva/data
+  de término opcional). `recurrence` é enum (`finops_cost_recurrence`),
+  não uma tabela de referência tipo `communication_types` — são 3 valores
+  estruturais, sem pedido do usuário de que isso cresça (diferente de
+  tipos de comunicação, onde o usuário pediu explicitamente uma tabela
+  editável). CRUD via 3 Edge Functions dedicadas
+  (`create`/`update`/`delete-finops-manual-cost`), cada uma validando no
+  handler (Princípio técnico 2) e checando `is_admin` — mesmo padrão de
+  auth dos `admin-*` (Bearer token → `supabaseAdmin.auth.getUser(token)` →
+  checar `user_profiles.is_admin`), não o padrão de `get-page-*` (chave
+  publicável + JWT encaminhado), já que este é um recurso admin-only da
+  plataforma.
+- **RLS deny-all** em `ai_usage_log`/`manual_costs` — mesmo padrão de
+  `bw_sync_lock`/`sync_cursors`/`sync_log` (nem `authenticated` nem `anon`
+  tocam essas tabelas direto; só `service_role`, via as Edge Functions,
+  bypassa).
+- **Frontend**: `/admin/finops` (mesmo gate `is_admin` de `/admin/users`,
+  server component com `redirect('/overview')` pra não-admin) — 4 KPIs
+  (gasto hoje, gasto no mês, custos extras no mês, projeção total do
+  mês), gráfico de tendência diária reaproveitando `TrendLineChart`
+  (construindo um objeto `Trend` compatível a partir de `daily_trend` —
+  nenhum componente de chart novo precisou ser escrito), tabela de uso
+  por origem no mês, e a lista de custos extras com CRUD completo
+  (criar/editar/excluir, `ConfirmDialog` na exclusão, `Toast` em toda
+  ação, mesmo padrão de `users-admin-view.tsx`). Item de menu "FinOps" em
+  CONFIGURAÇÕES, ao lado de "Administração", mesmo gate `isAdmin`.
+- **Verificação**: `npx tsc --noEmit` e `npm run build` (com `rm -rf
+  .next` antes) confirmados limpos — 21 rotas, `/admin/finops` nova.
+  Migration `20260805000000` revisada manualmente, não executada contra
+  um banco real nesta sessão (mesma limitação recorrente de toda sessão
+  sem credenciais de deploy) — o próximo `git push` pra `develop` é o que
+  de fato cria as tabelas/function e passa a acumular `ai_usage_log` de
+  verdade; até lá, `/admin/finops` mostra zeros (sem uso de IA registrado
+  ainda), não um erro.
+
+### "Mudança de sentimento" — widget morto na página `/sentiment` religado ao `narrative_text` já existente (2026-08-03)
+
+User report, colando 2 mensagens exatas vistas na UI: "Ainda sem resumo
+executivo gerado para esta Narrativa." (detalhe de Narrativa — pipeline
+separado, `narrative-summary-composer`/`narratives.description`, já
+resolvido em outra sessão concorrente neste mesmo repositório, ver
+`_pending.md`) e "Análise textual de mudança de sentimento ainda não
+implementada — depende de síntese narrativa (ai-synthesis, ver
+_pending.md)." (`/sentiment`). Pedido: "Verifique o que está pendente em
+ai-synthesis e implemente."
+
+Revisão de `ai-synthesis.md` (a mesma revisão de coerência da sessão
+anterior, 2026-08-03) já tinha confirmado Camadas 0/1 implementadas desde
+2026-08-02, com apenas 2 gaps reais e deliberadamente deferidos
+(gatilhos de invalidação de período aberto — `_pending.md` #21; Camada 2,
+opt-in por página). Nenhum dos dois é o que o usuário está vendo — a
+segunda mensagem colada é um `EmptyState` **hardcoded no frontend**
+(`app/(intelligence-center)/(analytics)/sentiment/page.tsx`), escrito
+2026-07-13 durante o import do protótipo, numa época em que `ai-synthesis`
+genuinamente não tinha nenhuma camada pronta. Ficou obsoleto desde
+2026-08-02 e ninguém tinha voltado nesta página específica pra trocar o
+texto fixo pelo dado real — `narrative_text` já é computado pro envelope
+de `/sentiment` (uma das 3 páginas que hoje alcançam a Camada 1 de
+verdade: `highlights` **e** `narrative_text` juntos em `PAGE_BLOCKS`,
+`get-page-sentiment` já deployada) e já **estava sendo renderizado** nesta
+mesma página — só no widget genérico "Insights" no fim da página
+(`NarrativeTextPanel` + `HighlightsPanel`), nunca no widget "Mudança de
+sentimento" ao lado de "Distribuição geral" (posição do protótipo
+original), que continuava com o `EmptyState` morto.
+
+Fix, sem nenhuma mudança de backend — só o frontend deixou de esconder um
+dado que já existia: `NarrativeTextPanel` movido (não duplicado) pro
+widget "Mudança de sentimento"; o widget "Insights" no fim da página
+passou a mostrar só `HighlightsPanel` — mesmo padrão de dedup já
+estabelecido em `/overview` ("O que os gráficos mostram?", ver a entrada
+"Second round of `/overview` UI polish" mais acima neste arquivo).
+`intelligence-center/sentiment-analysis.md` atualizada com o achado.
+
+**Não implementado nesta sessão, fora do escopo do que foi pedido/visto na
+UI**: `narrative_detail` (`/narratives/[id]`) também computa
+`narrative_text` (sempre via Camada 0, já que essa página não tem bloco
+`highlights` em `PAGE_BLOCKS` — nunca alcança Camada 1) mas
+`narrative-detail-content.tsx` nunca lê `envelope.narrative_text` em lugar
+nenhum — diferente do caso de `/sentiment`, aqui não existe nem um
+`EmptyState` visível (o dado é só silenciosamente descartado, não haveria
+mensagem pro usuário reportar). Registrado como achado, não corrigido
+agora — não foi o que o usuário reportou ver.
+
+**Verificação**: `npx tsc --noEmit` limpo. Sem mudança de SQL/Edge
+Function nesta sessão.
+
 ## Directory structure
 
 ```
 app/(intelligence-center)/    Every authenticated page (overview, narratives,
-                               sentiment, platforms, themes, admin/users, perfil)
-                               — shares one shell (Sidebar/header/footer), see
-                               layout.tsx; nested (analytics)/ route group adds
+                               sentiment, platforms, themes, admin/{users,finops},
+                               perfil) — shares one shell (Sidebar/header/footer),
+                               see layout.tsx; nested (analytics)/ route group adds
                                the org-required gate for the 5 analytics pages
-                               plus communications/ (Sprint 2.1 — also org-scoped)
+                               plus communications/ (Sprint 2.1 — also org-scoped).
+                               admin/finops (module `finops`, platform-wide, not
+                               org-scoped) sits alongside admin/users, same
+                               is_admin gate
 app/{login,forgot-password,reset-password}/   Public auth pages, outside the shell
 components/intelligence-center/   Shared UI for the 5 analytics pages (table,
                                badges, charts, widget states) — see CLAUDE.md,

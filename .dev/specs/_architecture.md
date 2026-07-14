@@ -1,6 +1,6 @@
 ---
 tipo: architecture-map
-atualizado: 2026-08-02
+atualizado: 2026-08-05
 ---
 
 # Mapa de Arquitetura — Digital Intelligent Communication
@@ -44,6 +44,10 @@ graph TD
         REPORTS["executive-reports<br/>relatórios periódicos"]
     end
 
+    subgraph TRANSVERSAL["Transversal — admin, sem Sprint própria"]
+        FINOPS["finops<br/>custo de IA + custos extras"]
+    end
+
     FOUNDATION --> AUTH
     FOUNDATION --> AGGMETRICS
     FOUNDATION --> EVENTRADAR
@@ -64,6 +68,10 @@ graph TD
 
     AGGMETRICS --> REPORTS
 
+    AUTH --> FINOPS
+    EVENTRADAR -.-> FINOPS
+    AGGMETRICS -.-> FINOPS
+
     style FOUNDATION fill:#c3e6cb,stroke:#2e7d32
     style AUTH fill:#c3e6cb,stroke:#2e7d32
     style AGGMETRICS fill:#c3e6cb,stroke:#2e7d32
@@ -74,6 +82,7 @@ graph TD
     style PROPGRAPH fill:#e2e3e5,stroke:#6c757d
     style DECISIONCENTER fill:#e2e3e5,stroke:#6c757d
     style REPORTS fill:#e2e3e5,stroke:#6c757d
+    style FINOPS fill:#c3e6cb,stroke:#2e7d32
 ```
 
 **Como ler**: seta cheia (`-->`) = dependência forte, o módulo de origem bloqueia o de destino.
@@ -191,6 +200,7 @@ de `intelligence-center`, ver `_index.md`, "Módulo `command-center` removido".
 | `propagation-graph` | Grafo de propagação com rollup materializado completo (versão simplificada já em `intelligence-center/narratives-exploration.md`) | rascunho | — |
 | `decision-center` | AI Advisors — perguntas livres/interativas do analista sobre mentions/narrativas | rascunho | — |
 | `executive-reports` | Relatórios periódicos (diário/semanal/mensal/executivo/crise) | rascunho | — |
+| `finops` | Painel de custo de IA (uso real, `ai_usage_log`) + custos extras cadastráveis (`manual_costs`) + previsão de fim de mês — admin-only, transversal, sem Sprint própria | implementado (2026-08-05) | [finops/overview.md](finops/overview.md) |
 
 ## Referências
 
