@@ -8,6 +8,46 @@ atualizado: 2026-07-14
 
 # Síntese Narrativa da Página (`narrative_text`)
 
+> ✅ **Recomposição periódica de período aberto — a cada 3h (2026-07-14)**
+> — pedido do usuário: "na funcionalidade ai-synthesis.md os resumos não
+> estão atualizando até o momento. a atualização das
+> `page_narrative_synthesis`, vamos definir atualização a cada 3h."
+> Confirmado que o relato procedia: desde que a Camada 1 foi implementada
+> (2026-08-02), `fetchNarrativeText()` sempre devolvia uma linha já
+> existente em `page_narrative_synthesis` **como está, pra sempre**, sem
+> nenhum gatilho de recomposição — documentado à época como limitação
+> conhecida ("Fluxo principal"/"Fluxos alternativos" abaixo, `_pending.md`
+> #21), não um bug, mas na prática significava que qualquer período ainda
+> aberto ("Semanal"/"Mensal" em andamento) ficava com o resumo executivo
+> **congelado no texto da primeira composição**, por mais que os dados
+> subjacentes (highlights novos, sentimento, volume) mudassem depois.
+> Fechado com uma janela de frescor: nova constante
+> `AI_SYNTHESIS_REFRESH_HOURS` (`aggregated-metrics-service.ts`,
+> configurável via secret, default `3` — mesmo padrão de
+> `BW_SYNC_INTERVAL_HOURS`) + `isNarrativeTextStale(generatedAt)`. Ao
+> encontrar uma linha existente, `fetchNarrativeText()` continua
+> devolvendo o texto já gravado **nesta mesma resposta** (nunca bloqueia a
+> página esperando uma nova composição), mas agora também dispara uma
+> recomposição em background (`scheduleBackground`, mesmo mecanismo
+> fire-and-forget já usado pra "linha não existe") sempre que **todas**
+> as condições valem: período ainda aberto (`is_final = false` —
+> permanece nunca recomposto quando fechado, por definição), período não
+> é `custom` (mesmo gate de sempre — um intervalo personalizado nunca
+> dispara IA sozinho, só pelo botão "Analisar com IA"), e `generated_at`
+> já tem 3h ou mais. Não resolve os dois gatilhos "empurrados" que a spec
+> original previa (sync concluir um ciclo / botão "Atualizar dados" — nenhum
+> dos dois existe no produto) — em vez disso, resolve o mesmo problema por
+> um caminho mais simples e já usado em todo o resto do projeto: um
+> intervalo fixo, puxado a cada carregamento de página (nunca um cron
+> dedicado — `page_narrative_synthesis` só é gravada quando alguém
+> realmente abre a página, então não há razão pra rodar isso em segundo
+> plano sem ninguém olhando). Propagado (Princípio técnico 5) na cópia
+> canônica e nas 8 Edge Functions deployadas que a replicam
+> (`get-page-{overview,narratives,sentiment,platforms,themes,authors}`,
+> `get-narrative-detail`, `compose-narrative-synthesis`). Sem migration —
+> `generated_at` já existia na tabela desde sua criação, só não era lida
+> por `fetchNarrativeText()` até agora.
+
 > ✅ **Bug de escopo em `themes` corrigido (2026-08-09)** — pedido do
 > usuário: "Insights [de Pautas Eleitorais] deve focar apenas no conteúdo
 > de Pautas Eleitorais, reveja o envelope dessa página para saber se a IA
@@ -240,13 +280,15 @@ Esta chamada:
     passou.
   - Período **aberto** (`period_end >= hoje`, ex: "últimos 7 dias" ainda em andamento): a
     intenção original era permitir regeneração pelos mesmos gatilhos que invalidariam o cache do
-    envelope (sync da Brandwatch concluiu um ciclo, ou usuário clicou "Atualizar dados"). ⚠️ **Na
-    implementação real, isso ainda não roda**: nenhum dos dois gatilhos existe no produto hoje
-    (mesmo gap que já bloqueia a invalidação do `page_cache`, `_pending.md` #21) — então, na
-    prática, uma linha já existente em `page_narrative_synthesis` é **sempre devolvida como
-    está**, período aberto ou fechado, nunca recomposta (ver "Fluxo principal" abaixo). `is_final`
-    continua sendo gravado corretamente (`period_end < hoje` no momento da geração); só não tem
-    nenhum consumidor lendo essa diferença ainda.
+    envelope (sync da Brandwatch concluiu um ciclo, ou usuário clicou "Atualizar dados") — nenhum
+    dos dois existe no produto hoje, e não é mais o caminho escolhido pra este gap (ver abaixo).
+    ✅ **Resolvido por um caminho mais simples (2026-07-14)**: em vez de esperar por um gatilho
+    "empurrado" que o produto não tem, `fetchNarrativeText()` recompõe periodicamente — a cada
+    `AI_SYNTHESIS_REFRESH_HOURS` (configurável, default **3h**) desde `generated_at`, puxado no
+    próximo carregamento de página que encontrar a linha já vencida (nunca um cron dedicado). Uma
+    linha de período **fechado** continua sendo a única verdadeiramente permanente. `is_final`
+    continua sendo gravado corretamente (`period_end < hoje` no momento da geração) e agora tem um
+    consumidor real: só uma linha com `is_final = false` é candidata a recompor.
 
 ### Camada 2 — Nova análise via IA (exceção, precisa de justificativa)
 
@@ -265,11 +307,13 @@ deve registrar no spec da página por que a Camada 0 ou 1 não foram suficientes
      determinístico, custa nada recalcular a cada vez).
    - 2+ → Camada 1: busca `page_narrative_synthesis` pela chave exata
      `(organization_id, page, period_start, period_end, filters_hash)`.
-     - Linha existe → retorna o texto armazenado direto, **sempre, sem chamar IA** — mesmo se
-       `is_final = false` (período ainda aberto). ⚠️ Não existe hoje nenhum gatilho que force uma
-       recomposição de uma linha já existente (ver "Camada 1" acima e `_pending.md` #21) — essa
-       branch é aspiracional, documentada porque a tabela/coluna `is_final` já está pronta pra
-       ela, mas nenhum código a lê ainda.
+     - Linha existe → retorna o texto armazenado direto **nesta mesma resposta, sem esperar por
+       IA nenhuma**. ✅ **2026-07-14**: se `is_final = false` (período ainda aberto), o período não
+       é `custom`, e `generated_at` já tem `AI_SYNTHESIS_REFRESH_HOURS` (default 3h) ou mais,
+       também dispara uma recomposição em background pra essa mesma chave (mesmo mecanismo
+       fire-and-forget do próximo item) — a resposta atual usa o texto antigo, a próxima já
+       encontra o novo. `is_final = true` nunca recompõe (permanente por definição); `custom`
+       nunca dispara IA sozinho (só pelo botão "Analisar com IA").
      - Linha não existe → fallback imediato é a Camada 0 (enquanto a composição não termina),
        dispara a composição assíncrona em background (`scheduleBackground`), grava o resultado
        ao terminar (só em caso de sucesso — ver "Fluxos alternativos e erros").
@@ -283,8 +327,8 @@ deve registrar no spec da página por que a Camada 0 ou 1 não foram suficientes
 
 | Situação                                          | Comportamento esperado                                         |
 |-----------------------------------------------------|--------------------------------------------------------------------|
-| Chamada de composição (Camada 1) falha              | `narrative_text` permanece com o fallback da Camada 0, nunca `null` sem explicação; nada é gravado em `page_narrative_synthesis` (só grava em caso de sucesso) |
-| Highlights mudam pra um período **aberto** já com linha em `page_narrative_synthesis` | ⚠️ **Hoje não regenera** — o texto já gravado é devolvido como está, mesma limitação do "Fluxo principal" acima. A intenção original (regenerar via `UPDATE` quando sync concluir/usuário clicar "Atualizar dados") depende dos gatilhos de `_pending.md` #21, que não existem no produto ainda. Comportamento atual, não um bug — revisitar se isso passar a incomodar na prática |
+| Chamada de composição (Camada 1) falha              | `narrative_text` permanece com o fallback da Camada 0, nunca `null` sem explicação; nada é gravado em `page_narrative_synthesis` (só grava em caso de sucesso) — a linha antiga (se houver) continua servindo até uma recomposição bem-sucedida |
+| Highlights mudam pra um período **aberto** já com linha em `page_narrative_synthesis` | ✅ **Recompõe a cada `AI_SYNTHESIS_REFRESH_HOURS` (default 3h, 2026-07-14)** — a próxima página carregada depois desse intervalo dispara uma recomposição em background (não bloqueia a resposta atual, que ainda usa o texto antigo); período `custom` fica de fora (só via botão "Analisar com IA") |
 | Highlights mudam pra um período **fechado** já com `is_final = true` | Nunca regenera — período fechado é permanente por definição, mesmo que dado novo chegasse atrasado (caso raro, mesma aceitação de lag já usada em outras partes do produto) |
 | Página sem highlights e sem dado suficiente (ex: organização nova) | Template da Camada 0 deve indicar claramente ausência de dados, nunca inventar tendência |
 
@@ -294,8 +338,12 @@ deve registrar no spec da página por que a Camada 0 ou 1 não foram suficientes
   `trends`) na Camada 1 — só os textos (`summary`/`explanation`) dos highlights envolvidos. Isso
   é o que torna a chamada barata: ela compõe texto, não analisa números.
 - Nenhuma página deve gerar uma chamada de IA por carregamento — Camadas 1/2 só chamam IA quando
-  não existe linha aproveitável em `page_narrative_synthesis` pra aquela chave exata (ver
-  "Fluxo principal"), nunca por TTL de cache expirando sozinho.
+  não existe linha aproveitável em `page_narrative_synthesis` pra aquela chave exata, ou (✅
+  2026-07-14) quando a linha existente é de período aberto e já passou de
+  `AI_SYNTHESIS_REFRESH_HOURS` (default 3h) desde `generated_at` (ver "Fluxo principal"). Isso não
+  é um TTL de cache genérico expirando sozinho (o `page_cache` de `edge-functions-per-page.md`
+  continua um mecanismo independente, hoje desabilitado) — é uma janela de frescor específica
+  desta tabela, só avaliada quando alguém de fato carrega a página, nunca por um cron dedicado.
 - `narrative_text` deve sempre citar apenas o que está nos highlights recebidos — proibido
   inventar causa, número ou correlação que não veio do radar.
 

@@ -8,6 +8,32 @@ atualizado: 2026-07-22
 
 # Pautas Eleitorais
 
+> ✅ **SOV da tabela e do gráfico corrigido pra escopo "só Pautas"
+> (2026-08-09, mesma sessão do item 4 abaixo)** — pedido do usuário: "tudo
+> [nessa página] deve ser somente em cima da categoria Pautas. SOV do
+> gráfico e da tabela de narrativas está incorreto. os valores utilizados
+> em Share of Voice e sentimento por pauta estão corretos considerando
+> apenas as subcategorias de Pautas." Bug real, confirmado lendo as 3
+> functions lado a lado: `get_theme_breakdown` ("Share of Voice e
+> sentimento por pauta", confirmado correto pelo usuário) já divide as
+> menções de cada Pauta pela soma de menções de **todas as Pautas**
+> (`grand_total`, migration `20260721030000`) — nunca pelo total da Query
+> inteira. `get_narratives_table` (tabela "Narrativas" desta página,
+> `p_scope='pautas'`) e `get_theme_sov_trend` (gráfico "SOV por pauta ao
+> longo do tempo") faziam diferente: as duas dividiam pelo total da
+> **Query inteira** (que inclui toda Narrativa que a organização rastreia,
+> não só Pautas) — como Pautas é normalmente um subconjunto pequeno disso,
+> os SOVs saíam artificialmente minúsculos (1.2%/0.9%/0.1%/0.1% no
+> screenshot do usuário), não por arredondamento, por escopo errado de
+> denominador. Corrigido (migration `20260809010000`): as duas passam a
+> usar a mesma definição de `get_theme_breakdown` — soma de menções de
+> **todas as Subcategories ativas de "Pautas"**, nunca a Query inteira.
+> `get_narratives_table` só muda esse comportamento quando `p_scope =
+> 'pautas'` — toda outra página (`overview`/`narratives`/`sentiment`)
+> mantém o denominador "Query inteira" de sempre, sem mudança. Ver
+> `CLAUDE.md` e `aggregated-metrics/sql-aggregation.md` para o
+> detalhamento completo.
+
 > ✅ **4 ajustes (2026-08-09)**, pedido do usuário:
 > 1. "Share of Voice e sentimento por pauta" (`PautaCardGrid`) ordenado por
 >    SOV decrescente — antes vinha na ordem crua de `get_theme_breakdown`
@@ -159,9 +185,22 @@ Mesmo público das demais páginas deste módulo.
 
 ## Interface (UI)
 
-- **SOV por pauta**: idêntico ao SOV por Narrativa já especificado
-  (`narrative_metrics`/`reporting.narratives_overview`), filtrado às
-  Subcategories da Category "Pautas". ✅ **Ordenado decrescente (2026-08-09)**
+- **SOV por pauta**: ⚠️ **Definição corrigida (2026-08-09)** — o texto
+  original desta spec ("idêntico ao SOV por Narrativa... filtrado às
+  Subcategories de Pautas") descrevia, sem perceber, o próprio bug: SOV
+  filtrado a **quais linhas aparecem** na tela, mas ainda dividido pelo
+  total da **Query inteira** (todas as Narrativas rastreadas, não só
+  Pautas) — resultado, percentuais artificialmente pequenos (ver
+  blockquote de topo). Definição correta, em vigor desde a migration
+  `20260809010000`: SOV de uma Pauta = suas menções no período / soma das
+  menções de **todas as Subcategories ativas de "Pautas"** no mesmo
+  período — a mesma base que `get_theme_breakdown` ("Share of Voice e
+  sentimento por pauta") já usava. `get_narratives_table` (tabela
+  "Narrativas") e `get_theme_sov_trend` (gráfico "SOV por pauta ao longo
+  do tempo") calculam essa mesma base cada uma à sua maneira: a primeira
+  soma o período pedido inteiro (`pautas_period_total`); a segunda soma
+  por bucket (dia/semana/mês/hora), já que é uma série temporal — ambas
+  cobertas pela mesma migration. ✅ **Ordenado decrescente (2026-08-09)**
   — `PautaCardGrid` (`components/intelligence-center/pauta-cards.tsx`)
   agora ordena os itens por `pct` (SOV) decrescente antes de renderizar.
 - **Evolução temporal por pauta**: idem "Evolução" de

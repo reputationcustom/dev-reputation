@@ -3079,6 +3079,33 @@ async function fetchDailySentimentFreshness(
   return ageMsByCategory;
 }
 
+// ⚠️ 2026-08-09 (2): segundo bug real, encontrado via log logo depois do
+// fix acima (round-robin por staleness) ter entrado em produção — a
+// invocação alcançou o corpo inteiro de `runDailyMetricsStep()` pela
+// primeira vez (antes, o loop de sentimento quase sempre estourava o cap
+// e retornava com `stayOnStep` bem antes de chegar aqui) e foi morta por
+// "CPU Time exceeded" no meio do processamento de `syncPlatformMultiAggregate`,
+// logo depois de `syncCategoryDailyMultiAggregate` sozinha ter processado
+// 4508 linhas em ~5.1s. Mesma classe de crash já documentada em "Phased
+// execution per pair" (2026-07-11, distinta do `WORKER_RESOURCE_LIMIT` de
+// memória) — só que agora acontecendo DENTRO de uma única fase, não entre
+// fases: as 3 chamadas de `multiAggregate` no fim desta function eram
+// incondicionais (só gate por `hasBrandwatchCallBudget()`, que mede
+// chamadas à Brandwatch, nunca tempo de CPU/processamento da resposta) —
+// liberar o loop de sentimento mais cedo fez a invocação chegar longe o
+// bastante pra acumular tempo suficiente de processamento síncrono
+// (sentimento + upsert de 4508 linhas + mais 2 chamadas) até estourar o
+// limite do runtime, que mata o processo sem exceção capturável — o
+// `sync_cursors` fica exatamente como estava antes da tentativa, então o
+// próximo heartbeat repetiria a mesma sequência e provavelmente o mesmo
+// crash, indefinidamente. Fix: mesmo padrão já usado por
+// `MENTIONS_LOOP_BUDGET_MS` (parar voluntariamente antes do runtime
+// matar) — `DAILY_METRICS_TAIL_TIME_BUDGET_MS` checado antes de cada uma
+// das 3 chamadas pesadas; se o tempo decorrido desde o início da fase já
+// estourou o orçamento, devolve `stayOnStep: true` e adia o restante pro
+// próximo heartbeat, em vez de arriscar mais uma chamada síncrona pesada.
+const DAILY_METRICS_TAIL_TIME_BUDGET_MS = 15_000;
+
 async function runDailyMetricsStep(
   supabase: SupabaseClient,
   token: string,
@@ -3088,6 +3115,7 @@ async function runDailyMetricsStep(
   metricsStartDate: Date,
   now: Date,
 ): Promise<StepResult> {
+  const stepStartedAtMs = Date.now();
   // Query inteira (category=null) sempre roda, sem freshness gate — 1
   // chamada barata, alimenta os KPIs de topo, deve ficar sempre atual.
   if (!hasBrandwatchCallBudget()) return { didWork: true, stayOnStep: true };
@@ -3153,13 +3181,16 @@ async function runDailyMetricsStep(
   // de orçamento) — agora netSentiment está sempre na MESMA chamada que
   // reach/engagement/autores/impressões, nunca mais "por último".
   if (!hasBrandwatchCallBudget()) return { didWork: true };
+  if (Date.now() - stepStartedAtMs > DAILY_METRICS_TAIL_TIME_BUDGET_MS) return { didWork: true, stayOnStep: true };
   await syncCategoryDailyMultiAggregate(supabase, token, projectId, queryId, metricsStartDate, now);
   if (!hasBrandwatchCallBudget()) return { didWork: true };
+  if (Date.now() - stepStartedAtMs > DAILY_METRICS_TAIL_TIME_BUDGET_MS) return { didWork: true, stayOnStep: true };
   await syncQueryDailyMultiAggregate(supabase, token, projectId, queryId, metricsStartDate, now);
   // Breakdown de plataforma (volume+autores únicos+engajamento+sentimento
   // líquido) — era 4 chamadas separadas (syncPlatformMetrics +
   // syncPlatformAggregate × 3), agora 1 só via multiAggregate.
   if (!hasBrandwatchCallBudget()) return { didWork: true };
+  if (Date.now() - stepStartedAtMs > DAILY_METRICS_TAIL_TIME_BUDGET_MS) return { didWork: true, stayOnStep: true };
   await syncPlatformMultiAggregate(supabase, token, projectId, queryId, metricsStartDate, now);
   return { didWork: true };
 }

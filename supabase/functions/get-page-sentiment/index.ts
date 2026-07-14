@@ -1032,6 +1032,7 @@ function isPeriodClosed(periodEnd: string): boolean {
 interface PageNarrativeSynthesisRow {
   narrative_text: string
   is_final: boolean
+  generated_at: string
 }
 
 // ai-synthesis.md, "Dependências técnicas" — a skill `humanizer-pt-br`
@@ -1045,6 +1046,21 @@ interface PageNarrativeSynthesisRow {
 // usado por event-radar-agent-orchestrator/index.ts e
 // narrative-summary-composer/index.ts).
 const NARRATIVE_SYNTHESIS_MODEL = Deno.env.get('AI_SYNTHESIS_MODEL') ?? 'claude-haiku-4-5'
+
+// ai-synthesis.md — recomposição periódica de um período aberto (2026-07-14,
+// pedido do usuário: "vamos definir atualização a cada 3h"). Antes desta
+// mudança, uma linha já existente em page_narrative_synthesis era sempre
+// devolvida como está, pra sempre, mesmo num período aberto ("Semanal"/
+// "Mensal" ainda em andamento) — gap documentado desde 2026-08-02 (ver
+// "Fluxo principal" abaixo). Configurável (mesmo padrão de
+// BW_SYNC_INTERVAL_HOURS), default 3h — só se aplica a `is_final = false`;
+// período fechado continua permanente por definição.
+const AI_SYNTHESIS_REFRESH_HOURS = Number(Deno.env.get('AI_SYNTHESIS_REFRESH_HOURS') ?? '3')
+
+function isNarrativeTextStale(generatedAt: string): boolean {
+  const refreshMs = AI_SYNTHESIS_REFRESH_HOURS * 60 * 60 * 1000
+  return Date.now() - new Date(generatedAt).getTime() >= refreshMs
+}
 
 const NARRATIVE_SYNTHESIS_SYSTEM_PROMPT = `Você é um redator de comunicação para uma campanha política/monitoramento de reputação, escrevendo em português do Brasil. Você recebe uma lista de eventos (destaques) já analisados e resumidos por outro sistema — cada um já tem um resumo e uma explicação prontos — e sua única tarefa é conectá-los num único parágrafo coeso para a equipe de comunicação.
 
@@ -1180,23 +1196,27 @@ async function composeAndPersistLayer1(
 }
 
 // ai-synthesis.md "Fluxo principal" — 0/1 highlight: Camada 0 direto. 2+:
-// busca page_narrative_synthesis pela chave exata; existe → devolve como
-// está (nunca chama IA de novo — recomposição de período aberto só
-// dispararia por um gatilho de invalidação que este produto ainda não tem,
-// ver _pending.md #21, então uma linha existente é sempre a resposta
-// final por enquanto); não existe → fallback imediato é a Camada 0,
-// composição real roda em background via scheduleBackground.
+// busca page_narrative_synthesis pela chave exata; existe → devolve o texto
+// já gravado nesta mesma resposta e, se o período ainda está aberto
+// (`is_final = false`) e a linha já passou de `AI_SYNTHESIS_REFRESH_HOURS`
+// (default 3h, ✅ 2026-07-14 — antes disso, uma linha existente era sempre
+// devolvida como está, pra sempre, nunca recomposta), dispara uma
+// recomposição em background pra essa mesma chave — mesmo mecanismo
+// fire-and-forget do caso "linha não existe" abaixo, nunca bloqueia a
+// resposta; não existe → fallback imediato é a Camada 0, composição real
+// roda em background via scheduleBackground.
 //
 // ✅ Exceção adicionada 2026-07-14 (pedido do usuário: diferenciar
 // diário/semanal/mensal e, "em caso de período personalizado", deixar o
 // disparo da IA a critério do usuário) — `ctx.period.mode === 'custom'`
-// NUNCA agenda a composição em background sozinho: um período
-// personalizado pode ser reaberto/reeditado livremente pelos 2 campos de
-// data do header, então compor via IA a cada combinação nova digitada
-// seria caro e frequentemente descartado antes do usuário terminar de
-// ajustar o intervalo. Continua devolvendo a linha já persistida se
-// existir (ex: um período personalizado já analisado antes por
-// compose-narrative-synthesis, mesmo endpoint que o botão "Analisar com
+// NUNCA agenda a composição em background sozinho, nem no caso "linha não
+// existe" nem no refresh periódico acima: um período personalizado pode
+// ser reaberto/reeditado livremente pelos 2 campos de data do header,
+// então compor via IA a cada combinação nova digitada (ou a cada 3h só
+// porque ficou aberto) seria caro e frequentemente descartado antes do
+// usuário terminar de ajustar o intervalo. Continua devolvendo a linha já
+// persistida se existir (ex: um período personalizado já analisado antes
+// por compose-narrative-synthesis, mesmo endpoint que o botão "Analisar com
 // IA" chama) — só o disparo *automático* fica condicionado a
 // daily/weekly/monthly. period.mode ausente (nunca deveria acontecer
 // vindo do header atual, mas uma chamada direta à Edge Function sem esse
@@ -1214,7 +1234,7 @@ async function fetchNarrativeText(
     const hash = await cacheFingerprint(ctx)
     const { data, error } = await supabase
       .from('page_narrative_synthesis')
-      .select('narrative_text, is_final')
+      .select('narrative_text, is_final, generated_at')
       .eq('organization_id', ctx.organizationId)
       .eq('page', page)
       .eq('period_start', ctx.period.start)
@@ -1223,7 +1243,12 @@ async function fetchNarrativeText(
       .maybeSingle()
     if (error) throw error
     const row = data as PageNarrativeSynthesisRow | null
-    if (row) return row.narrative_text
+    if (row) {
+      if (!row.is_final && ctx.period.mode !== 'custom' && isNarrativeTextStale(row.generated_at)) {
+        scheduleBackground(composeAndPersistLayer1(supabase, ctx, page, hash, highlights))
+      }
+      return row.narrative_text
+    }
     const fallback = await fetchLayer0NarrativeText(supabase, ctx, highlights)
     if (ctx.period.mode !== 'custom') {
       scheduleBackground(composeAndPersistLayer1(supabase, ctx, page, hash, highlights))

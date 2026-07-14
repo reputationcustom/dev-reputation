@@ -239,6 +239,23 @@ Camada 0 de ai-synthesis (recomendado)"):
   gatilhos existe hoje no produto: `bw-sync` não conhece `page_cache`, e
   não existe botão "Atualizar dados" no header). Revisitar se isso passar
   a incomodar na prática.
+
+✅ **Resolvida a instância deste gap em `ai-synthesis.md` (2026-07-14)** —
+user report: "os resumos não estão atualizando até o momento" — uma linha
+de período **aberto** já existente em `page_narrative_synthesis` era
+devolvida como está pra sempre, sem nenhum dos 2 gatilhos "empurrados"
+(sync concluir/"Atualizar dados") que o gap #21 acima já apontava como
+inexistentes no produto. Em vez de esperar por esses gatilhos, o usuário
+pediu um intervalo fixo: "vamos definir atualização a cada 3h." Nova
+`AI_SYNTHESIS_REFRESH_HOURS` (default 3h, `aggregated-metrics-service.ts`)
++ `isNarrativeTextStale()` — `fetchNarrativeText()` agora dispara uma
+recomposição em background sempre que a linha é de período aberto, não é
+`custom`, e `generated_at` já passou da janela; puxado no próximo
+carregamento de página, nunca um cron dedicado. Ver
+`aggregated-metrics/ai-synthesis.md` pro detalhamento completo. **A
+instância deste gap em `page_cache`** (TTL de resposta HTTP, mecanismo
+independente, hoje desabilitado) **continua aberta** — não fazia parte
+deste pedido.
 - **#27 (Camada 0 de `ai-synthesis.md`)**: `fetchNarrativeText()` na
   service layer — usa o `summary`/`explanation` de um highlight quando há
   exatamente 1 (hoje inalcançável, `get_active_highlights` ainda não

@@ -7244,6 +7244,156 @@ sinal a acompanhar é o gráfico "SOV por pauta ao longo do tempo" mostrar
 uma série real (múltiplos pontos por hora) quando "Diário" está
 selecionado, em vez de aparecer vazio.
 
+### `page_narrative_synthesis` nunca atualizava num período aberto — recomposição a cada 3h (2026-07-14)
+
+User report: "na funcionalidade ai-synthesis.md os resumos não estão
+atualizando até o momento. a atualização das `page_narrative_synthesis`,
+vamos definir atualização a cada 3h." Confirmado por leitura de código,
+não só pelo relato: desde que a Camada 1 foi implementada (2026-08-02, ver
+"Fase B implementada" acima), `fetchNarrativeText()` sempre devolvia uma
+linha já existente em `page_narrative_synthesis` **como está, pra
+sempre** — sem nenhum gatilho de recomposição, mesmo num período ainda
+aberto ("Semanal"/"Mensal" em andamento, `is_final = false`). Isso já
+estava documentado como limitação conhecida (não um bug) desde que a
+Camada 1 foi implementada — os 2 gatilhos "empurrados" que a spec
+original previa (sync da Brandwatch concluir um ciclo, ou um botão
+"Atualizar dados" no header) nunca existiram no produto — mas na prática
+significava que o resumo executivo de qualquer período aberto ficava
+congelado no texto da primeira composição, por mais que os highlights
+subjacentes mudassem depois. Em vez de esperar por esses 2 gatilhos, o
+usuário pediu um caminho mais simples: um intervalo fixo.
+
+**Fix** (`aggregated-metrics-service.ts`, sem migration —
+`page_narrative_synthesis.generated_at` já existia desde a criação da
+tabela, só não era lido por `fetchNarrativeText()` até agora): nova
+constante `AI_SYNTHESIS_REFRESH_HOURS` (configurável via secret, default
+`3` — mesmo padrão de `BW_SYNC_INTERVAL_HOURS`) + `isNarrativeTextStale(generatedAt)`.
+`fetchNarrativeText()` agora seleciona `generated_at` junto com
+`narrative_text`/`is_final` e, ao encontrar uma linha existente, continua
+devolvendo o texto já gravado **nesta mesma resposta** (nunca bloqueia a
+página esperando uma nova composição) — mas também dispara uma
+recomposição em background (`scheduleBackground`, mesmo mecanismo
+fire-and-forget já usado pro caso "linha não existe") sempre que **todas**
+as condições valem: período ainda aberto (`is_final = false` — período
+fechado continua permanente, nunca recomposto, por definição), período
+não é `custom` (mesmo gate de sempre desde 2026-07-14 mais cedo nesta
+mesma data — um período personalizado nunca dispara IA sozinho, só pelo
+botão "Analisar com IA"), e `generated_at` já tem 3h ou mais. Puxado no
+próximo carregamento de página que encontrar a linha vencida — nunca um
+cron dedicado, já que `page_narrative_synthesis` só é gravada quando
+alguém de fato abre a página.
+
+Propagado (Princípio técnico 5) na cópia canônica
+(`supabase/functions-shared-source/aggregated-metrics-service.ts`) e nas
+**8** Edge Functions deployadas que a replicam
+(`get-page-{overview,narratives,sentiment,platforms,themes,authors}`,
+`get-narrative-detail`, `compose-narrative-synthesis`) via um script Node
+de uso único (substituição por igualdade de string exata, contando
+ocorrências pra garantir 1 match por arquivo antes de aplicar — mesma
+técnica já usada em sessões anteriores deste arquivo), confirmado
+aplicado nos 8 arquivos sem falha.
+
+**Especificações atualizadas**: `aggregated-metrics/ai-synthesis.md` (novo
+blockquote de topo + "Camada 1"/"Fluxo principal"/"Fluxos alternativos e
+erros"/"Regras de negócio" reescritos pra descrever o comportamento real,
+substituindo a descrição antiga de "nunca regenera, aspiracional"),
+`_pending.md` (nova nota "✅ Resolvida" logo após o gap #21 original —
+esclarecendo que só a instância deste gap em `ai-synthesis.md` foi
+fechada; a instância em `page_cache`, TTL de resposta HTTP, mecanismo
+independente e hoje desabilitado, continua aberta, já que não fazia parte
+deste pedido).
+
+**Verificação**: `npx tsc --noEmit` e `npm run build` (com `rm -rf .next`
+antes) passam limpos — 21 rotas, mesma contagem de antes (mudança é
+Edge-Function-only, sem impacto no lado Next.js). Sem ambiente
+Deno/Supabase real disponível nesta sessão — não testado contra uma
+chamada real à Anthropic nem contra produção, mesma limitação recorrente
+de toda sessão sem credenciais de deploy neste ambiente; `git push` para
+`develop` é o próximo passo, e o sinal a acompanhar é uma linha de período
+aberto em `page_narrative_synthesis` ganhando um novo `generated_at` (via
+log `[aggregated-metrics] composeAndPersistLayer1`) depois de 3h da
+composição anterior, na próxima vez que a página correspondente for
+carregada.
+
+### SOV da tabela/gráfico de Pautas estava calculado contra a Query inteira, não só Pautas — segundo bug real na mesma sessão (2026-08-09)
+
+User follow-up, mesma sessão do fix de "Insights" acima, com screenshot:
+"tudo dessa página deve ser somente em cima da categoria Pautas. SOV do
+gráfico e da tabela de narrativas está incorreto. os valores utilizados
+em Share of Voice e sentimento por pauta estão corretos considerando
+apenas as subcategorias de Pautas."
+
+**Achado, confirmado lendo as 3 functions lado a lado** (não uma
+suposição): `get_theme_breakdown` (widget "Share of Voice e sentimento
+por pauta", confirmado correto pelo usuário) divide as menções de cada
+Pauta pela soma de menções de **todas as Pautas** (`grand_total`, migration
+`20260721030000`, já existia assim desde aquela correção de escopo) —
+nunca pelo total da Query inteira. `get_narratives_table` (tabela
+"Narrativas" desta página, `p_scope='pautas'`) e `get_theme_sov_trend`
+(gráfico "SOV por pauta ao longo do tempo") faziam diferente: as duas
+dividiam pelo total da **Query inteira** — `query_period_totals` (soma de
+`total_mentions` de TODAS as Narrativas do `query_id`, sem filtro de
+escopo, migration `20260808030000`) e `bw_query_metrics_daily`/
+`bw_query_metrics_hourly` com `category_id is null` (adicionada no dia
+anterior, migration `20260809000000`), respectivamente. Como Pautas é
+normalmente um subconjunto pequeno do que a Query inteira rastreia
+(a organização tem outras Narrativas fora de "Pautas" — crise,
+monitoramento geral, etc.), dividir por esse total bem maior produzia
+SOVs artificialmente minúsculos: o screenshot do usuário mostrava
+1.2%/0.9%/0.1%/0.1% pras 4 pautas com atividade, quando o valor correto
+(mesma base de `get_theme_breakdown`) é bem maior — não um bug de
+arredondamento, um bug de escopo de denominador.
+
+**Fix** (migration `20260809010000`, `create or replace` nas duas
+functions — nenhuma mudou assinatura/colunas de saída, sem `drop
+function`):
+- `get_theme_sov_trend`: removidas as CTEs `query_hourly`/`query_daily`
+  (que buscavam o total da Query inteira em `bw_query_metrics_hourly`/
+  `bw_query_metrics_daily`) — o denominador agora é calculado a partir
+  dos próprios dados de Pauta já buscados (`bucket_totals`, `sum(pauta_mentions)
+  group by bucket_date`), sem precisar mais tocar nenhuma tabela de "Query
+  inteira". Simplifica a function (menos CTEs, menos joins) e corrige o
+  bug ao mesmo tempo.
+- `get_narratives_table`: novo `pautas_period_total` (soma de
+  `total_mentions` de todas as Subcategories ativas de "Pautas", org-wide
+  — não por `query_id`, mesma base de `get_theme_breakdown`), usado no
+  lugar de `query_period_totals` **só quando `p_scope = 'pautas'`** — toda
+  outra página (`overview`/`narratives`/`sentiment`, que não passam
+  `p_scope='pautas'`) mantém o denominador "Query inteira" de sempre, sem
+  nenhuma mudança de comportamento. `case when p_scope = 'pautas' then
+  (select total from pautas_period_total) else qpt.query_total_current
+  end` — só essa linha do `sov_pct` mudou; confirmado por `diff` isolado
+  contra a versão deployada (`20260808030000`) que nenhuma outra linha da
+  function diverge.
+
+**Migrations anteriores já estavam deployadas** (`git rev-list
+--left-right --count origin/develop...HEAD` = `0 0` no momento desta
+sessão) — por isso este fix é uma migration **nova**
+(`20260809010000`), não uma edição de `20260809000000`/`20260808030000`
+— editar um arquivo de migration já aplicado no banco real não faz o
+Postgres reexecutá-lo (o "de-para" fica registrado por versão/nome do
+arquivo em `supabase_migrations.schema_migrations`), então a correção
+tinha que ser um novo arquivo mesmo sendo, na prática, a continuação
+imediata do trabalho do dia anterior.
+
+**Especificações atualizadas**: `intelligence-center/electoral-themes.md`
+(novo blockquote de topo + reescrita da seção "SOV por pauta" em
+"Interface (UI)", que descrevia o próprio bug como se fosse o
+comportamento correto), `aggregated-metrics/sql-aggregation.md` (notas
+em `get_theme_sov_trend`/`get_narratives_table`).
+
+**Verificação**: `npx tsc --noEmit` limpo (mudança 100% SQL). Migration
+revisada manualmente — `diff` isolado de `get_narratives_table` contra a
+versão deployada confirma que só a CTE nova + a linha de `sov_pct`
+divergem, resto byte-idêntico; balanço de parênteses conferido
+separando linhas de comentário puro (`grep -v '^\s*--'`) do corpo SQL
+real, que fecha em 238/238. Não executada contra um banco real nesta
+sessão — mesma limitação recorrente de toda sessão sem credenciais de
+deploy; `git push` para `develop` é o próximo passo, e o sinal a
+acompanhar é o SOV de cada Pauta (tabela e gráfico) bater com os
+percentuais já mostrados em "Share of Voice e sentimento por pauta" pro
+mesmo período.
+
 ## Directory structure
 
 ```
