@@ -3,10 +3,40 @@ tipo: feature-spec
 módulo: event-radar
 funcionalidade: frontend-highlights-feed
 status: implementado
-atualizado: 2026-08-02
+atualizado: 2026-07-14
 ---
 
 # Radar de Eventos — Feed das Últimas 72h (frontend)
+
+> ✅ **"Resumo executivo" reformulado — de estatísticas pra texto
+> período-escopado (2026-07-14, mesmo dia da implementação original)** —
+> 2 problemas reais relatados pelo usuário: (1) "não está aparecendo o
+> texto do resumo executivo do radar de 72h" — a versão original
+> (`RecentEventsExecutiveSummary`) nunca teve um texto de verdade, só
+> contagens/cards, apesar do nome "resumo executivo"; (2) "ao alternar
+> entre mensal, diário e semanal, o resumo permanece considerando os
+> últimos 3 dias" — porque a fonte (`useRecentHighlights`) é,
+> deliberadamente, a janela fixa de 72h deste widget (ver "Regra
+> fundamental" abaixo), nunca o período selecionado no header — o que é
+> correto pra "Lista", mas não é o que "resumo executivo" deveria
+> significar. Resolvido substituindo a aba "Resumo executivo" por
+> `narrative_text` (`aggregated-metrics/ai-synthesis.md`, já
+> período-escopado por construção) — a página hospedeira (`/overview` ou
+> `/radar`) passa `narrativeText`/`page`/`onGenerated` como props pro
+> `RecentEventsPanel`, que renderiza o mesmo `NarrativeTextPanel` usado em
+> "O que os gráficos mostram?"/"Insights" nas outras páginas. `/radar`
+> (que antes não buscava nenhum envelope) passou a chamar
+> `usePageEnvelope("get-page-overview")` só pra isso — não existe
+> `get-page-radar` dedicado, então o texto exibido é o mesmo "Visão Geral"
+> da organização, período-escopado pelo header. Novo prop
+> `blankOnCustom` em `NarrativeTextPanel` faz esta instância específica
+> ficar em branco (só o botão "Analisar período com IA") em período
+> personalizado, em vez do template Camada 0 que todo outro uso desse
+> componente mostra — pedido explícito do usuário só pra este toggle. A
+> aba "Lista" continua exatamente como era (fixa em 72h) —
+> `RecentEventsExecutiveSummary` (contagens por severidade/tipo + top 5
+> eventos) foi removida, sem substituto — a informação relevante já está
+> na aba "Lista".
 
 > ✅ **Duas visualizações alternáveis (2026-07-14)** — pedido do usuário:
 > "Radar de Eventos deve ter duas possibilidades (a lista dos eventos
@@ -130,13 +160,12 @@ própria UI, não só na documentação.
    como modal — mesmo padrão de clique já usado em
    `NarrativeCard`/`NarrativesTable`).
 5. Cada card tem um menu de feedback (ver "Feedback do analista" abaixo).
-6. ✅ Um toggle "Lista"/"Resumo executivo" no topo do widget alterna entre
-   a visualização de cards (itens 3-5 acima) e um resumo agregado dos
-   mesmos eventos já buscados: total de eventos + contagem por
-   severidade (Críticos/Altos/Médios/Baixos), contagem por `event_type`
-   (chips), e os 5 eventos de maior `severity_score` em destaque
-   (título/explicação/tempo relativo). Nenhuma chamada nova — mesmo
-   dado, só reagrupado no client para exibição.
+6. Um toggle "Lista"/"Resumo executivo" no topo do widget alterna entre a
+   visualização de cards (itens 3-5 acima, sempre 72h fixo) e o
+   `narrative_text` período-escopado da página hospedeira (✅ reformulado
+   2026-07-14 — ver blockquote de topo; versão original mostrava contagens
+   agregadas dos mesmos eventos de 72h, não um texto, e nunca refletia o
+   período selecionado no header).
 
 ## Interface (UI)
 
@@ -157,17 +186,24 @@ própria UI, não só na documentação.
   persiste entre navegações (mesmo padrão de `filtrosOpen` no header).
   - **Lista** (default): os cards individuais, exatamente como descrito
     nos itens 3-5 do "Fluxo principal".
-  - **Resumo executivo** (`RecentEventsExecutiveSummary`): 5 estatísticas
-    em **uma única linha** (`grid-cols-5`, sempre — ✅ fixado 2026-08-08,
-    pedido do usuário: antes `grid-cols-2 sm:grid-cols-4` deixava o 5º
-    item, "Baixos", quebrar pra uma segunda linha mesmo em telas largas):
-    Total de eventos, Críticos, Altos, Médios, Baixos — cada severidade
-    com sua própria estatística, não agrupadas. Uma linha de chips
-    "Eventos por tipo" (contagem por `event_type`), e uma lista
-    "Principais eventos" com os 5 eventos de maior `severity_score`
-    (`RiskBadge` + `title` + `explanation`/`summary` + tempo relativo).
-    Nenhuma chamada de rede adicional — deriva do mesmo array
-    `highlights` já carregado pela visualização de lista.
+  - **Resumo executivo** — ✅ **reformulado 2026-07-14** (ver blockquote
+    de topo): renderiza `NarrativeTextPanel` (mesmo componente de "O que
+    os gráficos mostram?"/"Insights" nas outras páginas) com
+    `narrativeText`/`page`/`onGenerated` recebidos via prop da página
+    hospedeira (`/overview` já tinha `envelope.narrative_text` pronto;
+    `/radar` passou a chamar `usePageEnvelope("get-page-overview")` só
+    pra isso). Período-escopado por construção (mesma chave de
+    `page_narrative_synthesis` já usada em toda outra página) — muda ao
+    trocar Diário/Semanal/Mensal no header, ao contrário da versão
+    anterior. `blankOnCustom` (novo prop de `NarrativeTextPanel`) faz esta
+    instância específica renderizar em branco (só o botão "Analisar
+    período com IA") em período personalizado, em vez do template
+    Camada 0 que todo outro uso do componente mostra. **Removido**: as 5
+    estatísticas/chips por tipo/top 5 eventos (`RecentEventsExecutiveSummary`)
+    da versão original (2026-07-14, mesmo dia — nunca chegou a ficar mais
+    de algumas horas em produção) — a informação de eventos individuais já
+    está na aba "Lista", e a versão em estatísticas nunca tinha um texto
+    de verdade, o que motivou a reformulação.
 - **Cada card** (reaproveita o padrão visual de borda colorida por
   severidade já existente em `HighlightsPanel`, não reinventa):
   - Ícone por `event_type`: `volume_spike` (↑), `volume_drop` (↓),
@@ -294,8 +330,10 @@ usuário autenticado da organização (RLS já implementada,
 - ✅ `formatRelativeTime` — nova função em `lib/date/format.ts`
   (granularidade de hora/minuto, cai pra `formatRelativeDate` a partir de
   24h) — a função existente sozinha não bastava, ver blockquote de topo.
-- ✅ Toggle "Lista"/"Resumo executivo" (2026-07-14) —
-  `RecentEventsExecutiveSummary`, mesmo arquivo, sem dependência nova.
+- ✅ Toggle "Lista"/"Resumo executivo" (2026-07-14) — reformulado no mesmo
+  dia pra usar `NarrativeTextPanel`/`narrative_text` (`aggregated-metrics/
+  ai-synthesis.md`) em vez de estatísticas locais; `/radar` ganhou
+  `usePageEnvelope("get-page-overview")`, sem dependência nova além disso.
 
 ## Gaps conhecidos (fora de escopo deste spec)
 

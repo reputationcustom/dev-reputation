@@ -8008,6 +8008,68 @@ passo, e o sinal a acompanhar é um resumo executivo composto depois do
 deploy terminando numa frase completa (com pontuação final), nunca no
 meio de uma palavra.
 
+### "Radar de Eventos" — "Resumo executivo" trocado de estatísticas fixas-72h por texto período-escopado (2026-07-14)
+
+User report, mesmo dia: "Não está aparecendo o texto do resumo executivo
+do radar de 72h" + "Ao alternar entre mensal, diário e semanal, o resumo
+permanece considerando os últimos 3 dias e o ideal é aparecer o resumo
+executivo do conteúdo atual da página de acordo com o período. Exceto
+para período Custom que deve aparecer em branco apenas com o botão para
+solicitar atualização."
+
+**Causa raiz, confirmada por leitura de código**: a aba "Resumo executivo"
+do widget "Radar de Eventos" (`RecentEventsPanel`, implementada em outra
+sessão, 2026-07-14 mais cedo) nunca teve um texto de verdade — era
+`RecentEventsExecutiveSummary`, uma vista puramente derivada (contagens
+por severidade/tipo + top 5 eventos), sem nenhum parágrafo composto. E
+essa vista lia `useRecentHighlights` — a janela FIXA de 72h do Radar, por
+desenho (`event-radar/frontend-highlights-feed.md`) — então nenhuma troca
+de período no header jamais mudava o que aparecia ali, explicando as duas
+queixas de uma vez.
+
+**Fix**: a aba "Resumo executivo" agora renderiza `NarrativeTextPanel`
+(mesmo componente de "O que os gráficos mostram?"/"Insights" nas outras 5
+páginas) em vez de `RecentEventsExecutiveSummary` (removida, sem
+substituto — a informação de eventos individuais já está na aba "Lista",
+que continua fixa em 72h, inalterada). `RecentEventsPanel` deixou de
+auto-suficiente e passou a receber `narrativeText`/`page`/`onGenerated`
+como props da página hospedeira: `/overview` já tinha
+`envelope.narrative_text` (período-escopado por construção, mesma chave
+de `page_narrative_synthesis` de sempre); `/radar` **nunca buscava nenhum
+envelope** (só o feed fixo) — passou a chamar
+`usePageEnvelope("get-page-overview")` só pra isso, já que não existe
+`get-page-radar` dedicado (o texto exibido em `/radar` é literalmente o
+mesmo "Visão Geral" da organização, período-escopado pelo header).
+
+Novo prop `blankOnCustom` em `NarrativeTextPanel` (default `false`, sem
+mudança de comportamento em nenhum dos outros 6 usos existentes) — pedido
+explícito do usuário: "Exceto para período Custom que deve aparecer em
+branco apenas com o botão." Todo outro uso do componente continua
+mostrando o template determinístico da Camada 0 mesmo em período
+`custom` nunca analisado (comportamento de sempre); só esta instância
+(Radar) fica em branco, sem nenhum texto, quando `periodMode === 'custom'`
+— o botão "Analisar período com IA" continua aparecendo normalmente.
+
+**Especificação atualizada**: `event-radar/frontend-highlights-feed.md`
+— novo blockquote de topo + "Fluxo principal" item 6 + "Interface (UI)"
+(bullet do toggle) + "Dependências técnicas" reescritos pra descrever o
+comportamento real; `RecentEventsExecutiveSummary`/`SEVERITY_LABEL`/
+`EVENT_TYPE_LABEL`/`SummaryStat` removidos do código
+(`recent-events-panel.tsx`) como código morto, sem consumidor restante.
+
+**Verificação**: `npx tsc --noEmit` e `npm run build` (com `rm -rf .next`
+antes) passam limpos — 21 rotas, mesma contagem de antes; `/overview`
+encolheu (5.43kB vs. 6.63kB antes, código de estatísticas removido),
+`/radar` cresceu ligeiramente (546B vs. 445B, agora busca um envelope).
+Sem ambiente Deno/Supabase/Anthropic real nesta sessão — o texto exibido
+depende de `page_narrative_synthesis` já ter uma linha 'main' pra
+`(organização, overview, período)`, o que só existe depois de um deploy
+real e alguém carregar `/overview` pelo menos uma vez com aquele período;
+`git push` para `develop` é o próximo passo, e o sinal a acompanhar é a
+aba "Resumo executivo" (tanto em `/overview` quanto em `/radar`) mostrando
+o mesmo parágrafo de "O que os gráficos mostram?" e mudando ao trocar
+Diário/Semanal/Mensal no header.
+
 ## Directory structure
 
 ```

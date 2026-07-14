@@ -120,18 +120,22 @@ export default function OverviewPage() {
           <TopicSentimentList signals={envelope?.term_signals ?? []} />
         </WidgetCard>
 
-        {/* event-radar/frontend-highlights-feed.md — janela FIXA de 72h,
-            independente do período selecionado no header acima (por isso
-            RecentEventsPanel tem seu próprio fetch/estado, não usa o
-            `status`/`retry` do envelope desta página). Substitui o antigo
-            widget "Insights" (HighlightsPanel, bloco `highlights` genérico
-            por período) só neste lugar — HighlightsPanel continua existindo
-            pra uso futuro em outra página. */}
+        {/* event-radar/frontend-highlights-feed.md — a lista ("Lista") tem
+            janela FIXA de 72h, independente do período selecionado no
+            header (por isso RecentEventsPanel tem seu próprio fetch/estado
+            pra `highlights`, não usa o `status`/`retry` do envelope desta
+            página pra isso). Substitui o antigo widget "Insights"
+            (HighlightsPanel, bloco `highlights` genérico por período) só
+            neste lugar — HighlightsPanel continua existindo pra uso futuro
+            em outra página. ✅ 2026-07-14: o "Resumo executivo" (2ª aba do
+            toggle) já **é** período-escopado — recebe `narrative_text`
+            desta mesma página (`envelope.narrative_text`), não a janela
+            fixa de 72h. */}
         <div className="rounded-xl border border-border-default bg-bg-card p-5">
           <h2 className="text-sm font-bold text-text-primary">Radar de Eventos</h2>
           <p className="text-xs text-text-tertiary">Últimas 72 horas</p>
           <div className="mt-4">
-            <RecentEventsPanel />
+            <RecentEventsPanel narrativeText={envelope?.narrative_text ?? null} page="overview" onGenerated={retry} />
           </div>
         </div>
       </div>

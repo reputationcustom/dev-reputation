@@ -3341,6 +3341,7 @@ async function syncHourlySentimentMetrics(
     return;
   }
 
+  const nowIso = new Date().toISOString();
   const rows = points.map((p) => ({
     project_id: projectId,
     query_id: queryId,
@@ -3350,7 +3351,13 @@ async function syncHourlySentimentMetrics(
     sentiment_positive: p.positive,
     sentiment_neutral: p.neutral,
     sentiment_negative: p.negative,
-    synced_at: new Date().toISOString(),
+    synced_at: nowIso,
+    // ✅ 2026-08-09 — só esta function grava `total_mentions`;
+    // `volume_synced_at` (distinto de `synced_at`, que `syncHourlyNetSentiment`
+    // também toca sem nunca gravar volume) é o que
+    // `bw_query_metrics_hourly_category_freshness` lê pro throttle. Ver
+    // migration 20260809080000.
+    volume_synced_at: nowIso,
   }));
 
   const { error } = await supabase
@@ -3363,6 +3370,14 @@ async function syncHourlySentimentMetrics(
 // Mesma validação de FK contra bw_categories já usada em
 // syncCategoryDailyAggregate() — a dimensão `categories` pode devolver IDs
 // fora do universo cacheado.
+//
+// ⚠️ Deliberadamente NUNCA inclui `volume_synced_at` no upsert abaixo — só
+// grava `net_sentiment`/`synced_at`. Roda sem throttle, em toda invocação;
+// se tocasse `volume_synced_at` também, faria toda Narrativa parecer
+// "recém sincronizada" pro throttle de `fetchHourlyVolumeFreshness`
+// (bw_query_metrics_hourly_category_freshness) sem nunca ter gravado
+// `total_mentions` de verdade — exatamente o bug de starvation corrigido em
+// 20260809080000 (ver comentário da migration). Não reintroduzir isso.
 async function syncHourlyNetSentiment(
   supabase: SupabaseClient,
   token: string,

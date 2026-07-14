@@ -71,18 +71,29 @@ export function HighlightsPanel({ highlights }: { highlights: Highlight[] }) {
 // usuário), agora também aparece pra `is_admin` em daily/weekly/monthly —
 // não precisa mais esperar o refresh automático (por tempo ou por evento
 // novo do radar, ver ai-synthesis.md) pra forçar uma recomposição agora.
+//
+// ✅ `blankOnCustom` adicionado 2026-07-14 (pedido do usuário, uso no
+// toggle "Resumo executivo" de `RecentEventsPanel`/Radar de Eventos):
+// "Exceto para período Custom que deve aparecer em branco apenas com o
+// botão para solicitar atualização." Todo outro consumidor deste
+// componente (Overview/Sentimento/Plataformas/Pautas/Narrativas) continua
+// mostrando o template determinístico da Camada 0 mesmo em período
+// personalizado nunca analisado ainda (comportamento de sempre, prop
+// default `false`) — só o Radar pede a variante em branco.
 export function NarrativeTextPanel({
   text,
   page,
   onGenerated,
   narrativeId,
   pautaId,
+  blankOnCustom = false,
 }: {
   text: string | null;
   page: PageKey;
   onGenerated?: () => void;
   narrativeId?: string;
   pautaId?: string;
+  blankOnCustom?: boolean;
 }) {
   const { organizationId, period, periodMode } = useIntelligenceCenterHeader();
   const { isAdmin } = useUserProfile();
@@ -119,9 +130,11 @@ export function NarrativeTextPanel({
     }
   }
 
+  const showBlank = blankOnCustom && periodMode === "custom";
+
   return (
     <div className="flex flex-col gap-3">
-      {text ? (
+      {showBlank ? null : text ? (
         <ExpandableText text={text} />
       ) : (
         <p className="text-sm text-text-tertiary">Síntese automática indisponível no momento.</p>

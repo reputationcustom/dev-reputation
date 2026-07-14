@@ -34,13 +34,14 @@ import { EmptyState } from "@/components/ui/empty-state";
 // 2-3. A metade inferior da página virou uma grade de 2 colunas: à
 //    esquerda, a tabela interativa ("Narrativas") + "Autores e comunidades
 //    por pauta"; à direita, "Termos emergentes" (frame reduzido, com
-//    scroll interno) e "Tópicos positivos e negativos por pauta". Um 4º
-//    pedido, "Insights dessa página deve focar apenas no conteúdo de
-//    Pautas Eleitorais", era na verdade um bug de escopo no backend
+//    scroll interno), "Tópicos positivos e negativos por pauta" e
+//    "Insights" (movido pra logo abaixo de "Tópicos", mesmo dia — antes
+//    era um bloco de largura cheia após a grade inteira). Um 4º pedido,
+//    "Insights dessa página deve focar apenas no conteúdo de Pautas
+//    Eleitorais", era na verdade um bug de escopo no backend
 //    (highlights/narrative_text liam a organização inteira, não só as
 //    Pautas) — corrigido em `aggregated-metrics-service.ts`/
-//    `assemblePageResponse`, ver CLAUDE.md; nenhuma mudança de layout do
-//    widget "Insights" em si.
+//    `assemblePageResponse`, ver CLAUDE.md.
 // ✅ **"Comparação entre períodos" movida pro início da página e fechada
 // via ai-synthesis Camada 2 (2026-07-14)** — vivia dentro da grade de 2
 // colunas acima até então, sempre EmptyState (dependia de síntese
@@ -143,15 +144,22 @@ export default function ThemesPage() {
             <WidgetCard title="Tópicos positivos e negativos por pauta" status={status} onRetry={retry}>
               <TopicSentimentList signals={envelope?.term_signals ?? []} />
             </WidgetCard>
+
+            {/* ✅ Movido pra logo abaixo de "Tópicos positivos e negativos
+                por pauta" (2026-08-09, pedido do usuário) — antes era um
+                bloco de largura cheia após a grade inteira, o que o
+                empurrava visualmente abaixo da coluna esquerda (mais alta,
+                por causa da tabela "Narrativas"), não especificamente
+                abaixo de "Tópicos". Agora fica empilhado na mesma coluna
+                direita, imediatamente depois. */}
+            <WidgetCard title="Insights" status={status} onRetry={retry}>
+              <div className="flex flex-col gap-4">
+                <NarrativeTextPanel text={envelope?.narrative_text ?? null} page="themes" onGenerated={retry} />
+                <HighlightsPanel highlights={envelope?.highlights ?? []} />
+              </div>
+            </WidgetCard>
           </div>
         </div>
-
-        <WidgetCard title="Insights" status={status} onRetry={retry}>
-          <div className="flex flex-col gap-4">
-            <NarrativeTextPanel text={envelope?.narrative_text ?? null} page="themes" onGenerated={retry} />
-            <HighlightsPanel highlights={envelope?.highlights ?? []} />
-          </div>
-        </WidgetCard>
       </div>
     </>
   );
