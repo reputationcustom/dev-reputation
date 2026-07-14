@@ -6124,6 +6124,110 @@ vier `true` mesmo depois de vários ciclos pós-fix, o próximo passo é
 medir o volume real do backlog contra `BRANDWATCH_MENTIONS_START_DATE`,
 não assumir mais bug de código sem esse dado).
 
+### `event-radar` nunca considerava Momentum na detecção — regra `momentum_spike` adicionada (2026-08-07)
+
+User report: "No cálculo realizado pelo RADAR para criar os eventos não
+me parece que está sendo considerado o momentum... existem algumas
+narrativas que tem o momento explosivo e que não gerou nenhum evento no
+radar." Pergunta em duas partes, ambas verificadas por leitura de código
+antes de qualquer mudança.
+
+**Esclarecimento de nomenclatura** (segunda parte da pergunta —
+"substituímos velocidade por momentum, verifique se isso está correto"):
+não foi isso que aconteceu. Em 2026-07-22 (`20260722010000`) "Velocidade"
+(score de Narrativa, snapshot 3h-vs-3h) foi substituída por "Tendência"
+(`trend_score`, regressão de 14 dias) — Momentum nunca foi tocado por essa
+troca, sempre existiu como um quarto score separado, e o próprio pedido do
+usuário na época foi explícito: "os indicadores se mantém como risk_score
+e momentum". O usuário estava confundindo duas trocas distintas.
+
+**Gap real, confirmado** (primeira parte): `run_event_detection()` (1.1,
+`detection-engine.md`) sempre leu só volume bruto e sentimento
+(`bw_query_metrics_hourly`/`daily`/`narrative_metrics`) — nunca
+`momentum_score` (`aggregated-metrics/sql-aggregation.md`, índice composto
+de crescimento volume/engajamento/autores/alcance). A etapa 1.3
+(`severity.md`) só toca Momentum indiretamente (fator "Risco da narrativa
+relacionada", 10% do peso, via `risk_score` — que já embute Momentum a
+25%) e só depois que um evento **já existe**, detectado por outra regra.
+Uma Narrativa com Momentum "Explosivo" (≥80) sem pico de volume bruto
+correspondente (crescimento puxado por engajamento/autores/alcance, ou
+com volume abaixo do `min_volume`/`spike_pct` da 1.1) nunca gerava evento
+algum — exatamente o sintoma relatado. Isso não era um bug silencioso: era
+uma decisão deliberada, tomada e documentada em `_pending.md` gap #32
+(2026-07-24, mesma sessão que fechou "narrativas emergentes" fora do
+escopo do módulo): "o indicador `momentum_score` já representa esse sinal
+bem o suficiente, sem precisar de uma regra de detecção própria em
+event-radar." A tabela/cards de Narrativas e o Radar de Eventos são
+alimentados por caminhos inteiramente diferentes (`get_narratives_table`
+lê `momentum_score` sob demanda a cada carregamento de página; o Radar só
+mostra o que `run_event_detection()` grava em `radar_staging_events`/
+`feed_events`) — "representar bem o sinal" numa tela nunca implicou
+"gerar evento" na outra, e ninguém tinha percebido essa lacuna até agora.
+
+Usuário confirmou via `AskUserQuestion`: reverter a decisão do gap #32,
+adicionando uma regra de detecção dedicada (não só reforçar o peso de
+Momentum na severidade — opção descartada).
+
+**Fix** (migration `20260807000000_event_radar_momentum_detection.sql`,
+`CREATE OR REPLACE` de `run_event_detection()`/`event_radar_config()`):
+- Novo `event_type = 'momentum_spike'`, só `scope_type = 'narrative'`
+  (Momentum como score de produto só existe pra Narrativa — não há
+  "Momentum de Query"/"de plataforma" em nenhum lugar do produto).
+  Reaproveita a janela `3d` já existente no CHECK constraint (não uma
+  janela nova) e a própria fórmula/pesos de Momentum já em produção (0.40
+  volume + 0.25 engajamento + 0.20 autores + 0.15 alcance, via
+  `norm_growth` — a mesma função já usada por `get_narratives_table` desde
+  `20260714000000`, chamada aqui sem redefinição) — nunca uma segunda
+  fórmula divergente, só aplicada a uma janela fixa de 3 dias em vez do
+  período selecionado na UI (este motor periódico não tem esse conceito).
+  Threshold reaproveita a própria faixa "Explosivo" (≥80) já definida em
+  `sql-aggregation.md`, via novo `event_radar_config().momentum_spike_threshold`
+  — precisou de `drop function` (adicionar coluna a `RETURNS TABLE`, mesma
+  regra de sempre).
+- **Guarda anti-falso-positivo, não presente na fórmula original**: no
+  `momentum` CTE de `get_narratives_table`, um `left join period_agg`
+  sobre `latest_day` já garante implicitamente que só Narrativas com dado
+  no período aparecem. `event_radar_narrative_momentum()` (nova function)
+  não tem esse gate implícito — toda Narrativa ativa da organização é
+  avaliada — então sem uma guarda explícita,
+  `norm_growth(null, valor_real)` (dado do período atual ainda não
+  sincronizado, período anterior com atividade real) resolveria pra 100
+  (LEAST/GREATEST do Postgres ignoram `NULL` em vez de propagar) — um
+  "crescimento explosivo" inteiramente artefato de atraso de sync, não
+  growth real. Adicionado `where vol_current is not null` — exige que
+  pelo menos a coluna mais confiável (`total_mentions`, sempre populada
+  primeiro e incondicionalmente por `daily_metrics`, ver "bw-sync rate
+  limit" acima) tenha dado no período atual antes de considerar a
+  Narrativa candidata. Os outros 3 fatores (engajamento/autores/alcance)
+  ainda podem sofrer o mesmo artefato individualmente sem travar a
+  Narrativa inteira — mesmo risco latente já existente hoje na fórmula de
+  produção, não introduzido por esta migration, só documentado em vez de
+  silenciado (comentário no topo do arquivo da migration).
+- **Downstream**: `event-radar-agent-orchestrator/index.ts`'s
+  `feedEventType()` mapeava qualquer `event_type` que não começasse com
+  `"volume_"` para `"sentiment_changed"` — `momentum_spike` cairia nessa
+  categoria por padrão, semanticamente errado (não é sobre sentimento).
+  Corrigido para mapear `momentum_spike` para `"threshold_triggered"`
+  (mesma categoria de `volume_spike`/`volume_drop` — um indicador
+  numérico cruzando um limiar configurado). `SYSTEM_PROMPT` também
+  ganhou uma menção a "momentum explosivo" na frase que descreve que
+  tipos de evento agregado a IA recebe — antes só citava "picos/quedas de
+  volume, mudanças de sentimento".
+- Severidade (1.3) **não mudou** — os 7 pesos continuam idênticos pra todo
+  evento, independente do `event_type` que o gerou; o fator "Risco da
+  narrativa relacionada" continua sendo o único ponto onde Momentum
+  influencia severidade, indiretamente, via `risk_score`. Só a 1.1
+  (detecção) ganhou o sinal novo, escopo desta sessão.
+
+**Verificação**: migration revisada manualmente (parênteses/`$$`
+balanceados, mesmo corpo de `20260803000000` só com o bloco novo
+inserido). Sem acesso a um Supabase real nesta sessão — mesma limitação
+recorrente de toda sessão sem credenciais de deploy; `git push` para
+`develop` é o próximo passo, e o sinal a acompanhar é uma linha
+`event_type = 'momentum_spike'` aparecendo em `radar_staging_events` na
+próxima execução do `pg_cron` (a cada 15min) pra qualquer Narrativa cujo
+`momentum_score` já leia "Explosivo" na tela de Narrativas.
+
 ## Directory structure
 
 ```

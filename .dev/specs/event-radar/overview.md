@@ -2,7 +2,7 @@
 tipo: module-overview
 módulo: event-radar
 status: implementado
-atualizado: 2026-08-02
+atualizado: 2026-08-07
 ---
 
 # Módulo: Radar de Eventos
@@ -43,10 +43,11 @@ atualizado: 2026-08-02
 ## Objetivo
 
 Detectar, de forma determinística (SQL), mudanças de comportamento nas menções — picos,
-quedas, mudança de sentimento — e usar uma única chamada de IA por evento para transformar essa
-detecção estatística em um card legível para a equipe de comunicação. É o motor que alimenta
-`feed_events` (tabela já reservada para "Feed Inteligente" em `_glossary.md`), de onde o módulo
-`aggregated-metrics` lê os blocos `highlights` e monta `narrative_text` de cada página.
+quedas, mudança de sentimento, momentum explosivo de uma Narrativa — e usar uma única chamada de
+IA por evento para transformar essa detecção estatística em um card legível para a equipe de
+comunicação. É o motor que alimenta `feed_events` (tabela já reservada para "Feed Inteligente" em
+`_glossary.md`), de onde o módulo `aggregated-metrics` lê os blocos `highlights` e monta
+`narrative_text` de cada página.
 
 > ✅ **"Narrativas emergentes" retirado do escopo (2026-07-25)**, pedido do usuário — o indicador
 > `momentum_score` (`aggregated-metrics/sql-aggregation.md`, índice de crescimento
@@ -54,6 +55,17 @@ detecção estatística em um card legível para a equipe de comunicação. É o
 > sinal, sem precisar de uma regra de detecção própria neste módulo. Fecha o gap de escopo #32 de
 > `_pending.md` (achado na revisão de coerência da mesma sessão) — não era uma regra faltando,
 > era um objetivo que não deveria estar listado.
+>
+> ⚠️ **Decisão revertida (2026-08-07)** — usuário relatou "narrativas que tem o momento explosivo
+> e que não gerou nenhum evento no radar". Confirmado como consequência direta da decisão acima:
+> `momentum_score` "representar bem o sinal" na tabela/cards de Narrativas não é a mesma coisa que
+> "gerar um evento no Radar" — as duas telas são alimentadas por caminhos diferentes
+> (`get_narratives_table` lê `momentum_score` sob demanda a cada carregamento de página; o Radar só
+> mostra o que `run_event_detection()` gravou em `radar_staging_events`/`feed_events`, e essa função
+> nunca lia Momentum). Nova regra `momentum_spike` adicionada em `detection-engine.md`
+> (`20260807000000`) — reverte só a parte "sem precisar de uma regra de detecção própria", mantém
+> o resto do raciocínio original (reaproveitar `momentum_score` já calculado, não inventar uma
+> segunda fórmula).
 
 **Princípio geral do módulo**: cada linha de código e cada chamada de IA tem custo. A solução
 determinística (SQL) é sempre a primeira opção. IA só entra quando a decisão exige linguagem

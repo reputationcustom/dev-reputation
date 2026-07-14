@@ -3,7 +3,7 @@ tipo: feature-spec
 módulo: event-radar
 funcionalidade: severity
 status: implementado
-atualizado: 2026-07-29
+atualizado: 2026-08-07
 ---
 
 # Severidade (SQL, sem IA)
@@ -89,6 +89,15 @@ combiná-los (ex: usar o maior dos dois, ou uma média ponderada quando há
 evento ativo) — essa combinação fica registrada em
 [aggregated-metrics-integration.md](aggregated-metrics-integration.md),
 não aqui, pra não duplicar a mesma decisão em dois arquivos.
+
+> ✅ **Nota (2026-08-07)** — a nova regra de detecção `momentum_spike`
+> (`detection-engine.md`) não muda esta fórmula de severidade: os 7 pesos
+> acima continuam idênticos para todo evento, independente do
+> `event_type` que o gerou. O fator "Risco da narrativa relacionada" (10%)
+> continua sendo o único ponto onde Momentum influencia a severidade —
+> indiretamente, via `risk_score` (que já embute Momentum a 25%). Um
+> evento `momentum_spike` é severidade-calculado exatamente como qualquer
+> outro; o que mudou foi só a 1.1 (detecção), não a 1.3.
 
 ## Regras de negócio
 

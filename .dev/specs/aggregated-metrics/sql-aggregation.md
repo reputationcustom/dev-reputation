@@ -373,6 +373,17 @@ ver `foundation/data-model.md`) — nenhuma chamada nova à Brandwatch.
 | 60–79 | Alto |
 | 80–100 | Explosivo |
 
+> ✅ **Também alimenta detecção de eventos (2026-08-07)** — até esta data,
+> Momentum só era lido sob demanda por `get_narratives_table` (a cada
+> carregamento de página); `event-radar` nunca o considerava para gerar um
+> evento no Radar, mesmo quando uma Narrativa lia "Explosivo" na tela — um
+> gap real reportado pelo usuário. `event-radar/detection-engine.md` ganhou
+> a regra `momentum_spike` (`event_radar_narrative_momentum()`,
+> `20260807000000`), reaproveitando esta mesma fórmula/pesos e a própria
+> faixa "Explosivo" (≥80) como limiar, sobre uma janela fixa de 3 dias (o
+> motor de detecção não tem o conceito de "período selecionado na tela").
+> Ver `event-radar/detection-engine.md` para o desenho completo.
+
 ### Tendência (0-100 + rótulo/seta) — tendência estatística, distinta de Momentum
 
 > ✅ **Substitui "Velocidade" (2026-07-22, migration `20260722010000`)** —

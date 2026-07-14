@@ -1,6 +1,6 @@
 ---
 tipo: pending-tracker
-atualizado: 2026-07-14 (rev. 38)
+atualizado: 2026-08-07 (rev. 39)
 ---
 
 # Pendências — Digital Intelligent Communication
@@ -40,6 +40,19 @@ retroalimentação pós-publicação (útil/irrelevante/severidade errada/explic
 como aprovação prévia. Arquivos atualizados: `schema-integration.md`, `agent-orchestrator.md`,
 `overview.md`, `fluxo-aggregated-metrics.md` (diagramas), `intelligence-center/data-model.md`
 (nota de pendência de `organization_id` em `cases`, que citava esse fluxo como exemplo).
+
+✅ **Gap #32 revertido (2026-08-07)** — usuário relatou "narrativas que tem o momento explosivo e
+que não gerou nenhum evento no radar" e perguntou se Momentum está sendo considerado na detecção.
+Confirmado como gap real: a decisão original do gap #32 (2026-07-24, abaixo) tirou a regra de
+detecção por Momentum do escopo, mas isso deixou `event-radar` sem NENHUM caminho — direto ou
+indireto — pra transformar um Momentum "Explosivo" (`momentum_score` ≥80) em evento, já que a
+etapa 1.1 (`detection-engine.md`) só lê volume bruto/sentimento. Nova regra `event_type =
+'momentum_spike'` (`20260807000000_event_radar_momentum_detection.sql`), só escopo `narrative`,
+reaproveitando a mesma fórmula/pesos de Momentum já em produção e a própria faixa "Explosivo"
+(≥80) como limiar — não uma segunda fórmula. Ver `event-radar/detection-engine.md` e
+`aggregated-metrics/sql-aggregation.md` ("Momentum"). Mesma sessão, esclarecido um mal-entendido
+de nomenclatura do usuário: "Velocidade" foi substituída por "Tendência" em 2026-07-22, não por
+Momentum — Momentum sempre existiu separado, nunca foi tocado por aquela troca.
 
 ✅ **7 pedidos pontuais de UI/dado resolvidos (2026-07-25)**, mesma sessão,
 usuário: "1) renomeie Top 3 Narrativas para Top 3 Narrativas por Menções.

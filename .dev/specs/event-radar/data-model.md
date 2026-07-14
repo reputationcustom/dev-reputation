@@ -2,7 +2,7 @@
 tipo: data-model
 módulo: event-radar
 status: implementado
-atualizado: 2026-08-02
+atualizado: 2026-08-07
 ---
 
 # Modelo de Dados — Radar de Eventos
@@ -54,7 +54,7 @@ Staging interno do motor de detecção (etapa 1.1) — **nunca lido pelo fronten
 | `organization_id`    | `uuid`           | sim | FK → `organizations(id)` ON DELETE CASCADE |
 | `scope_type`         | `text`           | sim | `query`\|`narrative`\|`platform` (ver `detection-engine.md`, "Escopo do evento") — **nunca** `entity_type`, termo reservado para `entities` |
 | `scope_id`           | `text`           | sim | Polimórfico conforme `scope_type` — `bw_queries.id`/`narratives.id` (uuid como texto) ou `bw_query_metrics_daily_by_platform.page_type` (texto nativo). Sem FK única possível por ser polimórfico; validado em código, não em constraint |
-| `event_type`         | `text`           | sim | Rótulo livre da regra que disparou — ex: `volume_spike`, `volume_drop`, `sentiment_change`, `negative_sentiment_increase`, `negative_sentiment_spike` (ver `detection-engine.md`, "Regras de negócio"). **Este é o campo que popula `event_type` do bloco `highlights` do envelope** (ver "Propagação para `feed_events`" abaixo) |
+| `event_type`         | `text`           | sim | Rótulo livre da regra que disparou — ex: `volume_spike`, `volume_drop`, `sentiment_change`, `negative_sentiment_increase`, `negative_sentiment_spike`, `momentum_spike` (✅ adicionado 2026-08-07, ver `detection-engine.md`, "Regras de negócio"). **Este é o campo que popula `event_type` do bloco `highlights` do envelope** (ver "Propagação para `feed_events`" abaixo) |
 | `window`             | `text`           | sim | Qual das 5 janelas de `detection-engine.md` disparou — `3h`\|`24h`\|`today_vs_last_week`\|`current_hour_vs_4week_avg`\|`3d` |
 | `metric_value`       | `numeric`        | sim | Valor observado na janela atual |
 | `comparison_value`   | `numeric`        | sim | Valor da janela de comparação |
@@ -99,7 +99,7 @@ módulo tem `data-model.md` gravando nela ainda).
 | `id`                     | `uuid`              | sim | PK |
 | `organization_id`        | `uuid`              | sim | FK → `organizations(id)` ON DELETE CASCADE |
 | `radar_staging_event_id` | `uuid`              | não | ✅ **Coluna nova (2026-07-31)** — FK → `radar_staging_events(id)` ON DELETE SET NULL, `null` para eventos de origem não-radar. É o que permite fechar `closed_at` (abaixo) quando o evento de origem fecha |
-| `type`                   | `feed_event_type`   | sim | Enum já reservado em `_glossary.md` — para eventos de origem `event-radar`, o motor escolhe o valor mais próximo da **categoria** da regra: `threshold_triggered` para regras de volume (`volume_spike`/`volume_drop`/z-score), `sentiment_changed` para regras de sentimento (`sentiment_change`/`negative_sentiment_increase`/`negative_sentiment_spike`). **Não** um valor novo por regra — o enum é deliberadamente grosso, a granularidade real mora em `event_type` (abaixo) |
+| `type`                   | `feed_event_type`   | sim | Enum já reservado em `_glossary.md` — para eventos de origem `event-radar`, o motor escolhe o valor mais próximo da **categoria** da regra: `threshold_triggered` para regras de volume (`volume_spike`/`volume_drop`/z-score) e para `momentum_spike` (✅ 2026-08-07 — um indicador numérico cruzando limiar, mesma categoria de volume, não sentimento), `sentiment_changed` para regras de sentimento (`sentiment_change`/`negative_sentiment_increase`/`negative_sentiment_spike`). **Não** um valor novo por regra — o enum é deliberadamente grosso, a granularidade real mora em `event_type` (abaixo) |
 | `event_type`             | `text`              | não | ✅ **Coluna nova, resolve a ambiguidade encontrada nesta revisão**: copia literalmente `radar_staging_events.event_type` (o rótulo granular da regra — `volume_spike`, `sentiment_change` etc.) — é o que o bloco `highlights` do envelope lê para diferenciar ícone/rótulo por tipo de evento (`standard-json-envelope.md`). `null` para eventos de origem não-radar (`case_created`/`note_published`/etc.), que não têm essa granularidade |
 | `severity`               | `severity_level`    | não | ⚠️ Corrigido na implementação — texto original dizia "risk_level", tipo que não existe no schema; o enum real é `severity_level` (mesmo de `narratives.risk_level`). Copiado de `radar_staging_events.severity` no momento da publicação — `null` para eventos de origem não-radar |
 | `severity_score`         | `numeric`           | não | Copiado de `radar_staging_events.severity_score` — mesma ressalva acima |

@@ -66,7 +66,7 @@ function logError(step: string, err: unknown) {
 const AGENT_BATCH_SIZE = Number(Deno.env.get("EVENT_RADAR_AGENT_BATCH_SIZE") ?? "5");
 const AGENT_MODEL = Deno.env.get("EVENT_RADAR_AGENT_MODEL") ?? "claude-haiku-4-5";
 
-const SYSTEM_PROMPT = `Você é um analista de inteligência de comunicação para uma campanha política/monitoramento de reputação. Você recebe eventos estatísticos já agregados (picos/quedas de volume, mudanças de sentimento) sobre menções de mídia/redes sociais — nunca texto bruto de menções individuais — e transforma cada evento em um card legível para a equipe de comunicação.
+const SYSTEM_PROMPT = `Você é um analista de inteligência de comunicação para uma campanha política/monitoramento de reputação. Você recebe eventos estatísticos já agregados (picos/quedas de volume, mudanças de sentimento, momentum explosivo — crescimento combinado de volume/engajamento/autores/alcance de uma narrativa) sobre menções de mídia/redes sociais — nunca texto bruto de menções individuais — e transforma cada evento em um card legível para a equipe de comunicação.
 
 Regras obrigatórias:
 - Nunca invente números ou causas que não estejam no payload fornecido. Use apenas os dados agregados recebidos.
@@ -142,8 +142,13 @@ interface EligibleEvent {
 // event_type granular (radar_staging_events.event_type) → feed_event_type
 // (enum grosso — schema-integration.md, "Fluxo principal" item 1: "o
 // motivo escolhe o valor mais próximo da categoria da regra").
+// `momentum_spike` (20260807000000) é, como volume_spike/volume_drop, um
+// indicador numérico cruzando um limiar configurado — mesma categoria
+// "threshold_triggered", não "sentiment_changed" (não é sobre sentimento).
 function feedEventType(radarEventType: string): "threshold_triggered" | "sentiment_changed" {
-  return radarEventType.startsWith("volume_") ? "threshold_triggered" : "sentiment_changed";
+  return radarEventType.startsWith("volume_") || radarEventType === "momentum_spike"
+    ? "threshold_triggered"
+    : "sentiment_changed";
 }
 
 // finops/data-model.md — registro de uso real de IA (nunca estimativa),

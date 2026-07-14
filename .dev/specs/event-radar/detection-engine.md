@@ -3,7 +3,7 @@ tipo: feature-spec
 módulo: event-radar
 funcionalidade: detection-engine
 status: implementado
-atualizado: 2026-07-27
+atualizado: 2026-08-07
 ---
 
 # Motor de Detecção (100% SQL, sem IA)
@@ -26,6 +26,44 @@ atualizado: 2026-07-27
 > só o score composto (gap honesto, ver `CLAUDE.md`). Etapas 1.2–1.6
 > (dedup, severidade, agent, escrita em `feed_events`, cap de volume)
 > continuam rascunho — esta função só grava em `radar_staging_events`.
+>
+> ✅ **Sexto `event_type`, `momentum_spike` (2026-08-07)** — migration
+> `20260807000000_event_radar_momentum_detection.sql`. Achado do usuário:
+> "não me parece que está sendo considerado o momentum... existem algumas
+> narrativas que tem o momento explosivo e que não gerou nenhum evento no
+> radar" — confirmado como gap real, não impressão: as 5 regras acima só
+> leem volume bruto/sentimento (`bw_query_metrics_hourly`/`daily`/
+> `narrative_metrics`), nunca `momentum_score`
+> (`aggregated-metrics/sql-aggregation.md`, "Momentum" — índice composto de
+> crescimento de volume/engajamento/autores/alcance). A etapa 1.3
+> (`severity.md`) só toca Momentum indiretamente (fator "Risco da narrativa
+> relacionada", 10%, via `risk_score` — que já embute Momentum a 25%) e só
+> depois que um evento já foi detectado por outra regra — uma Narrativa com
+> Momentum "Explosivo" (≥80) sem pico de volume bruto correspondente nunca
+> gerava evento algum. Isso era uma decisão deliberada
+> (`_pending.md` gap #32, 2026-07-24: "momentum_score já representa esse
+> sinal bem o suficiente, sem precisar de uma regra de detecção própria em
+> event-radar") — revertida nesta sessão a pedido do usuário. Nova regra:
+> `event_type = 'momentum_spike'`, escopo **só `narrative`** (Momentum como
+> score de produto só existe pra Narrativa), janela `3d` (reaproveitada, não
+> uma janela nova), reaproveitando a MESMA fórmula/pesos de Momentum já em
+> produção via `event_radar_narrative_momentum()` (0.40 volume + 0.25
+> engajamento + 0.20 autores + 0.15 alcance, `norm_growth`) — nunca uma
+> segunda fórmula divergente. Threshold reaproveita a própria faixa
+> "Explosivo" (≥80) já definida em `sql-aggregation.md`. Ver o comentário no
+> topo da migration para a guarda anti-falso-positivo adicionada (Narrativa
+> sem dado do período atual ainda sincronizado não pode ser lida como
+> "crescimento explosivo" por artefato de `norm_growth(null, valor_real)`
+> resolvendo pra 100).
+>
+> ⚠️ **Esclarecimento de nomenclatura**, resposta à pergunta do usuário
+> "substituímos velocidade por momentum, verifique se isso está correto":
+> não foi isso que aconteceu. Em 2026-07-22 (`20260722010000`) "Velocidade"
+> (score de Narrativa, snapshot 3h-vs-3h) foi substituída por "Tendência"
+> (`trend_score`, regressão de 14 dias) — Momentum nunca foi tocado, sempre
+> existiu como um quarto score separado (pedido explícito do usuário na
+> época: "os indicadores se mantém como risk_score e momentum"). São dois
+> fatos distintos que a pergunta original conflava.
 
 ## Objetivo
 
@@ -79,7 +117,7 @@ calculado por soma local sobre uma tabela amostrada).
 | Últimas 24h                        | vs. 24h imediatamente anteriores              |
 | Hoje                                | vs. mesmo dia da semana passada               |
 | Hora atual                          | vs. média das últimas 4 semanas na mesma hora |
-| Últimos 3 dias                      | vs. 3 dias imediatamente anteriores           |
+| Últimos 3 dias                      | vs. 3 dias imediatamente anteriores (também usada pela regra de Momentum, ver abaixo) |
 
 > ✅ **Resolvido (2026-07-13)** — as janelas de "hora atual"/"últimas 3h" exigem grão horário,
 > mais fino que o diário oficial. Pedido do usuário: "verificar se podemos corrigir a integração
@@ -104,6 +142,12 @@ calculado por soma local sobre uma tabela amostrada).
   campos `sentiment_positive/neutral/negative` de `bw_query_metrics_daily`/`narrative_metrics`
   (campo **sentiment** padrão da Brandwatch) — **nunca** o classificador de **emotion** (coluna
   `mentions.emotion`), que só cobre inglês e produz sinal vazio para conteúdo PT-BR.
+- ✅ **Regra `momentum_spike` (2026-08-07)** — só `scope_type = 'narrative'`, janela `3d`. Reaproveita
+  a mesma fórmula/pesos de Momentum já em produção (`aggregated-metrics/sql-aggregation.md`) sobre
+  uma janela fixa de 3 dias — não uma segunda fórmula divergente. Dispara quando o `momentum_score`
+  calculado cruza a mesma faixa "Explosivo" (≥80) já definida naquele score. `comparison_value`
+  grava o próprio limiar configurado (`event_radar_config().momentum_spike_threshold`) — não há um
+  "valor anterior" natural de comparação aqui, diferente das regras de volume.
 - Nenhuma chamada de IA acontece nesta etapa, em nenhuma circunstância.
 - A saída vai para `radar_staging_events` — **não** grava direto em `feed_events`. A gravação
   final só acontece depois de dedup (1.2), severidade (1.3) e do agent (1.4).
@@ -113,7 +157,8 @@ calculado por soma local sobre uma tabela amostrada).
 - **Lê**: `bw_query_metrics_daily`/`weekly`/`monthly` (janelas de grão diário/semanal),
   `bw_query_metrics_hourly` (janelas "Últimas 3h"/"Hora atual", ver acima),
   `bw_query_metrics_daily_by_platform` (por plataforma), `narrative_metrics` (agregado já pronto
-  por Narrativa) — todos agregados oficiais da Brandwatch, já sincronizados por
+  por Narrativa, incl. `engagement_total`/`unique_authors`/`reach_estimated` para a regra
+  `momentum_spike`) — todos agregados oficiais da Brandwatch, já sincronizados por
   `foundation`/`sync-brandwatch` (ver `foundation/data-model.md`). **Nunca**
   `SELECT`/`COUNT`/`SUM` direto sobre `mentions` para compor uma janela — se uma janela precisar
   de um grão que os agregados oficiais não cobrem, a decisão é registrar isso como gap explícito
