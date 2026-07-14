@@ -165,7 +165,16 @@ Mesmo público das demais páginas deste módulo.
   — `PautaCardGrid` (`components/intelligence-center/pauta-cards.tsx`)
   agora ordena os itens por `pct` (SOV) decrescente antes de renderizar.
 - **Evolução temporal por pauta**: idem "Evolução" de
-  `narratives-exploration.md`.
+  `narratives-exploration.md`. ✅ **Grão `hour` para o modo "Diário"
+  (2026-08-09)** — pedido do usuário: "a linha do tempo está ficando
+  vazia quando o período é diário. Nesse caso precisa mostrar por hora."
+  `get_theme_sov_trend` caía no grão `day` mesmo em "Diário" (1 dia),
+  devolvendo 1 único ponto por Pauta — na prática um gráfico vazio, mesmo
+  bug já corrigido em `get_volume_trend` (2026-07-19), que
+  `get_theme_sov_trend` nunca tinha ganhado (só existe desde 2026-07-25,
+  já criada sem esse grão). Ver `sql-aggregation.md` pro detalhamento —
+  sem mudança de frontend, `TrendLineChart` já distingue hora/dia
+  genericamente pelo formato do `bucket_date`.
 - **Sentimento por pauta**: idêntico a "Sentimento por Narrativa" de
   `sentiment-analysis.md` — sem gap adicional, mesmo escopo de pautas.
 - **Risco por pauta** (matriz volume × negatividade × momentum × alcance ×

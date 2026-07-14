@@ -7131,6 +7131,119 @@ sinal de que funcionou é a coluna "Plataforma" mostrando "X / Twitter"
 pra autores com esse sinal sincronizado, e "Seguidores" deixando de
 mostrar "—" pra qualquer autor cujo `followers` já esteja sincronizado.
 
+### `daily_metrics` ainda preso em `stayOnStep` depois do fix de 2026-08-06 — segunda causa raiz real: starvation por ordem fixa de iteração (2026-08-09)
+
+User report, colando o log exato: `invocation:step_done
+{"step":"daily_metrics","didWork":true,"stayOnStep":true,"nextStep":"daily_metrics","cycleComplete":false,"stopReason":"stay_on_step"}`
+— o mesmo sintoma já corrigido em 2026-08-06 (ver acima), mas persistindo
+mesmo depois daquele deploy. Investigação confirmou que o fix de
+2026-08-06 estava correto e continua em vigor (a RPC
+`bw_query_metrics_daily_category_freshness` já elimina o corte de
+`max_rows` do PostgREST) — só que ele resolveu uma causa e deixou uma
+segunda, distinta, intocada.
+
+**Causa raiz nova**: o loop de sentimento por Narrativa em
+`runDailyMetricsStep()` iterava `narrativeCategoryIds` na ORDEM FIXA
+devolvida por `fetchNarrativeCategoryIds()` (sem `ORDER BY`, mas estável
+na prática entre invocações — a mesma tabela, sem escrita concorrente
+relevante) e só pulava (via `continue`) categorias já "fresh" dentro de
+`DAILY_SENTIMENT_FRESH_WINDOW_MS = 25min`. Com
+`MAX_SENTIMENT_TARGETS_PER_INVOCATION = 8` e heartbeat de 15min, dar 1
+volta completa em N categorias leva `ceil(N/8) × 15min`. Pra N > 16
+(≈ 2 × 8), essa volta completa passa a levar mais de 25min — ou seja, as
+primeiras ~16 categorias da lista voltam a ficar "stale" antes de o loop,
+em ORDEM FIXA, sequer alcançar as categorias além do índice 16. Resultado:
+toda invocação reprocessava perpetuamente as mesmas ~16 primeiras
+categorias (sempre "as mais atrasadas de novo", porque ficaram esperando
+sua vez), e qualquer categoria além disso nunca era sequer tentada —
+`allNarrativeSentimentDone` nunca virava `true`, e a fase nunca liberava
+`stayOnStep`. É a mesma classe de bug já documentada em 2026-08-06 (uma
+fila que nunca dá cobertura completa), só que a causa aqui não é
+truncamento de dado — é a interação entre "ordem fixa de iteração" +
+"janela de frescor menor que o tempo real de 1 volta completa" pra
+organizações com Narrativas suficientes (confirmado matematicamente:
+capacidade sustentável era ~16 categorias "em voo" simultaneamente, dado
+25min de janela ÷ 15min de heartbeat ≈ 1.67 batches simultâneos × 8/batch).
+
+**Fix** (`supabase/functions/bw-sync/index.ts`, sem migration):
+1. `fetchDailySentimentFreshness()` passou a devolver `Map<categoryId,
+   ageMs>` (idade em ms, `Infinity` pra quem nunca sincronizou) em vez de
+   um `Set` booleano de "fresh" — o chamador precisa da idade real pra
+   ordenar, não só um sim/não.
+2. O loop deixou de iterar em ordem fixa pulando "fresh": agora filtra as
+   categorias DEVIDAS (idade ≥ janela) e ordena da mais atrasada pra menos
+   atrasada antes de aplicar o cap de 8 — mesmo princípio já usado pelo
+   "round-robin pair picker" de `sync_cursors` (ordenado por
+   `last_synced_at` mais antigo primeiro, `CLAUDE.md`, "Scheduled cadence")
+   aplicado aqui dentro de uma única fase. Isso garante progresso
+   monotônico: uma categoria só pode ficar "esperando" até se tornar a
+   mais atrasada de todas, nunca presa atrás de outras pra sempre,
+   independente de quantas Narrativas a organização tenha.
+3. `DAILY_SENTIMENT_FRESH_WINDOW_MS` (constante fixa de 25min, a única
+   janela "stale-gated" deste arquivo que não seguia o padrão já
+   estabelecido) foi removida em favor de `getSyncStalenessWindowMs()` —
+   a mesma janela derivada de `BW_SYNC_INTERVAL_HOURS` (3h padrão) já
+   usada por toda outra fase "stale-gated" do arquivo (`x_insights`/
+   `top_sites`/`weekly_monthly`/`topics`/`top_authors`/etc., ver "Every
+   'stale-gated' phase's staleness window unified under
+   BW_SYNC_INTERVAL_HOURS" acima). Além de eliminar uma segunda constante
+   divergente, isso multiplica a capacidade sustentável de ~16 pra até
+   ~96 categorias (3h/15min × 8) no default — configurável pelo mesmo
+   secret já existente, sem precisar de deploy novo pra recalibrar.
+
+**Verificação**: `npx tsc --noEmit` limpo (mudança é Deno-only, fora do
+`tsconfig.json` do Next.js — não valida a sintaxe diretamente, revisado
+manualmente linha por linha). Sem ambiente Deno/Supabase real disponível
+nesta sessão — não executado contra produção, mesma limitação recorrente
+de toda sessão sem credenciais de deploy. `git push` para `develop` é o
+próximo passo; o sinal de que funcionou é `stopReason` deixando de ser
+`"stay_on_step"` em toda invocação sucessiva — para uma organização com
+N Narrativas, o esperado agora é ver `dueCategoryIds` (implícito no
+número de `syncSentimentMetrics` chamadas por invocação, visível nos logs
+de `[bw-sync]`) cobrindo categorias diferentes a cada heartbeat até o
+ciclo fechar (`cycleComplete: true`), em vez das mesmas ~8-16 category
+IDs se repetindo indefinidamente.
+
+### "SOV por pauta ao longo do tempo" vazio no modo "Diário" — `get_theme_sov_trend` ganha grão `hour` (2026-08-09)
+
+User report (screenshot, mesma sessão do reorg de `/themes` acima): o
+gráfico "SOV por pauta ao longo do tempo" aparecia praticamente vazio (só
+eixos, sem linhas) quando o período selecionado é "Diário". Mesmo bug já
+corrigido em `get_volume_trend` (2026-07-19, "Volume/sentiment trend
+chart — hourly grain..." acima): a regra de grão automático (≤31d → day,
+32-186d → week, >186d → month) nunca teve um caso pra "exatamente 1 dia" —
+caía no grão `day`, devolvendo **1 único ponto** por Pauta (o dia inteiro
+somado), o que uma linha de SVG não desenha como linha nenhuma. A
+diferença é que `get_theme_sov_trend` só existe desde 2026-07-25 (gap
+#10) — já nasceu sem o grão `hour`, e seu próprio comentário original
+dizia (incorretamente, como este relato confirma) que "nenhuma das duas
+páginas [platforms/themes] usa o modo Diário horário do jeito que Visão
+Geral/Sentimento usam".
+
+**Fix** (migration `20260809000000`, `create or replace` — `bucket_date`
+já era `text` desde sempre nesta function, então não precisou de `drop
+function`): novo grão `hour`, ativo quando o período pedido é exatamente
+1 dia, fonte `bw_query_metrics_hourly` (mesma tabela que `get_volume_trend`
+já usa — janela móvel de 30 dias, já tem `category_id` nullable).
+Numerador (menções da Pauta por hora) = linhas com `category_id` = o
+`bw_category_id` da Pauta; denominador (menções da Query inteira por
+hora) = linhas com `category_id is null`; `bucket_date` no grão `hour` é
+um ISO 8601 UTC completo (`to_char(metric_hour at time zone 'utc',
+'YYYY-MM-DD"T"HH24:MI:SS"Z"')`), mesmo formato que `get_volume_trend` já
+produz. **Nenhuma mudança de frontend** — `TrendLineChart` já distingue
+hora/dia genericamente pelo comprimento/formato da string `bucket_date`
+(`isHourlyPoint()`), sem nenhuma lógica específica de qual function
+gerou o dado; funciona automaticamente pra `series_by_group` (uma linha
+por Pauta) do mesmo jeito que já funcionava pra série única.
+
+**Verificação**: `npx tsc --noEmit` limpo (mudança 100% SQL, sem impacto
+de tipos). Migration revisada manualmente, não executada contra um banco
+real nesta sessão — mesma limitação recorrente de toda sessão sem
+credenciais de deploy; `git push` para `develop` é o próximo passo, e o
+sinal a acompanhar é o gráfico "SOV por pauta ao longo do tempo" mostrar
+uma série real (múltiplos pontos por hora) quando "Diário" está
+selecionado, em vez de aparecer vazio.
+
 ## Directory structure
 
 ```

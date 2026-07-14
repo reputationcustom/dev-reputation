@@ -3024,46 +3024,36 @@ async function runMentionsStep(
 // esse loop rodava até esgotar TODOS os categoryTargets numa invocação só
 // — com Narrativas suficientes, isso sozinho já perto ou acima do teto
 // de 30/10min. Agora capa quantas chamadas reais de sentimento uma
-// invocação faz (`MAX_SENTIMENT_TARGETS_PER_INVOCATION`) e pula (sem
-// gastar chamada) qualquer Narrativa cujo `bw_query_metrics_daily` mais
-// recente já foi sincronizado há pouco (`DAILY_SENTIMENT_FRESH_WINDOW_MS`,
-// maior que o heartbeat de 15min pra nunca reprocessar a mesma Narrativa
-// no heartbeat seguinte). Se sobrar trabalho, a fase retorna
-// `stayOnStep: true` (ver StepResult) — o dispatcher NÃO avança
-// `next_step`, e o próximo heartbeat continua exatamente daqui, cobrindo
-// o restante das Narrativas em passes sucessivos em vez de um burst só.
-// Mesmo racional de "Phased execution per pair" (weekly_monthly/topics/
-// top_authors) já aceito neste projeto, só aplicado dentro da própria
-// fase em vez de entre fases — pra N Narrativas moderado (dezenas), ainda
-// cobre o ciclo completo bem dentro do BW_SYNC_INTERVAL_HOURS padrão (3h).
+// invocação faz (`MAX_SENTIMENT_TARGETS_PER_INVOCATION`). Se sobrar
+// trabalho, a fase retorna `stayOnStep: true` (ver StepResult) — o
+// dispatcher NÃO avança `next_step`, e o próximo heartbeat continua
+// exatamente daqui, cobrindo o restante das Narrativas em passes
+// sucessivos em vez de um burst só. Mesmo racional de "Phased execution
+// per pair" (weekly_monthly/topics/top_authors) já aceito neste projeto,
+// só aplicado dentro da própria fase em vez de entre fases.
 const MAX_SENTIMENT_TARGETS_PER_INVOCATION = 8;
-const DAILY_SENTIMENT_FRESH_WINDOW_MS = 25 * 60 * 1000;
 
-// Busca o synced_at mais recente por Narrativa numa única query — evita N
-// idas ao Postgres (1 por categoryTarget) só pra decidir quem já foi
-// coberto por um pass recente. `bw_query_metrics_daily` é upsertado com o
-// mesmo synced_at=now() em toda linha de uma chamada bem-sucedida de
+// Busca a idade do synced_at mais recente por Narrativa numa única query —
+// evita N idas ao Postgres (1 por categoryTarget) só pra decidir quem já
+// foi coberto por um pass recente. `bw_query_metrics_daily` é upsertado
+// com o mesmo synced_at=now() em toda linha de uma chamada bem-sucedida de
 // syncSentimentMetrics(), então o MAX(synced_at) por categoria já reflete
 // "a última vez que o sentimento dessa Narrativa foi buscado", não
-// precisa filtrar por data.
+// precisa filtrar por data. Categoria sem nenhuma linha ainda (nunca
+// sincronizada) volta com idade `Infinity` — sempre a mais "devida" de
+// todas, nunca precisa de um caso especial separado no chamador.
 //
-// ⚠️ 2026-08-06: bug real de produção corrigido aqui — esta função ANTES
-// fazia `select category_id, synced_at from bw_query_metrics_daily where
-// ... category_id in (...)` (sem order/limit) e computava o MAX(synced_at)
-// por categoria no client. `bw_query_metrics_daily` acumula histórico
-// indefinidamente (~196 dias por categoria desde 2026-01-01) e
-// `supabase/config.toml` fixa `max_rows = 1000` (padrão do PostgREST) —
-// com mais de ~5 categorias essa query já ultrapassa 1000 linhas e é
-// silenciosamente truncada, sem garantia de quais linhas sobrevivem ao
-// corte (sem ORDER BY). Resultado: para organizações com mais de 8
-// Narrativas, o cálculo de frescor ficava sistematicamente errado para as
-// categorias cujas linhas recentes caíam fora do corte — elas nunca eram
-// marcadas "fresh", então o loop de `runDailyMetricsStep()` reprocessava
-// SEMPRE as mesmas primeiras 8 categorias (MAX_SENTIMENT_TARGETS_PER_INVOCATION),
-// nunca avançava para as demais, e a fase `daily_metrics` nunca liberava
-// `stayOnStep` — o pipeline inteiro ficava preso nela, sem nunca alcançar
-// hourly_metrics/topics/top_authors/etc. Fix: agregação feita no Postgres
-// via RPC (`bw_query_metrics_daily_category_freshness`, migration
+// ⚠️ 2026-08-06: bug real de produção corrigido aqui (primeira metade) —
+// esta função ANTES fazia `select category_id, synced_at from
+// bw_query_metrics_daily where ... category_id in (...)` (sem order/
+// limit) e computava o MAX(synced_at) por categoria no client.
+// `bw_query_metrics_daily` acumula histórico indefinidamente (~196 dias
+// por categoria desde 2026-01-01) e `supabase/config.toml` fixa
+// `max_rows = 1000` (padrão do PostgREST) — com mais de ~5 categorias
+// essa query já ultrapassa 1000 linhas e é silenciosamente truncada, sem
+// garantia de quais linhas sobrevivem ao corte (sem ORDER BY). Fix:
+// agregação feita no Postgres via RPC
+// (`bw_query_metrics_daily_category_freshness`, migration
 // `20260806010000`) — devolve no máximo `categoryIds.length` linhas
 // (GROUP BY), nunca sujeita ao corte de `max_rows`.
 async function fetchDailySentimentFreshness(
@@ -3071,9 +3061,9 @@ async function fetchDailySentimentFreshness(
   projectId: number,
   queryId: number,
   categoryIds: number[],
-  maxAgeMs: number,
-): Promise<Set<number>> {
-  if (categoryIds.length === 0) return new Set();
+): Promise<Map<number, number>> {
+  const ageMsByCategory = new Map<number, number>(categoryIds.map((id) => [id, Number.POSITIVE_INFINITY]));
+  if (categoryIds.length === 0) return ageMsByCategory;
   const { data, error } = await supabase.rpc("bw_query_metrics_daily_category_freshness", {
     p_project_id: projectId,
     p_query_id: queryId,
@@ -3081,14 +3071,12 @@ async function fetchDailySentimentFreshness(
   });
   if (error) throw new Error(`Erro checando frescor de bw_query_metrics_daily (sentimento): ${error.message}`);
 
-  const fresh = new Set<number>();
   const nowMs = Date.now();
   for (const row of (data ?? []) as { category_id: number; latest_synced_at: string | null }[]) {
     if (!row.latest_synced_at) continue;
-    const ts = new Date(row.latest_synced_at).getTime();
-    if (nowMs - ts < maxAgeMs) fresh.add(row.category_id);
+    ageMsByCategory.set(row.category_id, nowMs - new Date(row.latest_synced_at).getTime());
   }
-  return fresh;
+  return ageMsByCategory;
 }
 
 async function runDailyMetricsStep(
@@ -3105,15 +3093,47 @@ async function runDailyMetricsStep(
   if (!hasBrandwatchCallBudget()) return { didWork: true, stayOnStep: true };
   await syncSentimentMetrics(supabase, token, "days", projectId, queryId, null, metricsStartDate, now);
 
-  // Por Narrativa: capado + com freshness gate — ver nota grande acima.
+  // Por Narrativa: capado + round-robin por staleness — ver
+  // "⚠️ 2026-08-09" logo abaixo pro porquê de não iterar mais em ordem
+  // fixa nem usar uma janela de frescor própria e curta.
   const narrativeCategoryIds = categoryTargets.filter((c): c is number => c !== null);
-  const freshCategoryIds = await fetchDailySentimentFreshness(
-    supabase, projectId, queryId, narrativeCategoryIds, DAILY_SENTIMENT_FRESH_WINDOW_MS,
-  );
+  const ageMsByCategory = await fetchDailySentimentFreshness(supabase, projectId, queryId, narrativeCategoryIds);
+  const staleWindowMs = getSyncStalenessWindowMs();
+  // ⚠️ 2026-08-09: bug real de produção — usuário reportou (com log)
+  // `daily_metrics` nunca saindo de `stayOnStep`, mesmo depois do fix de
+  // 2026-08-06 acima (que já corrigia o corte de `max_rows` no cálculo de
+  // frescor). Causa raiz, distinta: este loop iterava `narrativeCategoryIds`
+  // em ORDEM FIXA (a ordem devolvida por `fetchNarrativeCategoryIds()`,
+  // sem `ORDER BY`, estável na prática entre invocações) e só pulava
+  // categorias já "fresh" (`DAILY_SENTIMENT_FRESH_WINDOW_MS = 25min`) — pra
+  // uma organização com mais de ~16 Narrativas ativas (2×
+  // MAX_SENTIMENT_TARGETS_PER_INVOCATION), o tempo pra completar 1 volta
+  // inteira (ceil(N/8) × heartbeat de 15min) passava a exceder a janela de
+  // 25min ANTES de a volta terminar — as primeiras ~16 categorias da lista
+  // ficavam "stale" de novo bem antes de o loop alcançar as últimas, então
+  // cada invocação reprocessava perpetuamente as mesmas categorias do
+  // início da lista (agora sempre "as mais atrasadas outra vez") e as
+  // categorias depois do índice ~16 nunca eram sequer tentadas —
+  // `allNarrativeSentimentDone` nunca virava `true`, e o pipeline inteiro
+  // ficava preso em `daily_metrics` pra sempre, exatamente o sintoma
+  // relatado. Fix: em vez de iterar em ordem fixa pulando "fresh",
+  // ordena as categorias DEVIDAS (idade ≥ janela) da mais atrasada pra
+  // menos atrasada antes de aplicar o cap — garante progresso monotônico
+  // (quem nunca foi tocado, ou foi tocado há mais tempo, sempre tem
+  // prioridade), então nenhuma categoria pode ficar presa no fim da fila
+  // pra sempre, independente de N. Janela também trocada de um valor
+  // fixo (25min, menor que o necessário pra cobrir uma volta completa em
+  // orgs com muitas Narrativas) pra `getSyncStalenessWindowMs()` — a
+  // mesma janela unificada (`BW_SYNC_INTERVAL_HOURS`, 3h padrão) já usada
+  // por toda outra fase "stale-gated" deste arquivo, dando bem mais
+  // margem (3h/15min × 8 = até 96 categorias sustentáveis, contra ~16
+  // antes) sem introduzir uma segunda constante divergente.
+  const dueCategoryIds = narrativeCategoryIds
+    .filter((id) => (ageMsByCategory.get(id) ?? Number.POSITIVE_INFINITY) >= staleWindowMs)
+    .sort((a, b) => (ageMsByCategory.get(b) ?? Number.POSITIVE_INFINITY) - (ageMsByCategory.get(a) ?? Number.POSITIVE_INFINITY));
   let sentimentCallsMade = 0;
   let allNarrativeSentimentDone = true;
-  for (const categoryId of narrativeCategoryIds) {
-    if (freshCategoryIds.has(categoryId)) continue;
+  for (const categoryId of dueCategoryIds) {
     if (!hasBrandwatchCallBudget() || sentimentCallsMade >= MAX_SENTIMENT_TARGETS_PER_INVOCATION) {
       allNarrativeSentimentDone = false;
       break;
