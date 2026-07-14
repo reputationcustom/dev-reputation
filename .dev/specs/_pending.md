@@ -1,6 +1,6 @@
 ---
 tipo: pending-tracker
-atualizado: 2026-08-02 (rev. 37)
+atualizado: 2026-07-14 (rev. 38)
 ---
 
 # Pendências — Digital Intelligent Communication
@@ -506,6 +506,28 @@ na Edge Function). Também ganhou log de sucesso
 confirmação nos logs de que a desativação rodava. Ver `CLAUDE.md`,
 "Category deactivation wasn't actually running on any predictable
 cadence" e `foundation/sync-brandwatch.md`/`data-model.md`.
+
+✅ **Resolvida 2026-07-14** (pedido do usuário, não numerada, a partir de
+screenshot mostrando todo card de Narrativa preso no fallback "Resumo
+automático ainda não disponível para esta Narrativa."): `narratives.description`
+nunca teve nenhum produtor em nenhuma camada do produto desde
+`20260707000000`, apesar de `narratives-exploration.md` já apontar o
+candidato natural desde 2026-07-13. Fechado com `narrative-summary-composer`
+(Edge Function nova, `pg_cron` a cada 30min, migration `20260804010000`) —
+scores via `get_narratives_table` + eventos recentes do `event-radar` +
+Comunicações/Decisões recentes (`communications`), texto livre via Claude
+Haiku 4.5, escreve `description`/`description_generated_at`. Ver
+`foundation/narratives.md`, "Resumo executivo (produtor)".
+
+✅ **Resolvida 2026-07-14** (achado durante a implementação acima, não uma
+pendência previamente registrada): regressão real e silenciosa em
+`get_narratives_table` — a migration `20260802030000` (fix de sentimento
+"Neutro predominante") tinha sido escrita a partir de uma cópia da versão
+anterior ao boost de risco do `event-radar` (`20260802010000`, A2 da Fase
+B), revertendo esse boost sem nenhum aviso (`create or replace` com a
+mesma assinatura não alertou de nada). Corrigido na migration
+`20260804000000`, reunindo as duas correções (sentimento + boost) na mesma
+function. Ver `aggregated-metrics/sql-aggregation.md`, "Risco".
 
 ## Gaps técnicos (spec pronta, sem migration/código ainda)
 

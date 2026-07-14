@@ -593,6 +593,28 @@ Pedido do usuário: "Implementar termo de interação agora".
   real e atual. `create or replace` foi suficiente (sem `drop function`)
   porque nem a assinatura nem a lista de colunas de saída mudaram — só o
   cálculo interno de `risk_score`.
+  ⚠️ **Regressão real encontrada e corrigida (2026-07-14, migration
+  `20260804000000`)**: a migration seguinte que tocou esta function
+  (`20260802030000`, fix de sentimento "Neutro predominante" — ver
+  `foundation/narratives.md`) foi escrita a partir de uma cópia de
+  `20260731040000` (a versão **anterior** ao boost acima), não de
+  `20260802010000` — mesma assinatura/mesma lista de colunas de saída nas
+  duas versões, então `create or replace` não deu nenhum aviso, e o boost
+  de A2 foi silenciosamente revertido no mesmo dia em que tinha sido
+  implementado (a CTE `radar_boost` e o `greatest(...)` desapareceram do
+  arquivo). Esta spec nunca foi atualizada pra refletir a perda porque a
+  sessão de 2026-08-02 só tocou o trecho de sentimento. Achado via
+  screenshot do usuário mostrando um card com `sentiment_label` correto
+  mas sem investigar o boost diretamente — a regressão só apareceu ao
+  reler os 3 arquivos de migration lado a lado nesta sessão. Corrigido
+  reunindo as duas correções (sentimento "Neutro predominante" + boost de
+  risco) na mesma function — nenhuma outra CTE mudou. **Lição**: ao
+  escrever uma nova migration que faz `create or replace function` numa
+  function já editada por mais de uma migration anterior, sempre partir
+  do conteúdo da migration **mais recente** daquela function (`grep` por
+  `create or replace function <nome>` em todo `supabase/migrations/`,
+  pegar a de maior timestamp), nunca de uma cópia mais antiga guardada de
+  memória/sessão anterior.
 
 ### Campos do card de Narrativa (2026-07-21, migration `20260721010000`)
 

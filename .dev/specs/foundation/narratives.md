@@ -3,7 +3,7 @@ tipo: feature-spec
 módulo: foundation
 funcionalidade: narratives
 status: implementado
-atualizado: 2026-07-21
+atualizado: 2026-07-14
 ---
 
 # Narratives
@@ -95,6 +95,28 @@ atualizado: 2026-07-21
 > `aggregated-metrics/sql-aggregation.md`, "Campos do card de Narrativa", e
 > `intelligence-center/narratives-exploration.md`.
 
+> ✅ **"Resumo executivo" ganha produtor (2026-07-14)** — achado real desta
+> sessão, a partir de screenshot do usuário: todo card de Narrativa
+> mostrava o fallback "Resumo automático ainda não disponível para esta
+> Narrativa." indefinidamente — `description` (= `summary` no bloco
+> `narratives` do envelope) nunca teve nenhum caminho de escrita em nenhuma
+> camada do produto desde `20260707000000`, apesar de `narratives-exploration.md`
+> já apontar o candidato natural desde 2026-07-13 ("reaproveitando os
+> `highlights` do `event-radar`"). Fechado com `narrative-summary-composer`
+> (Edge Function nova, `pg_cron` a cada 30min, migration `20260804010000`)
+> — ver "Resumo executivo (produtor)" abaixo pro fluxo completo. Mesma
+> sessão também encontrou e corrigiu uma regressão real e silenciosa em
+> `get_narratives_table`: a migration `20260802030000` (fix de sentimento
+> "Neutro predominante") tinha sido escrita a partir de uma cópia da
+> versão *anterior* ao boost de risco do `event-radar` (`20260802010000`,
+> "Fase B"/A2), revertendo esse boost sem nenhum aviso — `create or
+> replace` com a mesma assinatura não alertou de nada, e
+> `aggregated-metrics/sql-aggregation.md` nunca tinha sido atualizado pra
+> refletir a perda porque a sessão de 2026-08-02 nunca tocou nesse trecho.
+> Corrigido na migration `20260804000000` (reúne as duas correções que
+> deveriam ter sido a mesma migration). Ver
+> `aggregated-metrics/sql-aggregation.md`, "Risco", pra nota completa.
+
 ## Objetivo
 
 Manter Narrativas como entidades vivas e mensuráveis — com sinais de
@@ -149,6 +171,52 @@ CRUD de Narrativas em nenhuma versão do produto** — ver "Interface (UI)" e
    `narrative_metrics`/`reporting.narratives_overview` — nunca recalcula por
    conta própria (ver Regra de negócio abaixo).
 
+## Resumo executivo (produtor)
+
+✅ **Implementado (2026-07-14)**, migration `20260804010000` +
+`supabase/functions/narrative-summary-composer/index.ts`. Diferente do
+resto desta spec (dados 100% derivados da Brandwatch, sem escrita fora de
+`bw-sync`), `description`/`description_generated_at` são a única exceção
+— escritos exclusivamente por este job, nunca por `bw-sync`, nunca por UI.
+
+1. `narrative_summary_due_ids(p_batch_size)` (SQL) seleciona, por
+   invocação (até `NARRATIVE_SUMMARY_BATCH_SIZE`, default 5), Narrativas
+   com Category/Subcategory ainda `active` cujo resumo: nunca foi gerado;
+   ou tem mais de 7 dias (refresh periódico — sentimento/momentum/risco
+   derivam continuamente, não só de eventos discretos); ou tem um
+   `feed_events` (evento do `event-radar`) novo desde o último resumo; ou
+   tem uma Comunicação/Decisão nova (`communications`) desde o último
+   resumo.
+2. `narrative_summary_build_payload(id)` (SQL) monta o payload agregado —
+   nunca texto bruto de `mentions` (mesmo princípio de
+   `event_radar_build_agent_payload`, `event-radar/agent-orchestrator.md`):
+   os scores da própria Narrativa via `get_narratives_table` (mesma fonte
+   que a tabela/cards já mostram — o resumo tem que concordar com os
+   números ao lado dele), até 5 eventos recentes do radar e até 5
+   Comunicações/Decisões recentes.
+3. Uma chamada ao Claude Haiku 4.5 por Narrativa, texto livre (3-5 frases,
+   até 500 caracteres, guardado por truncamento defensivo no código, nunca
+   só confiado ao prompt) — mesmo padrão da Camada 1 de
+   `aggregated-metrics/ai-synthesis.md` (`composeLayer1NarrativeText`),
+   não o schema JSON estruturado do `event-radar-agent-orchestrator`
+   (aqui a saída é só prosa, não dado estruturado).
+4. `update narratives set description = ..., description_generated_at =
+   now()` só em caso de sucesso — uma falha de composição (recusa, erro de
+   rede, resposta vazia) não escreve nada; a Narrativa continua elegível
+   na próxima invocação via `narrative_summary_due_ids()`.
+
+Agendado via `pg_cron` a cada 30min (`narrative-summary-composer-heartbeat`,
+menos urgente que o heartbeat de 15min de `bw-sync`/`event-radar` — um
+resumo executivo é uma foto do estado atual, não uma detecção em tempo
+real). Modelo configurável via `NARRATIVE_SUMMARY_MODEL` (secret próprio,
+default `claude-haiku-4-5`, mesma decisão de custo já tomada para
+`event-radar-agent-orchestrator`).
+
+⚠️ Não testado contra a API real da Anthropic nem contra um Supabase real
+nesta sessão (sem credenciais/ambiente disponíveis) — revisado
+manualmente. Confirmar em produção, via logs (`[narrative-summary-composer]`),
+que `description` está de fato sendo populado depois do próximo deploy.
+
 ## Fluxos alternativos e erros
 
 | Situação | Comportamento esperado |
@@ -194,7 +262,7 @@ lugar nenhum do produto.
 ## Dados envolvidos
 
 - **Lê**: `bw_query_metrics_daily`, `mentions` (via `narrative_matched_mentions`).
-- **Escreve**: `narratives` (exclusivamente por `ensureNarrativesFromCategories()` em `bw-sync` — sem escrita via UI/cliente, ver "Interface (UI)"), `narrative_signals` (complemento qualitativo, manual/seed via backend, nunca cria Narrativa nova), `narrative_tags` (manual/seed), `narrative_metrics` (via `refresh_narrative_metrics()`).
+- **Escreve**: `narratives` — `title`/`stage`/`risk_level`/`priority` exclusivamente por `ensureNarrativesFromCategories()` em `bw-sync`; `description`/`description_generated_at` exclusivamente por `narrative-summary-composer` (ver "Resumo executivo (produtor)" acima) — sem escrita via UI/cliente em nenhum dos dois casos, ver "Interface (UI)"; `narrative_signals` (complemento qualitativo, manual/seed via backend, nunca cria Narrativa nova), `narrative_tags` (manual/seed), `narrative_metrics` (via `refresh_narrative_metrics()`).
 - Detalhes: [data-model.md](data-model.md).
 
 ## Permissões
@@ -204,6 +272,7 @@ lugar nenhum do produto.
 | Ler Narrativas/métricas | Membros da organização (RLS) |
 | Criar/editar/excluir Narrativa | Ninguém — sem CRUD em nenhuma camada do produto (ver "Interface (UI)") |
 | Criar Narrativa a partir de Category/Subcategory | Automático (`bw-sync`, service role) — único mecanismo existente |
+| Gerar/atualizar `description` (Resumo executivo) | Automático (`narrative-summary-composer`, service role, `pg_cron`) — único mecanismo existente, ver "Resumo executivo (produtor)" |
 | Criar sinal complementar (`narrative_signals`) numa Narrativa já existente | Manual via SQL/backend, sem UI — não cria Narrativa nova, só adiciona contexto qualitativo a uma já auto-criada |
 
 ## Notificações / Feedback

@@ -1755,6 +1755,97 @@ window size (via the secret, no migration needed) if that changes. No
 migration and no envelope/frontend change — this is purely an Edge
 Function fetch-range optimization, upsert keys/shapes are unchanged.
 
+### `narratives.description` finally gets a producer + a real silent regression found and fixed (2026-07-14)
+
+User request: "O resumo executivo das narrativas ainda não está sendo
+feito via IA... Verifique a documentação corrija e implemente o que
+estiver faltando" — pasted screenshot showing every Narrative card
+("Direita", "Esquerda", "Diplomacia", "Ronaldo Caiado", etc.) stuck on the
+fallback string "Resumo automático ainda não disponível para esta
+Narrativa." (`narrative-card.tsx`).
+
+**Audit before any code**: `narratives.description` (= `summary` in the
+`narratives` envelope block, `get_narratives_table`) has existed since the
+very first migration (`20260707000000`) but grepping every migration and
+Edge Function confirmed **zero write paths** anywhere — not `bw-sync`, not
+any Edge Function, not any UI. `foundation/narratives.md` and
+`intelligence-center/narratives-exploration.md` already documented this
+explicitly as reserved-but-unpopulated, pointing at "a future `ai-synthesis`
+job reusing `event-radar` highlights" as the natural producer — but
+`ai-synthesis.md`'s actual scope (confirmed by reading it in full) only
+ever covers page-level `narrative_text` ("O que os gráficos mostram?",
+Camadas 0/1/2), never a per-Narrativa field. So this was a genuine,
+previously-undocumented gap, not a pending product decision — the intended
+design was already written down, just never built.
+
+**Built**: `narrative-summary-composer`, a new self-sufficient Edge
+Function (Principle 5), scheduled via its own `pg_cron` heartbeat every
+30 minutes (migration `20260804010000`) — less urgent than the 15-minute
+heartbeats of `bw-sync`/`event-radar` since an executive summary is a
+snapshot of current state, not a real-time detection. Flow, mirroring
+`event-radar-agent-orchestrator`'s conventions (own dedicated Anthropic
+model secret, try/catch per item, never crash the whole invocation, never
+write on a failed call):
+1. `narrative_summary_due_ids(p_batch_size default 5)` (SQL) — a
+   Narrativa is due when its Category/Subcategory is still `active` and
+   either: never summarized; last summary is >7 days old (periodic
+   refresh — sentiment/momentum/risk drift continuously, not just from
+   discrete events); a new `feed_events` row landed for it since the last
+   summary; or a new `communications` row (Comunicação/Decisão) landed
+   for it since the last summary.
+2. `narrative_summary_build_payload(id)` (SQL) — never raw `mentions`
+   text, only: the Narrativa's own scores via `get_narratives_table`
+   (same source the table/cards already show, so the prose can't
+   contradict the numbers next to it), up to 5 recent `feed_events`, up
+   to 5 recent `communications` rows.
+3. One Claude Haiku 4.5 call per Narrativa (`NARRATIVE_SUMMARY_MODEL`
+   secret, own default `claude-haiku-4-5` — same cost-conscious decision
+   already made for `event-radar-agent-orchestrator`/`ai-synthesis`
+   Camada 1), free-text output (not JSON Schema — this produces prose,
+   not structured data, same pattern as `composeLayer1NarrativeText`),
+   guarded by a `.slice(0, 500)` truncation in code, never trusted to the
+   prompt alone.
+4. `update narratives set description = ..., description_generated_at =
+   now()` only on success — a failed composition writes nothing, the
+   Narrativa stays eligible next invocation.
+
+New column: `narratives.description_generated_at` (nullable timestamptz)
+— deliberately not reusing `updated_at` (that trigger fires on any future
+write to the row, not just this job's) so staleness detection stays
+correct even if another writer touches `narratives` later.
+
+**Real, silent regression found while reading the migration history to
+build this** (not something the user reported — found by re-reading the
+last few `get_narratives_table` migrations side by side before writing a
+new one, per this project's own "always check the actual latest state,
+never assume from memory" migration-hygiene habit): `20260802030000`
+(the "Neutro predominante" sentiment fix, see "Sentiment label/border
+still disagreeing..." above) was written as a `create or replace` copied
+from `20260731040000` — the version **before** the `event-radar` risk
+boost (`20260802010000`, Fase B/A2) — instead of from `20260802010000`
+itself. Same signature, same output columns in both source versions, so
+`create or replace` gave no warning: the `radar_boost` CTE and the
+`greatest(risk_score, feed_events.severity_score)` wrapping were silently
+deleted the same day they'd been added. `sql-aggregation.md` was never
+updated to reflect the loss because the 2026-08-02 session only touched
+the sentiment paragraph — so the doc kept claiming the boost was live
+while the deployed function had already lost it. Fixed in migration
+`20260804000000` (reunites both fixes — sentiment + risk boost — into one
+`create or replace`, no other CTE touched). Lesson written into
+`sql-aggregation.md`'s "Risco" section: before writing a new `create or
+replace function <name>` for a function that's already been edited by
+more than one prior migration, grep every `create or replace function
+<name>` across `supabase/migrations/` and copy from the **highest
+timestamp**, never from memory of an earlier session.
+
+⚠️ Not tested against a real Anthropic or Supabase environment this
+session (no credentials available) — reviewed manually, including a
+parens/braces/`$$`-pair balance check on every new/changed file. `git
+push` to `develop` is the next step for this to actually run; confirm via
+`[narrative-summary-composer]` logs that `description` is populating
+after deploy, same recurring caveat as every other session in this file
+without deploy access.
+
 ### Reporting/BI split
 
 `reporting.narratives_overview` and `reporting.mentions_daily` exist for

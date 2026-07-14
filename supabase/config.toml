@@ -364,6 +364,12 @@ verify_jwt = false
 [functions.event-radar-agent-orchestrator]
 verify_jwt = false
 
+# narrative-summary-composer: produtor de narratives.description ("Resumo
+# executivo"), mesma ressalva de bw-sync acima — acionada só por pg_cron
+# (net.http_post, migration `20260804010000`), nunca pelo frontend.
+[functions.narrative-summary-composer]
+verify_jwt = false
+
 [edge_runtime]
 enabled = true
 # Supported request policies: `oneshot`, `per_worker`.

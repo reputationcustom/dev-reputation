@@ -178,9 +178,7 @@ já aceito para `filtrosOpen` no header.
   como não há CRUD de Narrativas em nenhuma camada do produto (ver
   `foundation/narratives.md`), **edição manual está descartada** — a única
   via possível pra preencher `narratives.description` é geração automática
-  no backend (candidato natural: `narrative_text` de `ai-synthesis.md`,
-  reaproveitando os `highlights` do `event-radar` daquela Narrativa, em vez
-  de um campo solto sem produtor). Ainda não desenvolvido — o frontend
+  no backend. Ainda não desenvolvido — o frontend
   continua só **reservando o campo** (ler e exibir
   `narratives.description`, `foundation/data-model.md` — vazio/`<EmptyState />`
   textual quando `null`). Não bloqueia o resto da página. ✅ **2026-07-21**:
@@ -188,7 +186,21 @@ já aceito para `filtrosOpen` no header.
   `aggregated-metrics/sql-aggregation.md`) também passou a ser lido e
   exibido pelo `NarrativeCard` da lista/grid — a "reserva" deixou de ser só
   teórica, o componente já está no ar pronto para receber o texto assim
-  que `ai-synthesis` popular a coluna, sem mudança de contrato.
+  que um produtor popular a coluna, sem mudança de contrato.
+  ✅ **Implementado (2026-07-14)**: produtor real construído —
+  `narrative-summary-composer` (Edge Function nova, `pg_cron` a cada
+  30min, migration `20260804010000`), **não** a Camada 1 de `ai-synthesis.md`
+  cogitada acima (aquela é síntese por página/período a partir de
+  `highlights` já prontos; um resumo por Narrativa sem janela de período
+  não se encaixa nesse contrato). Ver `foundation/narratives.md`, "Resumo
+  executivo (produtor)", pro fluxo completo — scores via
+  `get_narratives_table` + eventos recentes do `event-radar` +
+  Comunicações/Decisões recentes (`communications`), texto livre via
+  Claude Haiku 4.5. `NarrativeCard`/`narrative-detail-content.tsx` não
+  mudam — já liam e exibiam o campo desde 2026-07-21, só o fallback deixa
+  de aparecer assim que o job processar cada Narrativa (pode levar até um
+  ciclo de 30min + o tempo de detecção de staleness na primeira rodada
+  depois do deploy).
 - **Evolução (narrativa vs. volume geral)**: série temporal de
   `narrative_metrics.total_mentions` (Narrativa) sobreposta a
   `bw_query_metrics_daily.total_mentions` com `category_id is null` (Query

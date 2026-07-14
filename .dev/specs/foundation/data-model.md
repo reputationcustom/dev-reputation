@@ -1411,13 +1411,20 @@ etc. Mesma categoria de risco já aceita pra `syncPlatformMetrics`/
 
 ### `narratives`
 
+> ✅ **`description_generated_at` adicionado (2026-07-14, migration
+> `20260804010000`)**: `description` finalmente ganhou um produtor —
+> `narrative-summary-composer` (Edge Function, pg_cron a cada 30min). Ver
+> [narratives.md](narratives.md), "Resumo executivo (produtor)" para o
+> fluxo completo.
+
 | Campo              | Tipo               | Obrigatório | Descrição |
 |---------------------|--------------------|-------------|-----------|
 | `id`                | `uuid`             | sim | PK |
 | `organization_id`   | `uuid`             | sim | FK → `organizations(id)` ON DELETE CASCADE |
 | `bw_category_id`    | `bigint`           | não | FK → `bw_categories(id)` — vínculo opcional com Category já curada |
 | `title`             | `text`             | sim | |
-| `description`       | `text`             | não | |
+| `description`       | `text`             | não | "Resumo executivo" — gerado por `narrative-summary-composer` (ver acima), nunca editável via UI |
+| `description_generated_at` | `timestamptz` | não | quando `description` foi gerado pela última vez; `null` = nunca gerado. Não é `updated_at` (esse muda em qualquer escrita futura na linha) |
 | `stage`             | `narrative_stage`  | sim | default `'emerging'` |
 | `risk_level`        | `severity_level`   | sim | default `'low'` |
 | `priority`          | `severity_level`   | sim | default `'medium'` |
