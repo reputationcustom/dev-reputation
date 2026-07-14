@@ -114,6 +114,29 @@ atualizado: 2026-07-14
 > `intelligence-center/electoral-themes.md` e `CLAUDE.md` para o
 > detalhamento completo.
 
+> ✅ **Bug de escopo em `sentiment` corrigido (2026-07-14)** — mesma
+> pergunta do usuário, agora pra `/sentiment`: "Insights de sentimento
+> estão relacionado aos sentimentos? se não estiver corrija." Achado
+> real, mas de uma dimensão diferente da de `themes` acima:
+> `get_active_highlights` nunca teve NENHUM filtro por `event_type` — só
+> `organization_id`/`period`/`filters.narratives`. "Insights" (e
+> `narrative_text`/"Mudança de sentimento", que lê a mesma lista de
+> highlights como contexto/gate) em `/sentiment` sempre mostraram eventos
+> de qualquer tipo (`volume_spike`/`volume_drop`/`momentum_spike`
+> inclusos), não só os 3 tipos que `event-radar` já classifica como sendo
+> sobre sentimento (`sentiment_change`/`negative_sentiment_increase`/
+> `negative_sentiment_spike`, ver `feedEventType()` em
+> `event-radar-agent-orchestrator/index.ts`). Corrigido com
+> `get_active_highlights(..., p_event_types text[] default null)`
+> (migration `20260809100000`) + `SENTIMENT_HIGHLIGHT_EVENT_TYPES` em
+> `assemblePageResponse`, mesmo mecanismo do fix de `themes` (desvio de
+> `context`, aqui só `eventTypes` em vez de `filters.narratives`), aplicado
+> também a `composeNarrativeSynthesisOnDemand` (botão "Analisar com IA").
+> ⚠️ Gap conhecido, não fechado: esse mesmo botão continua sem escopar por
+> `pautaIds` pra `themes` — só o caminho automático (`assemblePageResponse`)
+> tem esse filtro hoje. Ver `intelligence-center/sentiment-analysis.md` e
+> `CLAUDE.md` para o detalhamento completo.
+
 > ✅ **Camada 0 implementada (2026-07-25, gap #27 de `_pending.md`,
 > resolvido)** — `fetchNarrativeText()` (`aggregated-metrics-service.ts`):
 > usa `summary`/`explanation` do highlight quando há exatamente 1; caso
@@ -355,6 +378,25 @@ atualizado: 2026-07-14
 > Nenhuma mudança nas 2 seções pré-existentes documentadas acima
 > (recomposição por tempo/por evento novo do radar) — os 2 gatilhos
 > continuam valendo exatamente como descrito, só pra seção `'main'`.
+
+> ✅ **Camada 2 — teto de tamanho aumentado (2026-08-09)**, pedido do
+> usuário: "Mostre o conteúdo completo do Conteúdo em destaque (Top
+> Sites, X Themes), o texto está truncado." O texto visível terminava em
+> "…" sem nenhum botão "Mostrar mais" — não era um problema de
+> `ExpandableText`/clamp (que só corta visualmente e sempre oferece o
+> toggle quando o texto excede 4 linhas), era o próprio texto composto
+> por IA sendo cortado no backend: `composeSectionText()` (as 3 seções
+> acima) tinha `max_tokens: 300` + `truncateAtSentence(text, 400)`, bem
+> mais apertado que o `narrative_text` principal (Camada 0/1, `max_tokens:
+> 400` + `truncateAtSentence(text, 500)`). Aumentado pra `max_tokens: 600`
+> + `truncateAtSentence(text, 900)`, e os 3 `SYSTEM_PROMPT`s
+> correspondentes tiveram sua instrução de tamanho alinhada ("2-3/2-4
+> frases, até 400 caracteres" → "3-6 frases, até 900 caracteres") — sem
+> isso, o modelo continuaria mirando 400 caracteres na própria geração,
+> tornando o novo teto de truncamento inútil na prática. Um texto já
+> persistido antes deste fix continua truncado até ser recomposto
+> naturalmente (janela de `AI_SYNTHESIS_REFRESH_HOURS` ou linha ainda
+> inexistente).
 
 ## Objetivo
 

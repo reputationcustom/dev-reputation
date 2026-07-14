@@ -54,6 +54,12 @@ export default function SentimentPage() {
           <TrendLineChart trend={envelope?.trends[0]} emptyMessage="Nenhum dado de evolução ainda." />
         </WidgetCard>
 
+        {/* ✅ Reorganizado 2026-07-14 (pedido do usuário: "mova a tabela
+            Sentimento por pauta para baixo da tabela Sentimento por
+            plataforma") — "por plataforma" e "por pauta" agora empilhados
+            na mesma coluna (direita), "por narrativa" sozinha na coluna
+            esquerda, em vez de "por pauta" abaixo das duas como uma linha
+            própria de largura cheia. */}
         <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
           <WidgetCard title="Sentimento por narrativa" status={status} onRetry={retry}>
             <BreakdownPanel
@@ -61,33 +67,41 @@ export default function SentimentPage() {
               emptyMessage="Nenhuma Narrativa em monitoramento ainda."
             />
           </WidgetCard>
-          <WidgetCard title="Sentimento por plataforma" status={status} onRetry={retry}>
-            <BreakdownPanel
-              breakdown={envelope?.breakdowns.find((b) => b.type === "platform")}
-              emptyMessage="Nenhum dado de plataforma ainda."
-            />
-          </WidgetCard>
+          <div className="flex flex-col gap-6">
+            <WidgetCard title="Sentimento por plataforma" status={status} onRetry={retry}>
+              <BreakdownPanel
+                breakdown={envelope?.breakdowns.find((b) => b.type === "platform")}
+                emptyMessage="Nenhum dado de plataforma ainda."
+              />
+            </WidgetCard>
+            <WidgetCard title="Sentimento por pauta" status={status} onRetry={retry}>
+              <BreakdownPanel
+                breakdown={envelope?.breakdowns.find((b) => b.type === "theme")}
+                emptyMessage="Nenhuma Pauta em monitoramento ainda."
+              />
+            </WidgetCard>
+          </div>
         </div>
-
-        <WidgetCard title="Sentimento por pauta" status={status} onRetry={retry}>
-          <BreakdownPanel
-            breakdown={envelope?.breakdowns.find((b) => b.type === "theme")}
-            emptyMessage="Nenhuma Pauta em monitoramento ainda."
-          />
-        </WidgetCard>
 
         {/* ✅ Repivotado 2026-07-25 (pedido do usuário: "breakdown por
             estado brasileiro") — get_region_breakdown lê dimension_type='region'
             (estado), não mais 'country'. Ver sql-aggregation.md.
             ✅ Mapa adicionado (2026-07-25, mesmo dia, pedido do usuário:
             "Sentimento por estado pode ser representado em um mapa com
-            rótulos e cores") — complementa a tabela abaixo (leitura
-            geográfica de relance + número exato por estado), não a
-            substitui. Ver brazil-sentiment-map.tsx. */}
+            rótulos e cores") — complementa a tabela (leitura geográfica de
+            relance + número exato por estado), não a substitui.
+            ✅ Layout lado a lado (2026-07-14, pedido do usuário: "redimensione
+            o mapa para aparecer do lado esquerdo e uma tabela com a lista
+            dos estados do lado direito") — antes empilhado (mapa em cima,
+            tabela embaixo, separados por um `border-t`); mapa não fica mais
+            centralizado/limitado a `max-w-sm` (só fazia sentido quando
+            ocupava a largura inteira do card) — agora preenche sua própria
+            coluna à esquerda, tabela ocupa a coluna à direita. Ver
+            brazil-sentiment-map.tsx. */}
         <WidgetCard title="Sentimento por estado" status={status} onRetry={retry}>
-          <div className="flex flex-col gap-6">
+          <div className="grid grid-cols-1 gap-6 lg:grid-cols-2 lg:items-start">
             <BrazilSentimentMap items={envelope?.breakdowns.find((b) => b.type === "region")?.items ?? []} />
-            <div className="border-t border-border-subtle pt-4">
+            <div className="border-t border-border-subtle pt-4 lg:border-t-0 lg:border-l lg:pl-6 lg:pt-0">
               <BreakdownPanel
                 breakdown={envelope?.breakdowns.find((b) => b.type === "region")}
                 emptyMessage="Nenhum dado por estado ainda."

@@ -185,6 +185,11 @@ export interface AuthorRow {
   // (por username, lower/trim). null/[] quando o autor não tem Entity
   // vinculada (a maioria hoje) ou a Entity está is_active=false.
   entity_type: string | null
+  // ✅ Adicionado 2026-08-09 — nome oficial/formatado da Entity cadastrada
+  // (ex: "Revista Fórum"), distinto de `name` acima (sempre o handle bruto
+  // vindo da Brandwatch, ex: "revistaforum") — permite buscar por como a
+  // Entity foi de fato cadastrada, não só pelo handle. `null` sem vínculo.
+  entity_name: string | null
   entity_cargo: string | null
   entity_partido: string | null
   // entities.ideologia — melhor esforço/não-oficial, ver data-model.md.
@@ -484,6 +489,7 @@ interface AuthorRankingRow {
   mentions: number | null
   risk_level: RiskLevel | null
   entity_type: string | null
+  entity_name: string | null
   entity_cargo: string | null
   entity_partido: string | null
   entity_ideologia: string | null
@@ -809,6 +815,7 @@ async function fetchAuthors(page: PageKey, supabase: SupabaseClient, ctx: PageCo
       mentions: row.mentions ?? 0,
       risk_level: row.risk_level,
       entity_type: row.entity_type,
+      entity_name: row.entity_name,
       entity_cargo: row.entity_cargo,
       entity_partido: row.entity_partido,
       entity_ideologia: row.entity_ideologia,
@@ -847,13 +854,21 @@ interface ActiveHighlightRow {
 // "Fase B", A1) — get_active_highlights (migration 20260802010000), leitura
 // pura de feed_events (event-radar), nunca recalcula severidade/detecção
 // aqui (ver sql-aggregation.md, "Regras de negócio").
-async function fetchHighlights(supabase: SupabaseClient, ctx: PageContext): Promise<Highlight[]> {
+// `eventTypes` (novo, 2026-07-14, migration 20260809100000) — restringe
+// `feed_events.event_type` quando presente. Usado por /sentiment (ver
+// SENTIMENT_HIGHLIGHT_EVENT_TYPES/assemblePageResponse abaixo): achado real
+// — sem esse filtro, "Insights" nesta página mostrava highlights de
+// QUALQUER tipo (volume_spike/volume_drop/momentum_spike inclusos), nunca
+// só os relacionados a sentimento. Mesma classe de bug de escopo já
+// corrigida pra /themes (highlightsContext/pautaIds, 2026-08-09).
+async function fetchHighlights(supabase: SupabaseClient, ctx: PageContext, eventTypes?: string[]): Promise<Highlight[]> {
   try {
     const { data, error } = await supabase.rpc('get_active_highlights', {
       p_organization_id: ctx.organizationId,
       p_period_start: ctx.period.start,
       p_period_end: ctx.period.end,
       p_filters: effectiveFilters(ctx),
+      p_event_types: eventTypes ?? null,
     })
     if (error) throw error
     return ((data ?? []) as ActiveHighlightRow[]).map((row) => ({
@@ -1369,7 +1384,11 @@ async function composeNarrativeSynthesisOnDemand(
   ctx: PageContext,
   page: PageKey,
 ): Promise<{ narrative_text: string; generated_by_ai: boolean }> {
-  const highlights = await fetchHighlights(supabase, ctx)
+  // ✅ 2026-07-14 — mesmo escopo de SENTIMENT_HIGHLIGHT_EVENT_TYPES
+  // (assemblePageResponse abaixo) aplicado aqui também: sem isso, o botão
+  // "Analisar com IA" (período personalizado) podia compor "Mudança de
+  // sentimento" a partir de eventos que não são de sentimento nenhum.
+  const highlights = await fetchHighlights(supabase, ctx, page === 'sentiment' ? SENTIMENT_HIGHLIGHT_EVENT_TYPES : undefined)
   if (highlights.length <= 1) {
     const text = await fetchLayer0NarrativeText(supabase, ctx, highlights)
     return { narrative_text: text ?? 'Não há dados suficientes para gerar uma análise deste período.', generated_by_ai: false }
@@ -1468,7 +1487,7 @@ async function composeSectionText(
     const anthropic = new Anthropic({ apiKey })
     const response = await anthropic.messages.create({
       model: NARRATIVE_SYNTHESIS_MODEL,
-      max_tokens: 300,
+      max_tokens: 600,
       system: systemPrompt,
       messages: [{ role: 'user', content: `Dados do período:\n\n${JSON.stringify(payload)}` }],
     })
@@ -1483,7 +1502,7 @@ async function composeSectionText(
     const textBlock = response.content.find((block) => block.type === 'text')
     if (!textBlock || textBlock.type !== 'text') return null
     const text = textBlock.text.trim()
-    return text ? truncateAtSentence(text, 400) : null
+    return text ? truncateAtSentence(text, 900) : null
   } catch (err) {
     console.error(`[aggregated-metrics] composeSectionText(${page}:${section}) failed`, err)
     return null
@@ -1578,7 +1597,7 @@ async function fetchSectionText(
   }
 }
 
-const PLATFORMS_FEATURED_CONTENT_SYSTEM_PROMPT = `Você escreve, em português do Brasil, um resumo curto (2-3 frases, até 400 caracteres) sobre os conteúdos/temas em destaque de uma campanha política — plataformas dominantes e termos em alta — a partir de um payload de dados já agregados. NUNCA invente número/fato que não esteja no payload. Tom direto e humano: sem gancho dramático, sem vocabulário de IA ("além disso", "desempenha papel fundamental", "nesse sentido"), sem atribuição vaga, sem conclusão genérica/otimista. Responda só com o parágrafo, sem título, sem marcadores, sem aspas.`
+const PLATFORMS_FEATURED_CONTENT_SYSTEM_PROMPT = `Você escreve, em português do Brasil, um resumo (3-6 frases, até 900 caracteres) sobre os conteúdos/temas em destaque de uma campanha política — plataformas dominantes e termos em alta — a partir de um payload de dados já agregados. NUNCA invente número/fato que não esteja no payload. Tom direto e humano: sem gancho dramático, sem vocabulário de IA ("além disso", "desempenha papel fundamental", "nesse sentido"), sem atribuição vaga, sem conclusão genérica/otimista. Responda só com o parágrafo, sem título, sem marcadores, sem aspas.`
 
 function buildPlatformsFeaturedContentPayload(breakdown: Breakdown | undefined, termSignals: TermSignal[]): unknown {
   return {
@@ -1594,7 +1613,7 @@ function platformsFeaturedContentFallback(breakdown: Breakdown | undefined, term
   return 'Preparando um resumo dos conteúdos em destaque deste período.'
 }
 
-const THEMES_PERIOD_COMPARISON_SYSTEM_PROMPT = `Você escreve, em português do Brasil, uma comparação curta (2-4 frases, até 400 caracteres) entre o período atual e o período imediatamente anterior de Share of Voice por Pauta eleitoral, a partir de um payload com os 2 períodos já calculados. Cite só as mudanças mais relevantes (maiores altas/quedas de participação). NUNCA invente número/fato que não esteja no payload. Tom direto e humano: sem gancho dramático, sem vocabulário de IA, sem atribuição vaga, sem conclusão genérica/otimista. Responda só com o parágrafo, sem título, sem marcadores, sem aspas.`
+const THEMES_PERIOD_COMPARISON_SYSTEM_PROMPT = `Você escreve, em português do Brasil, uma comparação (3-6 frases, até 900 caracteres) entre o período atual e o período imediatamente anterior de Share of Voice por Pauta eleitoral, a partir de um payload com os 2 períodos já calculados. Cite só as mudanças mais relevantes (maiores altas/quedas de participação). NUNCA invente número/fato que não esteja no payload. Tom direto e humano: sem gancho dramático, sem vocabulário de IA, sem atribuição vaga, sem conclusão genérica/otimista. Responda só com o parágrafo, sem título, sem marcadores, sem aspas.`
 
 async function buildThemesPeriodComparisonPayload(
   supabase: SupabaseClient,
@@ -1625,7 +1644,7 @@ function themesPeriodComparisonFallback(breakdown: Breakdown | undefined): strin
   return 'Preparando a comparação entre este período e o anterior.'
 }
 
-const AUTHORS_OVERVIEW_SYSTEM_PROMPT = `Você escreve, em português do Brasil, uma visão geral sucinta (2-3 frases, até 400 caracteres) sobre os autores/influenciadores e os conteúdos em destaque (sites, hashtags) mais relevantes de uma campanha política no período, a partir de um payload de dados já agregados. NUNCA invente número/fato que não esteja no payload. Tom direto e humano: sem gancho dramático, sem vocabulário de IA, sem atribuição vaga, sem conclusão genérica/otimista. Responda só com o parágrafo, sem título, sem marcadores, sem aspas.`
+const AUTHORS_OVERVIEW_SYSTEM_PROMPT = `Você escreve, em português do Brasil, uma visão geral (3-6 frases, até 900 caracteres) sobre os autores/influenciadores e os conteúdos em destaque (sites, hashtags) mais relevantes de uma campanha política no período, a partir de um payload de dados já agregados. NUNCA invente número/fato que não esteja no payload. Tom direto e humano: sem gancho dramático, sem vocabulário de IA, sem atribuição vaga, sem conclusão genérica/otimista. Responda só com o parágrafo, sem título, sem marcadores, sem aspas.`
 
 function buildAuthorsOverviewPayload(authors: AuthorRow[], topSites: TopSiteItem[], xInsights: XInsightItem[]): unknown {
   const byReach = [...authors].sort((a, b) => b.reach - a.reach)
@@ -1696,7 +1715,23 @@ async function fetchGraph(supabase: SupabaseClient, ctx: PageContext): Promise<D
 // vazio de propósito" de "sem filtro" nessas duas functions — mesmo caso
 // degenerado que `/themes` já sinaliza em todo outro widget ("Nenhuma
 // subcategoria da categoria 'Pautas' configurada").
+//
+// ✅ Mesmo tratamento aplicado a /sentiment (2026-07-14, pedido do
+// usuário: "Insights de sentimento estão relacionado aos sentimentos? se
+// não, corrija") — só que por `event_type`, não por Narrativa: sem esse
+// filtro, "Insights" (e `narrative_text`/"Mudança de sentimento", que lê a
+// mesma lista de highlights como contexto) mostrava eventos de QUALQUER
+// tipo (volume_spike/volume_drop/momentum_spike inclusos), não só os
+// realmente sobre sentimento. `get_active_highlights` ganhou
+// `p_event_types` (migration 20260809100000) — `SENTIMENT_HIGHLIGHT_EVENT_TYPES`
+// abaixo é o único conjunto aplicado hoje. ⚠️ Gap conhecido, não fechado
+// nesta sessão: `composeNarrativeSynthesisOnDemand` (botão "Analisar com
+// IA", período personalizado) chama `fetchHighlights` sem nenhum escopo —
+// nem este (sentiment) nem o de `themes` (pautaIds) — mesma classe de
+// bug, só no caminho manual em vez do automático.
 // =========================================================================
+
+const SENTIMENT_HIGHLIGHT_EVENT_TYPES = ['sentiment_change', 'negative_sentiment_increase', 'negative_sentiment_spike']
 
 export async function assemblePageResponse(
   supabase: SupabaseClient,
@@ -1707,6 +1742,7 @@ export async function assemblePageResponse(
 
   let narrativesPromise: Promise<NarrativeRow[]>
   let highlightsContext = context
+  let highlightsEventTypes: string[] | undefined
   if (page === 'themes') {
     const pautaNarratives = blocks.has('narratives') ? await fetchNarratives(page, supabase, context) : []
     narrativesPromise = Promise.resolve(pautaNarratives)
@@ -1716,6 +1752,9 @@ export async function assemblePageResponse(
     }
   } else {
     narrativesPromise = blocks.has('narratives') ? fetchNarratives(page, supabase, context) : Promise.resolve<NarrativeRow[]>([])
+    if (page === 'sentiment') {
+      highlightsEventTypes = SENTIMENT_HIGHLIGHT_EVENT_TYPES
+    }
   }
 
   const [metrics, breakdowns, trends, narratives, authors, highlights, termSignals, graph, xInsights, topSites] = await Promise.all([
@@ -1724,7 +1763,7 @@ export async function assemblePageResponse(
     blocks.has('trends') ? fetchTrends(page, supabase, context) : Promise.resolve<Trend[]>([]),
     narrativesPromise,
     blocks.has('authors') ? fetchAuthors(page, supabase, context) : Promise.resolve<AuthorRow[]>([]),
-    blocks.has('highlights') ? fetchHighlights(supabase, highlightsContext) : Promise.resolve<Highlight[]>([]),
+    blocks.has('highlights') ? fetchHighlights(supabase, highlightsContext, highlightsEventTypes) : Promise.resolve<Highlight[]>([]),
     blocks.has('term_signals') ? fetchTermSignals(supabase, context) : Promise.resolve<TermSignal[]>([]),
     blocks.has('graph') ? fetchGraph(supabase, context) : Promise.resolve<DisseminationGraph | null>(null),
     blocks.has('x_insights') ? fetchXInsights(supabase, context) : Promise.resolve<XInsightItem[]>([]),

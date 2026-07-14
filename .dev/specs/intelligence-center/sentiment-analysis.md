@@ -3,10 +3,29 @@ tipo: feature-spec
 módulo: intelligence-center
 funcionalidade: sentiment-analysis
 status: implementado
-atualizado: 2026-08-03
+atualizado: 2026-07-14
 ---
 
 # Análise de Sentimento
+
+> ✅ **2 ajustes de layout + bug real de escopo em "Insights" corrigido
+> (2026-07-14)**, pedidos do usuário: (1) mover a tabela "Sentimento por
+> pauta" pra baixo de "Sentimento por plataforma" (empilhadas na mesma
+> coluna direita, "Sentimento por narrativa" sozinha na esquerda); (2)
+> "Insights de sentimento estão relacionado aos sentimentos? se não
+> estiver corrija" — achado real: `get_active_highlights` nunca teve
+> filtro por `event_type`, então "Insights" (e "Mudança de sentimento",
+> que lê a mesma lista de highlights como contexto) sempre mostrou
+> eventos de qualquer tipo (`volume_spike`/`volume_drop`/`momentum_spike`
+> inclusos), não só os relacionados a sentimento. Corrigido com
+> `get_active_highlights(..., p_event_types)` (migration `20260809100000`)
+> + `SENTIMENT_HIGHLIGHT_EVENT_TYPES` — mesmo mecanismo já usado pra
+> escopar `/themes` a Pautas (2026-08-09), ver
+> `aggregated-metrics/ai-synthesis.md`/`sql-aggregation.md` e `CLAUDE.md`
+> pro detalhamento completo. Também corrigido, mesma sessão: o mapa de
+> "Sentimento por estado" nunca colorindo de verdade (bug de classe
+> Tailwind construída em runtime, `sentimentFillFromScore()`) e o widget
+> reorganizado com mapa à esquerda + tabela à direita.
 
 > ✅ **4 ajustes (2026-07-25)**, pedidos do usuário na mesma sessão:
 > 1. **Rótulos no gráfico "Sentimento por narrativa"**: a barra empilhada

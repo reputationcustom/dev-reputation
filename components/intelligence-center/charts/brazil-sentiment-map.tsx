@@ -62,7 +62,7 @@ export function BrazilSentimentMap({ items }: { items: BreakdownItem[] }) {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="mx-auto w-full max-w-sm">
+      <div className="mx-auto w-full max-w-sm lg:mx-0 lg:max-w-none">
         <svg viewBox={BRAZIL_MAP_VIEWBOX} className="h-auto w-full">
           {BRAZIL_STATES.map((state) => {
             const item = byCode.get(state.code);

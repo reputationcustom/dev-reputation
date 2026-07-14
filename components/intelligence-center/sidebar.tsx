@@ -4,7 +4,16 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useUserProfile } from "@/hooks/use-user-profile";
 
-const NAV_ITEMS = [{ href: "/overview", label: "Visão Geral" }];
+// Módulo `event-radar` — pedido do usuário (2026-08-02): página dedicada
+// além do widget de /overview, mesmo feed fixo de 72h ("o que ocorreu,
+// quais foram as tendências"), só que como destino próprio no menu, não
+// só embutido na Visão Geral. Ver event-radar/frontend-highlights-feed.md.
+// Posicionado acima de "Visão Geral" (pedido do usuário) — nenhum dos dois
+// tem um rótulo de seção acima, então a ordem do array já é a ordem visual.
+const NAV_ITEMS = [
+  { href: "/radar", label: "Radar de Eventos" },
+  { href: "/overview", label: "Visão Geral" },
+];
 
 const ANALYSIS_ITEMS = [
   { href: "/narratives", label: "Narrativas" },
@@ -12,30 +21,48 @@ const ANALYSIS_ITEMS = [
   { href: "/platforms", label: "Plataformas" },
   { href: "/themes", label: "Pautas Eleitorais" },
   { href: "/authors", label: "Autores e Influenciadores" },
-  // Módulo `communications` (Sprint 2.1) — pedido explícito do usuário de
-  // nomear o item de menu "Comunicação", ver .dev/specs/communications/overview.md.
+];
+
+// "Ações" — itens que representam uma ação sobre a Narrativa/organização,
+// não uma visualização analítica (por isso vivem fora de "Análises").
+// "Alertas" movido de "Configurações" pra cá, acima de "Comunicação"
+// (pedido do usuário) — módulo `communications` (Sprint 2.1) é quem deu
+// origem à seção, ver .dev/specs/communications/overview.md.
+const ACTIONS_ITEMS = [
+  { href: "/alerts", label: "Alertas" },
   { href: "/communications", label: "Comunicação" },
-  // Módulo `event-radar` — pedido do usuário (2026-08-02): página dedicada
-  // além do widget de /overview, mesmo feed fixo de 72h ("o que ocorreu,
-  // quais foram as tendências"), só que como destino próprio no menu, não
-  // só embutido na Visão Geral. Ver event-radar/frontend-highlights-feed.md.
-  { href: "/radar", label: "Radar de Eventos" },
 ];
 
 // Mesmos rótulos da seção "CONFIGURAÇÕES" do protótipo
-// (Comunicacao Inteligente.dc.html — `navSettings`). No protótipo esses 4
+// (Comunicacao Inteligente.dc.html — `navSettings`). No protótipo esses
 // itens ficam sempre desabilitados/estáticos; aqui são links reais —
-// Alertas/Relatórios/Ajuda abrem uma tela "em desenvolvimento"
+// Relatórios/Ajuda abrem uma tela "em desenvolvimento"
 // (components/intelligence-center/coming-soon.tsx), Administração é a
 // única já implementada de verdade (gated por isAdmin, ver abaixo).
-const SETTINGS_ITEMS = [
-  { href: "/alerts", label: "Alertas" },
-  { href: "/reports", label: "Relatórios" },
-];
+const SETTINGS_ITEMS = [{ href: "/reports", label: "Relatórios" }];
 
-function NavLink({ href, label, collapsed, onNavigate }: { href: string; label: string; collapsed: boolean; onNavigate?: () => void }) {
+function NavLink({
+  href,
+  label,
+  collapsed,
+  onNavigate,
+  matchPrefix,
+}: {
+  href: string;
+  label: string;
+  collapsed: boolean;
+  onNavigate?: () => void;
+  // Ex: "Administração" (/admin/users) também deve aparecer ativo em
+  // /admin/finops (guia irmã, mesma seção — ver admin/layout.tsx). Sem
+  // isso, o match padrão (href exato/prefixo do próprio href) nunca
+  // destacaria o item ao navegar pra uma guia diferente da apontada pelo
+  // link.
+  matchPrefix?: string;
+}) {
   const pathname = usePathname();
-  const active = pathname === href || pathname.startsWith(`${href}/`);
+  const active = matchPrefix
+    ? pathname === matchPrefix || pathname.startsWith(`${matchPrefix}/`)
+    : pathname === href || pathname.startsWith(`${href}/`);
 
   // Collapsed (rail) mode: a single dot, not a truncated label — matches the
   // prototype's rail (48px, `width:8px;height:8px;border-radius:50%` dots),
@@ -120,7 +147,11 @@ export function Sidebar({
         <div className="flex items-center justify-between px-1">
           <div className="flex min-w-0 items-center gap-2">
             <img src="/logo.svg" alt="Comunicação Inteligente" className="h-8 w-8 flex-shrink-0 rounded-md" />
-            <span className="truncate text-sm font-bold text-white">Comunicação Inteligente</span>
+            <span className="text-sm font-bold leading-tight text-white">
+              Comunicação
+              <br />
+              Inteligente
+            </span>
           </div>
           <button
             type="button"
@@ -153,6 +184,19 @@ export function Sidebar({
         </nav>
       </div>
 
+      <div className="mt-6">
+        {!collapsed && (
+          <p className="px-3 text-xs font-semibold uppercase tracking-wide text-text-sidebar-section-label">
+            Ações
+          </p>
+        )}
+        <nav className="mt-2 flex flex-col gap-1">
+          {ACTIONS_ITEMS.map((item) => (
+            <NavLink key={item.href} collapsed={collapsed} onNavigate={onNavigate} {...item} />
+          ))}
+        </nav>
+      </div>
+
       <div className="mt-auto pt-6">
         {!collapsed && (
           <p className="px-3 text-xs font-semibold uppercase tracking-wide text-text-sidebar-section-label">
@@ -163,13 +207,21 @@ export function Sidebar({
           {SETTINGS_ITEMS.map((item) => (
             <NavLink key={item.href} collapsed={collapsed} onNavigate={onNavigate} {...item} />
           ))}
-          {/* Administração é a única real (gated por isAdmin) entre as 4 do
-              protótipo — Ajuda continua estática (tela "em desenvolvimento"). */}
-          {isAdmin && <NavLink href="/admin/users" label="Administração" collapsed={collapsed} onNavigate={onNavigate} />}
-          {/* Módulo `finops` — pedido do usuário (painel de custo de IA +
-              custos extras cadastráveis), admin-only, mesmo gate de
-              /admin/users. Ver .dev/specs/finops/overview.md. */}
-          {isAdmin && <NavLink href="/admin/finops" label="FinOps" collapsed={collapsed} onNavigate={onNavigate} />}
+          {/* Administração é a única real (gated por isAdmin) entre as do
+              protótipo — Ajuda continua estática (tela "em desenvolvimento").
+              2 guias por dentro (Usuários/FinOps, admin/admin-tabs.tsx) —
+              pedido do usuário: FinOps deixou de ser uma opção própria do
+              menu e virou guia aqui. matchPrefix="/admin" mantém o item
+              destacado em qualquer uma das 2 guias, não só /admin/users. */}
+          {isAdmin && (
+            <NavLink
+              href="/admin/users"
+              matchPrefix="/admin"
+              label="Administração"
+              collapsed={collapsed}
+              onNavigate={onNavigate}
+            />
+          )}
           <NavLink href="/help" label="Ajuda" collapsed={collapsed} onNavigate={onNavigate} />
           {/* Perfil não existe na IA do protótipo (sem avatar/seção de
               usuário na tela original) — mantido por ser funcionalidade

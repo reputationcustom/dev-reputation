@@ -208,6 +208,11 @@ export interface AuthorRow {
   // autor não tem nenhuma Entity vinculada (a maioria hoje) ou a Entity
   // vinculada está is_active=false.
   entity_type: string | null; // entities.type ("person"|"media_outlet"|"party"|...)
+  // ✅ Adicionado 2026-08-09 — nome oficial/formatado da Entity cadastrada
+  // (ex: "Revista Fórum"), distinto de `name` acima (sempre o handle bruto
+  // vindo da Brandwatch, ex: "revistaforum") — permite buscar por como a
+  // Entity foi de fato cadastrada, não só pelo handle. `null` sem vínculo.
+  entity_name: string | null;
   entity_cargo: string | null; // entities.cargo (ex: "Deputado Federal")
   entity_partido: string | null; // entities.partido (sigla, ex: "PT")
   // entities.ideologia — melhor esforço/não-oficial, ver data-model.md.

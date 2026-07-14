@@ -1,24 +1,20 @@
 "use client";
 
 import type { AuthorRow } from "@reputation/shared-types";
-import {
-  ENTITY_TYPE_LABEL,
-  ENTITY_TYPE_ORDER,
-  ENTITY_TYPE_HEX,
-  IDEOLOGY_LABEL,
-  IDEOLOGY_ORDER,
-  IDEOLOGY_HEX,
-  type ColorByMode,
-  type EntityType,
-  type Ideology,
-} from "./author-color";
+import { ENTITY_TYPE_LABEL, ENTITY_TYPE_ORDER, ENTITY_TYPE_HEX, IDEOLOGY_LABEL, IDEOLOGY_ORDER, IDEOLOGY_HEX, type EntityType, type Ideology } from "./author-color";
 
 // Estado de filtro compartilhado pelas 2 guias (redesenho em 2 guias,
 // .dev/specs/intelligence-center/authors-and-influencers.md, 2026-08-08) —
 // cada campo só é lido/alterado pela guia a que pertence:
 // `search`/`sentiment` (as 2 guias), `narrativeLabel` (só "Visão Geral"),
-// `entityTypes`/`partido`/`ideologies`/`colorBy` (só "Por Entidade"). Um
-// objeto só evita duplicar a lógica de reset/estado entre as 2 guias.
+// `entityTypes`/`partido`/`ideologies` (só "Por Entidade"). Um objeto só
+// evita duplicar a lógica de reset/estado entre as 2 guias.
+//
+// ✅ `colorBy` removido (2026-08-09, pedido do usuário: "retire a opção
+// Colorir por, pois os filtros rápidos logo abaixo faz mais sentido") — a
+// guia "Por Entidade" sempre colore por tipo de Entidade agora (fixo, ver
+// page.tsx), os chips de Tipo/Ideologia abaixo já cumprem o papel de
+// destacar uma dimensão.
 export interface AuthorFiltersState {
   search: string;
   sentiment: "" | "positive" | "neutral" | "negative";
@@ -26,7 +22,6 @@ export interface AuthorFiltersState {
   entityTypes: Set<string>;
   partido: string;
   ideologies: Set<string>;
-  colorBy: ColorByMode;
 }
 
 export const EMPTY_AUTHOR_FILTERS: AuthorFiltersState = {
@@ -36,7 +31,6 @@ export const EMPTY_AUTHOR_FILTERS: AuthorFiltersState = {
   entityTypes: new Set(),
   partido: "",
   ideologies: new Set(),
-  colorBy: "entity_type",
 };
 
 // Toolbar da guia "Visão Geral" — só busca + sentimento (ideologia/partido/
@@ -62,7 +56,7 @@ export function AuthorGeneralFiltersToolbar({
           type="text"
           value={filters.search}
           onChange={(e) => onChange({ ...filters, search: e.target.value })}
-          placeholder="Nome do autor..."
+          placeholder="Nome do autor ou da Entity..."
           className="rounded-md border border-border-default bg-bg-card px-3 py-1.5 text-sm text-text-primary"
         />
       </div>
@@ -95,7 +89,7 @@ export function AuthorGeneralFiltersToolbar({
 
       <button
         type="button"
-        onClick={() => onChange({ ...EMPTY_AUTHOR_FILTERS, colorBy: filters.colorBy })}
+        onClick={() => onChange(EMPTY_AUTHOR_FILTERS)}
         className="ml-auto rounded-md border border-border-default px-3 py-1.5 text-sm text-text-secondary hover:bg-bg-page"
       >
         Limpar filtros
@@ -137,24 +131,6 @@ export function AuthorEntityFiltersToolbar({
   return (
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-end gap-3 rounded-xl border border-border-default bg-bg-card p-4">
-        <div className="flex flex-col gap-1">
-          <span className="text-[11px] font-bold uppercase text-text-tertiary">Colorir por</span>
-          <div className="flex overflow-hidden rounded-full border border-border-default">
-            {(["entity_type", "ideologia", "partido", "sentimento"] as const).map((mode, index) => (
-              <button
-                key={mode}
-                type="button"
-                onClick={() => onChange({ ...filters, colorBy: mode })}
-                className={`px-3 py-1.5 text-xs font-medium ${index > 0 ? "border-l border-border-default" : ""} ${
-                  filters.colorBy === mode ? "bg-accent-blue text-white" : "bg-bg-card text-text-secondary hover:bg-bg-page"
-                }`}
-              >
-                {mode === "entity_type" ? "Tipo" : mode === "ideologia" ? "Ideologia" : mode === "partido" ? "Partido" : "Sentimento"}
-              </button>
-            ))}
-          </div>
-        </div>
-
         <div className="flex min-w-[160px] flex-1 flex-col gap-1">
           <label className="text-[11px] font-bold uppercase text-text-tertiary" htmlFor="author-entity-search">
             Buscar
@@ -164,7 +140,7 @@ export function AuthorEntityFiltersToolbar({
             type="text"
             value={filters.search}
             onChange={(e) => onChange({ ...filters, search: e.target.value })}
-            placeholder="Nome do autor ou Entity..."
+            placeholder="Nome do autor ou da Entity (ex: Revista Fórum)..."
             className="rounded-md border border-border-default bg-bg-card px-3 py-1.5 text-sm text-text-primary"
           />
         </div>
@@ -207,7 +183,7 @@ export function AuthorEntityFiltersToolbar({
 
         <button
           type="button"
-          onClick={() => onChange({ ...EMPTY_AUTHOR_FILTERS, colorBy: filters.colorBy })}
+          onClick={() => onChange(EMPTY_AUTHOR_FILTERS)}
           className="ml-auto rounded-md border border-border-default px-3 py-1.5 text-sm text-text-secondary hover:bg-bg-page"
         >
           Limpar filtros

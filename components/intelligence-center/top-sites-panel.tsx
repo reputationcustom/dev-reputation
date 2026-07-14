@@ -1,5 +1,4 @@
 import type { TopSiteItem } from "@reputation/shared-types";
-import { EmptyState } from "@/components/ui/empty-state";
 import { formatRelativeDate } from "@/lib/date/format";
 
 // "Top Sites" — domínios de onde as menções se originam (bw_query_top_sites,
@@ -19,9 +18,14 @@ function mostRecentSyncedAt(items: TopSiteItem[]): string | null {
   return items.reduce((latest, item) => (item.synced_at > latest ? item.synced_at : latest), items[0].synced_at);
 }
 
+// ✅ 2026-08-09 (pedido do usuário): sem dado, o painel não renderiza nada
+// (nunca uma mensagem de "vazio") — este widget sempre aparece ao lado de
+// X Themes dentro de "Conteúdo em destaque", que já cobre o caso de "nada
+// sincronizado ainda" com sua própria explicação; duas mensagens de vazio
+// lado a lado eram redundantes.
 export function TopSitesPanel({ items, timezone }: { items: TopSiteItem[]; timezone: string }) {
   if (items.length === 0) {
-    return <EmptyState message="Nenhum domínio de origem sincronizado ainda para este escopo." />;
+    return null;
   }
 
   const syncedAt = mostRecentSyncedAt(items);

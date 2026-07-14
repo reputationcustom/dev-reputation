@@ -8,6 +8,25 @@ atualizado: 2026-08-08
 
 # Autores e Influenciadores
 
+> ✅ **Busca pelo nome da Entity + remoção de "Colorir por" (2026-08-09)**
+> — pedido do usuário: "permitir busca pela entidade" + "retire a opção
+> Colorir por, pois os filtros rápidos logo abaixo faz mais sentido".
+> `get_authors_ranking` ganhou `entity_name` (migration `20260809090000`
+> — `entities.name`, o nome oficial/formatado da Entity, ex: "Revista
+> Fórum", distinto de `AuthorRow.name` que sempre foi o handle bruto vindo
+> da Brandwatch, ex: "revistaforum"); o campo "Buscar" das 2 guias agora
+> compara contra os dois. "Colorir por" removido de
+> `AuthorEntityFiltersToolbar` — a guia "Por Entidade" colore sempre por
+> Tipo de Entidade agora (fixo). Mesma sessão: investigada, sem causa de
+> código confirmada, uma Entity manualmente cadastrada exibindo
+> `ideologia` errada na UI (ver `_pending.md` #37 e
+> `entities/author-linking.md`, "Limitação aceita" — hipótese mais
+> provável é colisão de handle entre 2 Entities diferentes, já que o JOIN
+> de `entity_match` não filtra por `platform`); e o truncamento agressivo
+> do texto de "Conteúdo em destaque" (`composeSectionText`'s
+> `max_tokens`/`truncateAtSentence` — 300/400 → 600/900), ver
+> `aggregated-metrics/ai-synthesis.md`, "Camada 2".
+
 > ✅ **Visão geral sucinta em "Conteúdo em destaque" (2026-07-14)** —
 > pedido do usuário: "deve conter uma visão geral sucinta sobre os autores
 > e influenciadores." Texto gerado por IA (ai-synthesis Camada 2,
@@ -325,7 +344,12 @@ comportamental, não organizacional:
   dominante + "Limpar filtros" — Partido/Ideologia/Tipo de Entidade não
   aparecem aqui, são o assunto da outra guia. Quando o filtro de
   Narrativa está ativo (ver abaixo), aparece como um chip removível
-  ("Narrativa: X ✕") para ficar descobrível.
+  ("Narrativa: X ✕") para ficar descobrível. **Buscar** (✅ 2026-08-09)
+  compara o termo contra `AuthorRow.name` (handle bruto vindo da
+  Brandwatch) **ou** `AuthorRow.entity_name` (nome oficial/formatado da
+  Entity, ex: "Revista Fórum" — `null` sem vínculo) — antes só comparava
+  contra `name`, então buscar pelo nome como a Entity foi de fato
+  cadastrada nunca encontrava nada.
 - **4 KPIs**: Autores no filtro, Menções totais, Alcance total (✅ novo —
   a guia única antiga não somava alcance, só "Partidos distintos", que
   não fazia sentido genericamente), Sentimento médio.
@@ -364,12 +388,16 @@ Só autores com `entity_id` não-nulo (filtro implícito, aplicado pela
 própria página antes de qualquer outro filtro — um autor sem Entity não
 tem nada a mostrar aqui: sem tipo, sem partido, sem ideologia):
 
-- **Toolbar** (`AuthorEntityFiltersToolbar`): "Colorir por" (Tipo de
-  Entidade / Ideologia / Partido / Sentimento — ✅ "Tipo de Entidade" é
-  novo, default desta guia) + Buscar + Partido + Sentimento + chips de
+- **Toolbar** (`AuthorEntityFiltersToolbar`): Buscar (mesma extensão pra
+  `entity_name` do parágrafo acima, com placeholder "Nome do autor ou da
+  Entity (ex: Revista Fórum)...") + Partido + Sentimento + chips de
   **Tipo de Entidade** (✅ novos: Pessoa/Partido/Veículo de Imprensa/
   Instituição/Empresa/Movimento/Outro, `ENTITY_TYPE_ORDER` em
-  `author-color.ts`) + chips de Ideologia (inalterados).
+  `author-color.ts`) + chips de Ideologia (inalterados). ⚠️ **"Colorir
+  por" removido (2026-08-09, pedido do usuário: "os filtros rápidos logo
+  abaixo faz mais sentido")** — os chips de Tipo/Ideologia já cumprem o
+  papel de destacar uma dimensão; esta guia agora colore sempre por Tipo
+  de Entidade (fixo, sem controle do usuário).
 - **4 KPIs**: Entidades vinculadas, Menções, Alcance, Tipos de Entidade
   distintos (✅ substitui "Partidos distintos" da guia única antiga — mais
   geral, cobre qualquer `entity_type`, não só partido).
@@ -388,9 +416,9 @@ tem nada a mostrar aqui: sem tipo, sem partido, sem ideologia):
   esses campos, ex: a maioria dos veículos de imprensa/institutos de
   pesquisa, simplesmente não aparecem nessas 2 barras, sem código novo
   necessário: já eram `null`-safe).
-- **Alcance × Sentimento** — mesma dispersão, `colorBy` vem do controle da
-  toolbar (default "Tipo de Entidade" nesta guia, diferente do fixo
-  "Sentimento" da guia "Visão Geral").
+- **Alcance × Sentimento** — mesma dispersão, `colorBy` fixo em "Tipo de
+  Entidade" nesta guia (✅ 2026-08-09 — antes vinha do controle "Colorir
+  por", removido), diferente do fixo "Sentimento" da guia "Visão Geral".
 - **Entidades vinculadas** (`AuthorsList`, `variant="entity"`) — ganha uma
   coluna **Tipo** (entre Autor e Partido) e, no nome do autor, mostra
   `entity_cargo` quando existe (pessoas) ou o `tag_value` de `segment`

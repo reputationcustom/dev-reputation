@@ -8070,6 +8070,267 @@ aba "Resumo executivo" (tanto em `/overview` quanto em `/radar`) mostrando
 o mesmo parágrafo de "O que os gráficos mostram?" e mudando ao trocar
 Diário/Semanal/Mensal no header.
 
+### Autores e Influenciadores — busca pelo nome da Entity, remoção do controle "Colorir por", e 2 correções pontuais de UI (2026-08-09)
+
+User request, 4 itens na mesma sessão: (1) "permitir busca pela entidade";
+(2) uma Entity cadastrada manualmente ("revistaforum") com `ideologia =
+'esquerda'` aparecendo como "Direita" na UI — pedido pra verificar e
+corrigir; (3) retirar o controle "Colorir por" da guia "Por Entidade" (os
+chips de Tipo/Ideologia logo abaixo já cumprem esse papel); (4), no meio
+do turno: remover a mensagem "Nenhum domínio de origem sincronizado ainda
+para este escopo." e mostrar o conteúdo completo de "Conteúdo em destaque
+(Top Sites, X Themes)", que aparecia truncado terminando em "e…".
+
+**Item 2 — investigado a fundo, sem acesso ao banco real, sem causa de
+código confirmada**. Toda a cadeia (`get_authors_ranking`'s `entity_match`/
+`ent.ideologia as entity_ideologia`, `IDEOLOGY_ORDER`/`IDEOLOGY_HEX`/
+`ideologyLabel`/`ideologyBadgeClass` em `author-color.ts`, os 4 pontos de
+renderização — `AuthorsList`, `AuthorDetailPanel`,
+`AuthorMentionsByIdeology`/`AuthorSentimentByIdeology`) foi lida linha a
+linha: todo mapeamento é por chave de dicionário direta
+(`Record<Ideology, ...>`), sem nenhum índice posicional/paridade que
+pudesse inverter esquerda↔direita, e as cores em `tailwind.config.ts`
+(`ideology-left: #6d28d9` roxo, `ideology-right: #0d9488` teal) batem
+exatamente com `IDEOLOGY_HEX` — nenhum swap encontrado em código. Como
+`entities`/`entity_accounts` exigem `auth.role() = 'authenticated'`
+(RLS) e este ambiente só tem a chave publicável sem uma sessão de login
+real, uma consulta direta contra o Supabase real (tentada via `curl`)
+sempre volta vazia, autenticada ou não — não deu pra confirmar o valor
+real armazenado. A hipótese mais plausível, documentada como
+"Limitação aceita" desde `entities/author-linking.md`
+(2026-08-01): `entity_match` casa por `lower(trim(username))` **sem**
+filtrar por `platform` — se duas Entities diferentes têm uma conta com o
+mesmo texto de username em plataformas diferentes, a mais antiga
+(`order by ... created_at asc`) vence, mesmo sendo a errada. Nenhuma
+migration/seed deste projeto usa o handle "revistaforum" (grep
+confirmado), então isso só se explica por uma segunda Entity cadastrada
+manualmente pelo próprio usuário com o mesmo handle, ou por um erro de
+digitação direto no Supabase Table Editor. Não foi alterado nenhum
+comportamento de JOIN nesta sessão (mudar o critério de desempate sem
+confirmar a causa real arriscaria "consertar" o caso errado) — o pedido
+foi respondido explicando o achado, não com uma mudança de código
+não-verificada. Se o usuário puder confirmar rodando `select id, name,
+ideologia from entities where name ilike '%fórum%' or name ilike
+'%forum%'` no SQL Editor do Supabase, isso decide entre as duas hipóteses
+(entity duplicada vs. erro de digitação) e um fix de dado (não de código)
+resolve o caso.
+
+**Item 1 — fechado, gap real confirmado**: `AuthorRow.name` sempre foi o
+handle bruto vindo da Brandwatch (`g.author`, ex: "revistaforum") — nunca
+`entities.name` (o nome oficial/formatado da Entity, ex: "Revista
+Fórum"). O campo "Buscar" da guia "Por Entidade" só comparava contra esse
+handle, então buscar pelo nome como a Entity foi de fato cadastrada nunca
+encontrava nada — o mesmo padrão de causa por trás do item 2 (o nome
+"bonito" nunca chega ao frontend). `get_authors_ranking` ganhou
+`entity_name` (migration `20260809090000`, `drop function` necessário —
+mesma regra de aridade de sempre), lendo `ent.name` direto — aditivo, não
+substitui `name`. Propagado (Princípio técnico 5) em `AuthorRow`
+(`packages/shared-types/src/envelope.ts`, `AuthorRow`/`AuthorRankingRow`/
+`fetchAuthors` na cópia canônica) e nas 8 Edge Functions deployadas
+(`get-page-{overview,narratives,sentiment,platforms,themes,authors}`,
+`get-narrative-detail`, `compose-narrative-synthesis`) via um script Node
+de uso único, verificado por contagem de ocorrências (3 por arquivo) antes
+de aplicar. `applyGeneralFilters`/`applyEntityFilters`
+(`app/(intelligence-center)/(analytics)/authors/page.tsx`) agora
+comparam o termo buscado contra `author.name` **ou** `author.entity_name`
+— um autor sem Entity vinculada (`entity_name: null`) continua
+encontrável só pelo handle, comportamento inalterado.
+
+**Item 3 — fechado**: `colorBy` removido de `AuthorFiltersState`/
+`EMPTY_AUTHOR_FILTERS` (`author-filters-toolbar.tsx`) e o bloco "Colorir
+por" (4 botões: Tipo/Ideologia/Partido/Sentimento) removido de
+`AuthorEntityFiltersToolbar`. A guia "Por Entidade" agora colore sempre
+por tipo de Entidade (fixo, `page.tsx`'s `detailColorBy`/
+`AuthorScatterChart`'s `colorBy="entity_type"`) — mesmo padrão já usado
+pela guia "Visão Geral", que sempre colore por sentimento. Os 2 botões
+"Limpar filtros" (`AuthorGeneralFiltersToolbar`/`AuthorEntityFiltersToolbar`)
+simplificaram de `onChange({ ...EMPTY_AUTHOR_FILTERS, colorBy:
+filters.colorBy })` pra `onChange(EMPTY_AUTHOR_FILTERS)`, já que não há
+mais nada de `colorBy` pra preservar entre resets.
+
+**Item 4 — fechado, os 2 sub-pedidos**: `TopSitesPanel` (só usada dentro
+de "Conteúdo em destaque", ao lado de `XInsightsPanel`) agora retorna
+`null` em vez de `<EmptyState message="Nenhum domínio de origem
+sincronizado ainda para este escopo." />` quando não há Top Sites — duas
+mensagens de vazio lado a lado (esta + a de X Themes, quando também
+vazia) eram redundantes; `page.tsx` só renderiza a `<div
+className="border-t ...">` que a envolve quando `top_sites.length > 0`,
+pra não deixar uma borda solta sem conteúdo. O truncamento visível
+("...e…") não era um problema de CSS/clamp (`ExpandableText` já teria
+mostrado um botão "Mostrar mais" se o texto excedesse 4 linhas) — era o
+próprio texto composto por IA sendo cortado no backend:
+`composeSectionText()` (as 3 seções da Camada 2 —
+`platforms:featured_content`/`themes:period_comparison`/
+`authors:overview`) tinha `max_tokens: 300` e
+`truncateAtSentence(text, 400)`, bem mais apertado que o `narrative_text`
+principal (Camada 0/1, `max_tokens: 400`/`truncateAtSentence(text,
+500)`). Aumentado pra `max_tokens: 600`/`truncateAtSentence(text, 900)`
+nos 3 pontos, e os 3 `SYSTEM_PROMPT`s correspondentes tiveram sua própria
+instrução de tamanho alinhada ("2-3/2-4 frases, até 400 caracteres" →
+"3-6 frases, até 900 caracteres") — sem isso, o modelo continuaria mirando
+400 caracteres na própria geração, tornando o novo teto de truncamento
+inútil na prática. Mesma propagação em 9 arquivos (canônico + 8
+deployados), via script Node com replace por igualdade de string exata
+(nunca a técnica de "wholesale prefix replace" que já causou 2 incidentes
+reais de produção neste projeto, ver "`[get-page-*] unhandled error
+ReferenceError: createClient is not defined`" acima) — confirmado por
+contagem de ocorrências (1 por edição por arquivo) antes de aplicar, e
+por `grep` que os 8 arquivos deployados mantiveram o import combinado
+`{ createClient, type SupabaseClient }` intacto.
+
+**Verificação**: `npx tsc --noEmit` e `npm run build` (com `rm -rf
+.next` antes) passam limpos — 21 rotas, mesma contagem de antes. Balanço
+de parênteses/chaves conferido nos 9 arquivos Deno tocados (mesmo proxy
+de verificação de toda sessão sem acesso a Deno/Supabase real). Migration
+`20260809090000` revisada manualmente, não executada contra um banco
+real nesta sessão — mesma limitação recorrente de toda sessão sem
+credenciais de deploy neste ambiente; `git push` para `develop` é o
+próximo passo. Sinal a acompanhar pro item 4: um texto de "Conteúdo em
+destaque"/"Comparação entre períodos" composto depois do deploy
+terminando numa frase completa, não truncado com "…", já que a
+composição em background só roda quando a linha existente vence (janela
+de `AI_SYNTHESIS_REFRESH_HOURS`) ou não existe ainda — um texto já
+persistido antes deste fix continua truncado até ser recomposto
+naturalmente.
+
+### `/sentiment` — reorganização de layout + bug real de cor no mapa por estado corrigido (2026-07-14)
+
+User request, 3 itens na mesma sessão (o 3º chegou mid-turn): (1) mover a
+tabela "Sentimento por pauta" para baixo da tabela "Sentimento por
+plataforma"; (2) colorir cada estado do mapa de acordo com o sentimento
+predominante; (3) redimensionar o mapa para o lado esquerdo com uma tabela
+da lista de estados ao lado direito.
+
+- **Item 1**: `app/(intelligence-center)/(analytics)/sentiment/page.tsx`
+  — "Sentimento por plataforma" e "Sentimento por pauta" empilhados na
+  mesma coluna (direita, `flex flex-col gap-6`), "Sentimento por
+  narrativa" sozinha na coluna esquerda — em vez do arranjo anterior
+  ("por narrativa"/"por plataforma" lado a lado numa linha, "por pauta"
+  como uma linha própria de largura cheia logo abaixo das duas).
+- **Item 2 — bug real, não só uma percepção**: `sentimentFillFromScore()`
+  (`score-badges.tsx`) construía a classe SVG `fill-*` em **runtime**
+  (`meta.text.replace("text-", "fill-")`) a partir de `SENTIMENT_META`,
+  cujo campo `text` só guarda literais `text-sentiment-*`. Como o
+  Tailwind decide quais utilitários gerar escaneando **strings literais**
+  no código-fonte (nunca strings montadas dinamicamente em runtime), e
+  `fill-sentiment-*` nunca aparecia como texto literal em nenhum arquivo
+  (só `text-sentiment-*`/`bg-sentiment-*-bg` apareciam, usados por
+  `SentimentBadge`), o CSS de `fill-sentiment-*` nunca era gerado — todo
+  estado do mapa (`brazil-sentiment-map.tsx`) renderizava sem cor
+  nenhuma, independente do `net_sentiment` real daquele estado. Mesma
+  classe de bug (classe Tailwind construída em runtime, nunca
+  detectável pelo scanner) já vista antes neste arquivo em outros
+  contextos, aqui nunca tinha sido percebida porque o mapa "funcionava"
+  (renderizava, só sem cor visível). Fixed: `SENTIMENT_META` ganhou um
+  4º campo, `fill`, com a classe `fill-sentiment-*` escrita literalmente
+  por entrada (mesmo padrão de `text`/`bg`) — `sentimentFillFromScore()`
+  agora lê `meta.fill` direto, nunca mais `.replace(...)`. `NetSentimentDot`
+  (mesmo arquivo) tem uma variante do mesmo padrão arriscado
+  (`meta.text.replace("text-", "bg-")`) mas está sem nenhum consumidor
+  em uso hoje (confirmado via grep — só um comentário cita o nome) —
+  não tocado, fora do escopo deste pedido.
+- **Item 3**: o widget "Sentimento por estado" virou um
+  `grid grid-cols-1 lg:grid-cols-2` (mapa à esquerda, tabela — o mesmo
+  `BreakdownPanel`/`ScoreList` de sempre — à direita, separados por
+  `border-l` em vez do `border-t` de quando estavam empilhados).
+  `BrazilSentimentMap`'s `mx-auto w-full max-w-sm` (centralizado, só
+  fazia sentido ocupando a largura inteira do card) ganhou
+  `lg:mx-0 lg:max-w-none` — preenche a própria coluna em vez de ficar
+  encolhido e centralizado dentro dela.
+
+**Verificação**: `npx tsc --noEmit` e `npm run build` (com `rm -rf .next`
+antes — a primeira tentativa bateu no mesmo erro transitório de
+`next-font-manifest.json` já documentado antes neste arquivo, resolvido
+numa segunda tentativa) passam limpos — 21 rotas, mesma contagem de
+antes (mudança só de layout/estilo em `/sentiment`, nenhuma rota nova).
+Sem mudança de backend/migration nesta sessão — os 3 itens são
+puramente frontend (2 de layout, 1 de classes CSS). Sem automação de
+browser disponível neste ambiente — o novo layout lado a lado e a
+coloração real dos estados não foram confirmados visualmente num
+navegador real, mesma limitação já registrada em toda sessão anterior de
+`intelligence-center` neste arquivo; o sinal a acompanhar depois do
+deploy é cada estado do mapa aparecer preenchido numa das 7 cores da
+paleta de sentimento (não mais sem cor/transparente), variando conforme
+o `net_sentiment` daquele estado no período selecionado.
+
+### "Insights" de `/sentiment` não eram sobre sentimento — bug real de escopo em `get_active_highlights` (2026-07-14)
+
+User request: "Insights de sentimento estão relacionado aos sentimentos?
+se não estiver corrija." — mesma pergunta que já tinha sido feita (e
+respondida com um "sim") para `/themes` em 2026-08-09, dessa vez para
+`/sentiment`.
+
+**Achado real, confirmado por leitura de código, não só percepção**:
+`get_active_highlights` (A1 de `event-radar/fluxo-aggregated-metrics.md`
+"Fase B", o RPC por trás do bloco `highlights` do envelope) **nunca teve
+nenhum filtro por `event_type`** — só escopa por `organization_id`,
+`period`, e `filters.narratives` quando presente. O widget "Insights"
+(`HighlightsPanel`) e o texto de IA "Mudança de sentimento"
+(`NarrativeTextPanel`/`narrative_text`, que usa a mesma lista de
+highlights como contexto/gate) em `/sentiment` sempre mostraram eventos
+de **qualquer** `event_type` — `volume_spike`/`volume_drop`/
+`momentum_spike` inclusos, não só os 3 tipos que o próprio
+`event-radar` já classifica como sendo sobre sentimento
+(`sentiment_change`/`negative_sentiment_increase`/
+`negative_sentiment_spike`, ver `feedEventType()` em
+`event-radar-agent-orchestrator/index.ts`). Mesma classe de bug de
+escopo já corrigida pra `/themes` (`highlightsContext`/`pautaIds`,
+2026-08-09) — lá o problema era "página X mostrando dado da organização
+inteira em vez de só X"; aqui é a mesma coisa, só que a dimensão errada
+era o tipo do evento, não a Narrativa.
+
+**Fix**: `get_active_highlights` ganhou `p_event_types text[] default
+null` (migration `20260809100000` — aridade muda de 4 pra 5 parâmetros,
+`drop function` explícito antes do `create or replace`, mesma regra de
+sempre) — filtra `fe.event_type = any(p_event_types)` quando presente,
+sem efeito quando `null` (todo outro consumidor continua exatamente como
+antes). `fetchHighlights()` (`aggregated-metrics-service.ts`) ganhou um
+parâmetro opcional `eventTypes?: string[]`, repassado como
+`p_event_types`. Nova constante `SENTIMENT_HIGHLIGHT_EVENT_TYPES =
+['sentiment_change', 'negative_sentiment_increase',
+'negative_sentiment_spike']`; `assemblePageResponse` agora passa esse
+conjunto pra `fetchHighlights` quando `page === 'sentiment'` (mesma
+posição/mecanismo que já existia pra `page === 'themes'` escopar por
+`pautaIds`, só que por tipo em vez de por Narrativa). Como
+`fetchNarrativeText(supabase, highlightsContext, page, highlights)` só
+lê o array `highlights` já buscado (nunca refaz a chamada), o texto
+"Mudança de sentimento" herda o escopo automaticamente — nenhuma mudança
+adicional necessária ali.
+
+**Também fechado, mesmo escopo**: `composeNarrativeSynthesisOnDemand`
+(a function por trás do botão "Analisar com IA", só visível em período
+personalizado) chamava `fetchHighlights(supabase, ctx)` sem nenhum
+escopo — corrigido pra passar `SENTIMENT_HIGHLIGHT_EVENT_TYPES` quando
+`page === 'sentiment'`, mesmo raciocínio (o botão gera o mesmo texto
+"Mudança de sentimento", só que síncrono e sob demanda). **Gap conhecido,
+não fechado nesta sessão** (fora do que foi pedido — só sobre
+`/sentiment`): esse mesmo caminho on-demand continua sem escopar por
+`pautaIds` pra `/themes` — mesma classe de bug, só no caminho manual em
+vez do automático; documentado inline no código pra a próxima sessão que
+tocar `/themes` não repetir a investigação do zero.
+
+**Propagação (Princípio técnico 5)**: as 5 mudanças em
+`aggregated-metrics-service.ts` foram replicadas nas 8 Edge Functions
+deployadas (`get-page-{overview,narratives,sentiment,platforms,themes,
+authors}`, `get-narrative-detail`, `compose-narrative-synthesis`) via 2
+scripts Node de uso único (não commitados) + um 3º pra remover uma
+duplicata cosmética de separador de comentário que o 2º script introduziu
+sem querer — cada passo verificado por contagem de ocorrências antes de
+aplicar, e a propagação final confirmada por `diff` linha a linha contra
+o arquivo canônico (idêntica em todos os 8, exceto a única diferença
+deliberada e documentada da linha de import de `createClient`).
+
+**Verificação**: `npx tsc --noEmit` e `npm run build` (com `rm -rf .next`
+antes) passam limpos — 21 rotas, mesma contagem de antes (mudança é
+backend/Edge-Function-only, sem impacto de rotas). Migration
+`20260809100000` revisada manualmente, não executada contra um banco
+real nesta sessão — mesma limitação recorrente de toda sessão sem
+credenciais de deploy neste ambiente. `git push` para `develop` é o
+próximo passo; o sinal a acompanhar é o widget "Insights" de `/sentiment`
+deixar de citar picos/quedas de volume ou momentum e passar a mostrar só
+eventos de mudança de sentimento, e "Mudança de sentimento" (texto de IA)
+parar de descrever eventos alheios a sentimento.
+
 ## Directory structure
 
 ```

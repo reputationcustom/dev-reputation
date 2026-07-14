@@ -71,6 +71,19 @@ handle raramente existe em duas plataformas diferentes apontando para
 Entities diferentes), mas não é uma garantia matemática. Revisitar só se
 uma colisão real for reportada.
 
+⚠️ **Possível colisão real reportada (2026-08-09, não confirmada)** —
+usuário relatou uma Entity cadastrada manualmente ("Revista Fórum",
+`ideologia = 'esquerda'`) exibindo `ideologia = 'direita'` na UI.
+Auditoria de código completa (`entity_match`, `ideologyLabel`/
+`ideologyBadgeClass`/`IDEOLOGY_HEX`, `tailwind.config.ts`) não encontrou
+nenhum bug — todo mapeamento é por chave de dicionário direta. Sem acesso
+ao banco real neste ambiente (RLS de `entities` exige
+`auth.role() = 'authenticated'`), não foi possível confirmar se é
+exatamente esta colisão de handle entre plataformas, uma segunda Entity
+duplicada com o mesmo handle, ou um erro de digitação direto no Supabase
+Table Editor. Ver `_pending.md` #37 para o diagnóstico completo e o
+próximo passo (query de verificação a rodar pelo usuário).
+
 ## Extensão de `get_authors_ranking` (aggregated-metrics)
 
 ✅ **Aditiva, nunca pré-requisito do ranking** — mesma assinatura de

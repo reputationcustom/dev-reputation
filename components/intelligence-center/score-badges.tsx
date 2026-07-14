@@ -6,14 +6,14 @@ import { Tooltip } from "@/components/ui/tooltip";
 // envelope (aggregated-metrics/sql-aggregation.md, "Scores de Narrativa").
 // Cores de .dev/specs/_design-tokens.md.
 
-const SENTIMENT_META: Record<string, { label: string; text: string; bg: string }> = {
-  very_positive: { label: "Muito positivo", text: "text-sentiment-very-positive", bg: "bg-sentiment-very-positive-bg" },
-  positive: { label: "Positivo", text: "text-sentiment-positive", bg: "bg-sentiment-positive-bg" },
-  slightly_positive: { label: "Levemente positivo", text: "text-sentiment-slightly-positive", bg: "bg-sentiment-slightly-positive-bg" },
-  neutral: { label: "Neutro", text: "text-sentiment-neutral", bg: "bg-sentiment-neutral-bg" },
-  slightly_negative: { label: "Levemente negativo", text: "text-sentiment-slightly-negative", bg: "bg-sentiment-slightly-negative-bg" },
-  negative: { label: "Negativo", text: "text-sentiment-negative", bg: "bg-sentiment-negative-bg" },
-  very_negative: { label: "Muito negativo", text: "text-sentiment-very-negative", bg: "bg-sentiment-very-negative-bg" },
+const SENTIMENT_META: Record<string, { label: string; text: string; bg: string; fill: string }> = {
+  very_positive: { label: "Muito positivo", text: "text-sentiment-very-positive", bg: "bg-sentiment-very-positive-bg", fill: "fill-sentiment-very-positive" },
+  positive: { label: "Positivo", text: "text-sentiment-positive", bg: "bg-sentiment-positive-bg", fill: "fill-sentiment-positive" },
+  slightly_positive: { label: "Levemente positivo", text: "text-sentiment-slightly-positive", bg: "bg-sentiment-slightly-positive-bg", fill: "fill-sentiment-slightly-positive" },
+  neutral: { label: "Neutro", text: "text-sentiment-neutral", bg: "bg-sentiment-neutral-bg", fill: "fill-sentiment-neutral" },
+  slightly_negative: { label: "Levemente negativo", text: "text-sentiment-slightly-negative", bg: "bg-sentiment-slightly-negative-bg", fill: "fill-sentiment-slightly-negative" },
+  negative: { label: "Negativo", text: "text-sentiment-negative", bg: "bg-sentiment-negative-bg", fill: "fill-sentiment-negative" },
+  very_negative: { label: "Muito negativo", text: "text-sentiment-very-negative", bg: "bg-sentiment-very-negative-bg", fill: "fill-sentiment-very-negative" },
 };
 
 const RISK_META: Record<string, { label: string; text: string; bg: string }> = {
@@ -133,14 +133,20 @@ export function NetSentimentDot({ value }: { value: number }) {
 
 // Cor de preenchimento (Tailwind `fill-*`, SVG) + rótulo em pt-BR pra um
 // `net_sentiment` bruto — usado pelo mapa de "Sentimento por estado"
-// (brazil-sentiment-map.tsx, pedido do usuário 2026-07-25). Mesmas 7
-// faixas/cores de `SENTIMENT_META` acima, só expostas como classe `fill-`
-// em vez de `text-`/`bg-` (Tailwind gera a paleta inteira `sentiment-*`
-// pra toda propriedade de cor, `fill` incluso, já que a cor foi declarada
-// em `theme.extend.colors`).
+// (brazil-sentiment-map.tsx, pedido do usuário 2026-07-25/2026-07-14).
+// Mesmas 7 faixas/cores de `SENTIMENT_META` acima.
+// ⚠️ Bug real corrigido 2026-07-14: isso construía a classe em runtime
+// (`meta.text.replace("text-", "fill-")`) — como essa string nunca
+// aparecia literalmente em nenhum arquivo, o scanner de conteúdo do
+// Tailwind (que só reconhece classes escritas de fato no código-fonte,
+// nunca strings montadas dinamicamente) nunca gerava o CSS de
+// `fill-sentiment-*`, então todo estado do mapa renderizava sem cor
+// nenhuma, independente do sentimento. Corrigido lendo `meta.fill`
+// (string literal, uma por entrada de `SENTIMENT_META`), que o Tailwind
+// agora enxerga de verdade no scan.
 export function sentimentFillFromScore(score: number): { fillClass: string; label: string } {
   const meta = SENTIMENT_META[sentimentBucketFromScore(score)];
-  return { fillClass: meta.text.replace("text-", "fill-"), label: meta.label };
+  return { fillClass: meta.fill, label: meta.label };
 }
 
 export function ScoreBar({ score }: { score: number | null }) {

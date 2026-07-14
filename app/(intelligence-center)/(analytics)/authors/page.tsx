@@ -47,7 +47,12 @@ const numberFormatCompact = new Intl.NumberFormat("pt-BR", { notation: "compact"
 
 function applyGeneralFilters(authors: AuthorRow[], filters: AuthorFiltersState): AuthorRow[] {
   return authors.filter((author) => {
-    if (filters.search && !author.name.toLowerCase().includes(filters.search.toLowerCase())) return false;
+    if (filters.search) {
+      const term = filters.search.toLowerCase();
+      const matchesHandle = author.name.toLowerCase().includes(term);
+      const matchesEntityName = author.entity_name?.toLowerCase().includes(term) ?? false;
+      if (!matchesHandle && !matchesEntityName) return false;
+    }
     if (filters.sentiment && dominantSentiment(author) !== filters.sentiment) return false;
     if (filters.narrativeLabel && !author.narrative_labels.includes(filters.narrativeLabel)) return false;
     return true;
@@ -56,7 +61,12 @@ function applyGeneralFilters(authors: AuthorRow[], filters: AuthorFiltersState):
 
 function applyEntityFilters(authors: AuthorRow[], filters: AuthorFiltersState): AuthorRow[] {
   return authors.filter((author) => {
-    if (filters.search && !author.name.toLowerCase().includes(filters.search.toLowerCase())) return false;
+    if (filters.search) {
+      const term = filters.search.toLowerCase();
+      const matchesHandle = author.name.toLowerCase().includes(term);
+      const matchesEntityName = author.entity_name?.toLowerCase().includes(term) ?? false;
+      if (!matchesHandle && !matchesEntityName) return false;
+    }
     if (filters.sentiment && dominantSentiment(author) !== filters.sentiment) return false;
     if (filters.partido && author.entity_partido !== filters.partido) return false;
     if (filters.entityTypes.size > 0 && !(author.entity_type && filters.entityTypes.has(author.entity_type))) return false;
@@ -109,7 +119,11 @@ export default function AuthorsPage() {
   const entityTotalReach = entityAuthors.reduce((sum, a) => sum + a.reach, 0);
   const distinctEntityTypes = new Set(entityAuthors.map((a) => a.entity_type).filter(Boolean)).size;
 
-  const detailColorBy = activeTab === "geral" ? "sentimento" : filters.colorBy;
+  // Sem controle "Colorir por" (removido 2026-08-09, pedido do usuário: os
+  // chips de Tipo/Ideologia da própria toolbar já cumprem esse papel) — cada
+  // guia agora colore por uma dimensão fixa: sentimento na Visão Geral,
+  // tipo de Entidade em Por Entidade.
+  const detailColorBy = activeTab === "geral" ? "sentimento" : "entity_type";
 
   return (
     <>
@@ -212,9 +226,11 @@ export default function AuthorsPage() {
                 ) : (
                   <p className="text-sm text-text-tertiary">Síntese automática indisponível no momento.</p>
                 )}
-                <div className="border-t border-border-subtle pt-6">
-                  <TopSitesPanel items={envelope?.top_sites ?? []} timezone={timezone} />
-                </div>
+                {(envelope?.top_sites?.length ?? 0) > 0 && (
+                  <div className="border-t border-border-subtle pt-6">
+                    <TopSitesPanel items={envelope?.top_sites ?? []} timezone={timezone} />
+                  </div>
+                )}
                 <div className="border-t border-border-subtle pt-6">
                   <h3 className="mb-3 text-sm font-semibold text-text-primary">X Themes (Hashtags, Posters, Stories, Emojis)</h3>
                   <XInsightsPanel items={envelope?.x_insights ?? []} timezone={timezone} />
@@ -291,9 +307,9 @@ export default function AuthorsPage() {
 
                 <div className="rounded-xl border border-border-default bg-bg-card p-5">
                   <h3 className="text-sm font-bold text-text-primary">Alcance × Sentimento</h3>
-                  <p className="mt-0.5 text-xs text-text-secondary">Cor conforme o controle &quot;Colorir por&quot; acima. Clique para abrir o perfil.</p>
+                  <p className="mt-0.5 text-xs text-text-secondary">Cor por tipo de Entidade. Clique para abrir o perfil.</p>
                   <div className="mt-3">
-                    <AuthorScatterChart authors={entityAuthors} colorBy={filters.colorBy} onSelectAuthor={setSelectedAuthor} />
+                    <AuthorScatterChart authors={entityAuthors} colorBy="entity_type" onSelectAuthor={setSelectedAuthor} />
                   </div>
                 </div>
 
