@@ -30,7 +30,7 @@
 // packages/shared-types/src/envelope.ts. Mudou a forma de um bloco?
 // Atualize os dois arquivos juntos.
 
-import type { SupabaseClient } from 'npm:@supabase/supabase-js@2'
+import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2'
 // Só usado pela Camada 1 de ai-synthesis.md (composeLayer1NarrativeText,
 // abaixo) — mesmo pacote/import já usado por
 // event-radar-agent-orchestrator/index.ts, sem pin de versão pelo mesmo

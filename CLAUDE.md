@@ -5113,6 +5113,78 @@ centro esquerda) e reorganize os dados nessas novas colunas." Migration
   `_index.md`, `_architecture.md`. Não executada contra um banco real
   (mesma limitação recorrente).
 
+### Seed de institutos de pesquisa eleitoral e veículos de imprensa (2026-07-14)
+
+Pedido do usuário, mesmo módulo `entities`: "crie um seed para entities
+com informações de entidades de pesquisas eleitorais, mídia, imprensa e
+veículos de comunicação que emitem notícias e que podemos de alguma forma
+vincular com os dados que vem da brandwatch." Migration
+`supabase/migrations/20260807010000_seed_polling_institutes_and_media_outlets.sql`.
+
+- **Fonte usada**: diferente do seed de partidos/parlamentares (API oficial
+  do Congresso), não existe uma API aberta equivalente para institutos de
+  pesquisa/veículos de imprensa — a fonte real usada nesta sessão foi a
+  API pública do **Wikidata** (`wbsearchentities` + `Special:EntityData`),
+  consultada ao vivo, lendo as propriedades P856 (site oficial), P2002
+  (usuário do Twitter/X) e P2003 (usuário do Instagram) — mesma disciplina
+  de "nunca fabricar dado sem fonte real" já aplicada em todo o resto do
+  projeto. Nenhum handle foi completado de memória.
+- **Cobertura**: 12 institutos de pesquisa eleitoral (`type = 'company'` —
+  são empresas privadas, não "instituição" no sentido cívico do enum:
+  Datafolha, Ipec, Quaest, AtlasIntel, Paraná Pesquisas, FSB Pesquisa, Real
+  Time Big Data, Ipespe, Modal Pesquisas, PoderData, Instituto Ideia, MDA
+  Pesquisa) + 30 veículos de imprensa/mídia (`type = 'media_outlet'`:
+  G1, O Globo, GloboNews, Folha de S.Paulo, UOL, Estadão, Terra, R7, SBT,
+  Band, CNN Brasil, Veja, IstoÉ, CartaCapital, Poder360, Metrópoles,
+  Congresso em Foco, Brasil 247, Gazeta do Povo, Jovem Pan, Agência
+  Brasil, Correio Braziliense, O Antagonista, Exame, InfoMoney, Valor
+  Econômico, BBC News Brasil, Nexo Jornal, Agência Pública, The Intercept
+  Brasil) = 42 Entities, 51 `entity_accounts` (28 dos 30 veículos têm ao
+  menos 1 conta confirmada; só 2 dos 12 institutos — ver limitação
+  abaixo), 118 `entity_tags`.
+- **2 dimensões novas de `entity_tags`** (mesmo princípio já fixado em
+  `data-model.md` — uma nova dimensão é só um `INSERT`, nunca uma
+  migration de schema): `segment` ("Pesquisa Eleitoral" para os
+  institutos; para os veículos, o tipo de mídia — Portal de Notícias/
+  Jornal Impresso/Revista/TV Aberta/TV a Cabo/Rádio/Agência de Notícias/
+  Jornalismo Investigativo, lido da própria descrição do item no
+  Wikidata) e `website` (URL oficial confirmada — **puramente
+  informativo**, não usado no vínculo com autores: `author-linking.md`
+  já define que o `JOIN` com `bw_query_top_authors`/`mentions` é sempre
+  por `username` de handle, nunca por domínio, então gravar o site como
+  `entity_accounts.platform = 'website'` não teria nenhum efeito real e
+  sugeriria um vínculo que não existe — por isso ficou em `entity_tags`,
+  não em `entity_accounts`). `power_branch` (já existente) recebeu
+  `Setor Privado` para os institutos e `Mídia` para os veículos.
+- **Limitação real, documentada na própria migration**: 10 dos 12
+  institutos de pesquisa (todos exceto AtlasIntel e, parcialmente, Ipec)
+  não têm `entity_accounts` — o Wikidata genuinamente não tem item
+  verificável com essas propriedades para eles (várias tentativas de
+  busca com termos alternativos ao longo da sessão, mesma cautela já
+  usada para os Senadores no seed anterior, que também ficaram sem
+  contas por falta de fonte em lote). **`Ipec` é um caso à parte**: o
+  item mais próximo do Wikidata (Q21206655) está na verdade sobre o
+  "IBOPE" histórico (sitelinks enwiki/ptwiki = "IBOPE", "Ipec" só como
+  alias) e seu site apontava para a Kantar IBOPE Media — uma empresa
+  distinta da Ipec (Inteligência em Pesquisa e Consultoria) desde a
+  cisão de 2020 — por isso a Entity "Ipec" foi criada, mas
+  deliberadamente **sem** `website`/`entity_accounts`, para não atribuir
+  o site/conta de uma empresa a outra por engano. `ideologia` (espectro
+  político) não foi populada para nenhum veículo de imprensa — não foi
+  pedido nesta sessão, e é uma classificação bem mais contestável para um
+  veículo de imprensa do que para um partido político (que já tinha esse
+  pedido explícito, ver `20260731050000`) — fica para o admin classificar
+  manualmente se/quando desejado.
+- **Verificação**: contagem de linhas (42 entities/51 entity_accounts/118
+  entity_tags) conferida programaticamente (script Node), ausência de
+  UUID/handle/tag duplicados dentro do próprio arquivo, ausência de
+  colisão de `(platform, username)` contra o seed de deputados já
+  existente (`20260731030000`) — tudo confirmado via script, não só por
+  leitura visual. **Não executada contra um banco real** nesta sessão —
+  sem credenciais/deploy neste ambiente, mesma limitação recorrente de
+  toda sessão sem acesso ao Supabase Dashboard já registrada em várias
+  entradas deste arquivo. `git push` para `develop` é o próximo passo.
+
 ### `/narratives` retornando vazio — `page_cache` desabilitado, depois causa raiz real encontrada e corrigida (2026-07-14)
 
 User report: `get-page-narratives` devolvendo `narratives: []` para uma
@@ -6227,6 +6299,50 @@ recorrente de toda sessão sem credenciais de deploy; `git push` para
 `event_type = 'momentum_spike'` aparecendo em `radar_staging_events` na
 próxima execução do `pg_cron` (a cada 15min) pra qualquer Narrativa cujo
 `momentum_score` já leia "Explosivo" na tela de Narrativas.
+
+### `compose-narrative-synthesis` 503 em produção — mesmo bug de import da Fase B, num 8º arquivo que ficou fora daquela propagação (2026-08-07)
+
+User report, com o erro exato do console/logs do Supabase: clicar em
+"Analisar período com IA" (período personalizado, `NarrativeTextPanel`,
+`ai-synthesis.md`) devolvia `503`, e o log da Edge Function mostrava
+`ReferenceError: createClient is not defined at Object.handler
+(.../compose-narrative-synthesis/index.ts:1018:22)`.
+
+**Causa raiz — exatamente o mesmo bug já documentado na sessão da Fase B
+(2026-08-02, ver "Fase B implementada" acima)**: o arquivo canônico
+(`supabase/functions-shared-source/aggregated-metrics-service.ts`) só
+precisa de `import type { SupabaseClient } from 'npm:@supabase/supabase-js@2'`
+(nunca chama `createClient` — não tem handler), mas todo arquivo
+**deployado** que copia esse conteúdo precisa do import combinado
+(`import { createClient, type SupabaseClient } from ...`), já que o
+próprio handler HTTP de cada função chama `createClient(...)` pra
+construir o client com o JWT do usuário. A sessão da Fase B corrigiu
+exatamente esse mesmo bug, mas só nas "7 Edge Functions deployadas" que
+ela mesma enumerou (`get-page-{overview,narratives,sentiment,platforms,
+themes,authors}`, `get-narrative-detail`) — `compose-narrative-synthesis`
+é um **8º arquivo** que também copia o mesmo bloco canônico (criado na
+sessão "`narrative_text` ganha um botão manual...", mesmo dia que
+implementou a Camada 1 de `ai-synthesis.md`) e não constava naquela lista,
+então ficou com o import type-only quebrado em produção desde então —
+não pego antes porque nenhuma sessão sem credenciais de deploy consegue
+testar uma chamada HTTP real a uma Edge Function, e o botão "Analisar
+período com IA" só é clicado manualmente pelo usuário (não faz parte de
+nenhum carregamento de página automático).
+
+**Fix**: uma linha, `supabase/functions/compose-narrative-synthesis/index.ts`
+— mesmo import combinado das outras 7. Auditado o restante do diretório
+`supabase/functions/` pra confirmar que não sobrou nenhum outro arquivo
+com o mesmo padrão quebrado: todo arquivo que chama `createClient(...)`
+(28 no total) agora também o importa — `compose-narrative-synthesis` era
+o único caso solto.
+
+**Verificação**: `npx tsc --noEmit` limpo (mudança é Deno-only, fora do
+escopo do `tsconfig.json` do Next.js — não valida a sintaxe diretamente,
+só confirma que nada no lado Next.js quebrou). Sem ambiente Deno/Supabase
+real nesta sessão — `git push` para `develop` é o próximo passo; o sinal
+de que funcionou é o botão "Analisar período com IA" voltando a responder
+200 em vez de 503, sem `ReferenceError: createClient is not defined` nos
+logs.
 
 ## Directory structure
 

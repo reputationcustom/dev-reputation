@@ -75,6 +75,56 @@ atualizado: 2026-07-13
 > `pronto`, não implementados — o módulo `entities` como um todo permanece
 > amarelo em `_architecture.md` até os dois existirem também.
 >
+> ✅ **Seed de institutos de pesquisa eleitoral e veículos de imprensa
+> (2026-07-14)**, pedido do usuário: "crie um seed para entities com
+> informações de entidades de pesquisas eleitorais, mídia, imprensa e
+> veículos de comunicação que emitem notícias e que podemos de alguma
+> forma vincular com os dados que vem da brandwatch" — migration
+> `supabase/migrations/20260807010000_seed_polling_institutes_and_media_outlets.sql`.
+> Mesma disciplina de fonte real do seed de partidos/parlamentares, mas
+> contra uma fonte diferente (não há uma API aberta equivalente à da
+> Câmara/Senado para institutos de pesquisa/veículos de imprensa): a API
+> pública do **Wikidata** (`wbsearchentities` + `Special:EntityData`),
+> consultada ao vivo nesta sessão para as propriedades P856 (site
+> oficial), P2002 (usuário do Twitter/X) e P2003 (usuário do Instagram).
+> Cobertura: **12 institutos de pesquisa eleitoral** (`type = 'company'`
+> — empresas privadas, não "instituição" no sentido cívico do enum) +
+> **30 veículos de imprensa/mídia** (`type = 'media_outlet'`) = 42
+> Entities novas, **51 `entity_accounts`** (só handles confirmados no
+> Wikidata — 28 dos 30 veículos têm ao menos 1 conta; só 2 dos 12
+> institutos, ver limitação abaixo) e **118 `entity_tags`**, incluindo 2
+> dimensões novas neste seed (`segment` — "Pesquisa Eleitoral" para os
+> institutos, o tipo de mídia para os veículos — e `website`, a URL
+> oficial confirmada, guardada só como referência informativa: o vínculo
+> real com `bw_query_top_authors`/`mentions` é sempre por `username` de
+> handle, nunca por domínio, ver `author-linking.md`), além de
+> `power_branch` já existente (`Setor Privado`/`Mídia`).
+>
+> ⚠️ **Limitação real, documentada no topo da própria migration**: 10 dos
+> 12 institutos de pesquisa (Ipec, Quaest, Paraná Pesquisas, FSB
+> Pesquisa, Real Time Big Data, Ipespe, Modal Pesquisas, PoderData,
+> Instituto Ideia, MDA Pesquisa) **não têm `entity_accounts`** — o
+> Wikidata não tem item verificável com essas propriedades para eles
+> nesta sessão (várias tentativas de busca com termos alternativos,
+> mesma cautela de "nunca fabricar handle sem fonte real" já aplicada aos
+> Senadores no seed anterior). `Ipec` é um caso à parte: o item mais
+> próximo do Wikidata (Q21206655) está na verdade sobre o "IBOPE"
+> histórico (sitelinks enwiki/ptwiki = "IBOPE", "Ipec" só como alias) e
+> aponta para o site da Kantar IBOPE Media — uma empresa distinta da Ipec
+> (Inteligência em Pesquisa e Consultoria) desde a cisão de 2020 — por
+> isso a Entity existe mas `website`/`entity_accounts` ficaram de fora,
+> para não atribuir o site/conta de uma empresa à outra. `ideologia`
+> (espectro político) **não foi populada para nenhum veículo de
+> imprensa** — não foi pedido nesta sessão, e classificar a linha
+> editorial de um veículo é uma inferência bem mais contestável do que a
+> de um partido político (já feita, com o mesmo aviso de "melhor
+> esforço", em `20260731050000`) — fica para classificação manual do
+> admin se/quando desejado. Revisão manual da mesma natureza das
+> migrations anteriores (contagem de linhas 42/51/118 conferida
+> programaticamente, ausência de UUID/handle/tag duplicados, ausência de
+> colisão de `(platform, username)` com o seed de deputados) — **não
+> executada contra um banco real**.
+>
 > ✅ **Reorganização de campos (2026-07-13, mesmo dia)**, pedido do
 > usuário: "renomeie o campo descrição para cargo, inclua um novo campo
 > chamado partido, crie um campo chamado ideologia (popule com direita,
@@ -244,6 +294,8 @@ sem passar por esta lista):
 | `power_branch` | Poder/instituição a que pertence | `Executivo`, `Legislativo`, `Judiciário`, `Mídia`, `Sociedade Civil`, `Setor Privado` | múltipla |
 | `state` | Estado (UF) de atuação | `SP`, `RJ`, `MG`... | única (recomendado) |
 | `stance_to_candidate` | Postura em relação ao candidato/campanha monitorada | `aliado`, `opositor`, `crítico ocasional`, `neutro` | única (recomendado) |
+| `segment` | ✅ **Adicionado (2026-07-14)**, seed de institutos/veículos. Segmento/tipo de atuação, mais específico que `power_branch` | `Pesquisa Eleitoral`, `Portal de Notícias`, `Jornal Impresso`, `Revista`, `TV Aberta`, `TV a Cabo/Notícias 24h`, `Rádio`, `Agência de Notícias`, `Jornalismo Investigativo` | única (recomendado) |
+| `website` | ✅ **Adicionado (2026-07-14)**. URL do site oficial — só informativo/referência para o admin, **não** usado no vínculo com autores (ver `author-linking.md` — o JOIN é sempre por `username` de handle, nunca por domínio) | URL completa | única |
 
 ⚠️ **`party`/`office`/`political_spectrum` saíram desta tabela
 (2026-07-13)** — viraram colunas próprias de `entities`
