@@ -224,7 +224,7 @@ export interface DisseminationGraph {
 
 // "X Themes" da Brandwatch (Top Hashtags/Emojis/Stories/Most Mentioned X
 // Posters) — bw_query_x_insights (foundation/data-model.md), só na página
-// `platforms`. Ver get_x_insights em sql-aggregation.md.
+// `authors`. Ver get_x_insights em sql-aggregation.md.
 export interface XInsightItem {
   insight_type: 'hashtag' | 'emoticon' | 'url' | 'mentioned_author'
   name: string
@@ -234,6 +234,11 @@ export interface XInsightItem {
   retweets: number | null
   impressions: number | null
   reach_estimate: number | null
+  // ✅ Adicionado 2026-08-03 — quando esse item foi sincronizado pela
+  // última vez (bw-sync só re-sincroniza X Insights a cada 7 dias por
+  // par, ver isXInsightsStale em bw-sync/index.ts). Nunca null — toda
+  // linha vem de uma sincronização real.
+  synced_at: string
 }
 
 export interface PageEnvelope {
@@ -824,6 +829,7 @@ interface XInsightRow {
   retweets: number | null
   impressions: number | null
   reach_estimate: number | null
+  synced_at: string
 }
 
 async function fetchXInsights(supabase: SupabaseClient, ctx: PageContext): Promise<XInsightItem[]> {
@@ -844,6 +850,7 @@ async function fetchXInsights(supabase: SupabaseClient, ctx: PageContext): Promi
       retweets: row.retweets,
       impressions: row.impressions,
       reach_estimate: row.reach_estimate,
+      synced_at: row.synced_at,
     }))
   } catch (err) {
     console.error('[aggregated-metrics] fetchXInsights failed', err)

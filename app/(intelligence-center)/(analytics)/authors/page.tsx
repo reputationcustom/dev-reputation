@@ -43,7 +43,7 @@ function applyFilters(authors: AuthorRow[], filters: AuthorFiltersState): Author
 
 export default function AuthorsPage() {
   const { status, envelope, retry } = usePageEnvelope("get-page-authors");
-  const { isAdmin } = useUserProfile();
+  const { isAdmin, timezone } = useUserProfile();
   const [filters, setFilters] = useState<AuthorFiltersState>(EMPTY_AUTHOR_FILTERS);
   const [selectedAuthor, setSelectedAuthor] = useState<AuthorRow | null>(null);
 
@@ -149,7 +149,7 @@ export default function AuthorsPage() {
         </WidgetCard>
 
         <WidgetCard title="X Themes (Hashtags, Posters, Stories, Emojis)" status={status} onRetry={retry}>
-          <XInsightsPanel items={envelope?.x_insights ?? []} />
+          <XInsightsPanel items={envelope?.x_insights ?? []} timezone={timezone} />
         </WidgetCard>
       </div>
 

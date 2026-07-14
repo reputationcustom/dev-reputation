@@ -153,11 +153,15 @@ exibidos na UI ficam em português:
   `retweet_of`/`insights_mentioned` de fato capturam (ver `sql-aggregation.md`,
   `get_dissemination_graph`). Não inventar tipos de nó/aresta sem fonte de dado real.
 - **`x_insights`**: ✅ **Adicionado 2026-07-18** — "X Themes" nativo da Brandwatch (Top Hashtags/Top
-  Emojis/Top Stories/Most Mentioned X Posters), só preenchido na página `platforms` (ver
-  `block-mapping-per-page.md`). Cada item tem `insight_type`
+  Emojis/Top Stories/Most Mentioned X Posters), só preenchido na página `authors` (moveu de
+  `platforms` para `authors` em 2026-07-25, ver `block-mapping-per-page.md`). Cada item tem `insight_type`
   (`hashtag`|`emoticon`|`url`|`mentioned_author`), `name`, `label` (só relevante para
   `emoticon` — descrição textual do emoji), `volume`, `tweets`, `retweets`, `impressions`,
   `reach_estimate` — de `bw_query_x_insights`, ver `sql-aggregation.md`, `get_x_insights`.
+  ✅ **`synced_at` adicionado (2026-08-03)** — `timestamptz` da última sincronização daquele
+  item (nunca `null`), pra o frontend mostrar frescor ("Atualizado há N dias") em vez de um
+  número sem contexto temporal — `bw-sync` só re-sincroniza X Insights a cada 7 dias por par
+  (`isXInsightsStale`), ver `sql-aggregation.md` pra a auditoria completa que motivou isso.
 - **`narrative_text`**: texto gerado pela IA a partir deste mesmo envelope (ver
   [ai-synthesis.md](ai-synthesis.md)). Fica `null` até a síntese rodar; depois é armazenado em cache
   junto do envelope.

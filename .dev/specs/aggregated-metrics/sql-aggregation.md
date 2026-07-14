@@ -159,6 +159,52 @@ observado — **sem `query_id`** (revertido 2026-07-13, ver nota abaixo).
 > Conferido também aritmeticamente contra um export real do usuário (ex:
 > `#flaviobolsonaropresidente2026`: Posts 10 + Reposts 402 ≈ All Posts 413).
 
+> ⚠️ **Auditoria + 2 correções (2026-08-03)** — pedido do usuário: "reveja
+> se os dados dessas tabelas estão sendo corretamente atualizadas pelo
+> bw-sync, pois os dados de uma publicação não está batendo com os dados
+> vindos na integração." Reauditoria completa de `syncXInsights`/
+> `isXInsightsStale` (bw-sync/index.ts) e `get_x_insights`: endpoints,
+> parâmetros e nomes de campo reconferidos ao vivo contra
+> `developers.brandwatch.com/docs/twitter-insights` — sem divergência (mesma
+> confirmação já feita em 2026-07-18, acima). Upsert key
+> (`project_id, query_id, category_id_key, insight_type, name, metric_week`)
+> e dedupe (`dedupeByKey`) corretos.
+>
+> Um bug real de leitura foi encontrado e corrigido (migration
+> `20260803010000`): a CTE `latest` de `get_x_insights` escolhia "qual é a
+> semana mais recente" agrupando só por `insight_type`, ignorando
+> `category_id` — quando `filter_category_ids` resolve mais de uma Category
+> ao mesmo tempo (não acontece hoje pela UI atual, que nunca envia mais de
+> uma Narrativa em `filters.narratives`, mas a function precisa estar
+> correta independente disso), qualquer Category cujo último sync caiu num
+> dia diferente do "mais recente" combinado ficava silenciosamente excluída
+> do resultado. Corrigido: `latest` agora agrupa por
+> `(insight_type, category_id)`.
+>
+> A causa mais provável do relato do usuário, porém, não é um bug de SQL —
+> é a ausência de qualquer indicação de frescor na UI. `isXInsightsStale`
+> só re-sincroniza X Insights a cada 7 dias por par (project, query,
+> category), e a página nunca mostrava desde quando aquele snapshot valia;
+> um número visto na Brandwatch ao vivo pode legitimamente divergir de um
+> valor sincronizado até 7 dias atrás sem que isso seja um bug. `get_x_insights`
+> ganhou um campo `synced_at timestamptz` no retorno (nunca null — toda
+> linha vem de uma sincronização real), propagado por
+> `XInsightItem.synced_at` (`standard-json-envelope.md`) até
+> `XInsightsPanel`, que agora mostra "Atualizado há N dias"/"Atualizado
+> hoje"/"Atualizado ontem" por seção (Hashtags/Posters/Stories/Emojis),
+> reaproveitando `formatRelativeDate` (`lib/date/format.ts`).
+>
+> Também vale registrar, pra quem revisitar este relato: "Top Stories"
+> (`insight_type = 'url'`) é um agregado por URL — soma o volume de **todos
+> os posts que compartilham aquela URL**, não as métricas de uma publicação
+> específica isolada (`data/urls`, ver `foundation/data-model.md`, "Top
+> Shared URLs" = "Stories"). Se o usuário estiver comparando o número de
+> uma Story com as métricas nativas de um único post do X, a divergência é
+> esperada por definição — não é um bug. Se a discrepância persistir depois
+> deste fix, o próximo passo é pedir ao usuário o hashtag/story/exemplo
+> específico comparado, já que este ambiente não tem acesso a
+> credenciais Brandwatch/Supabase reais pra reproduzir contra produção.
+
 ## Scores de Narrativa: Sentimento, Momentum, Tendência e Risco
 
 > ✅ Especificado 2026-07-13, a pedido do usuário, substituindo os 2

@@ -1,5 +1,6 @@
 import type { XInsightItem, XInsightType } from "@reputation/shared-types";
 import { EmptyState } from "@/components/ui/empty-state";
+import { formatRelativeDate } from "@/lib/date/format";
 
 // "X Themes" da Brandwatch — Top Hashtags/Most Mentioned X Posters/Top
 // Stories/Top Emojis (bloco `x_insights`, só na página `/platforms`). Ver
@@ -49,7 +50,27 @@ function insightHref(type: XInsightType, name: string): string | null {
   return null;
 }
 
-function InsightSection({ type, items }: { type: XInsightType; items: XInsightItem[] }) {
+// bw-sync só re-sincroniza X Insights a cada 7 dias por par (project,
+// query, category) — `isXInsightsStale` em bw-sync/index.ts. Um número
+// sozinho ("Posts: 1.234") sem indicação de quando foi capturado é a causa
+// mais provável de um usuário achar que "não bate" com o que vê ao vivo na
+// Brandwatch: o dado pode estar correto, só desatualizado em até 7 dias.
+// Todos os itens de uma seção vêm da mesma chamada/semana na prática, mas o
+// máximo é usado por segurança caso um dia isso deixe de ser verdade.
+function mostRecentSyncedAt(items: XInsightItem[]): string | null {
+  if (items.length === 0) return null;
+  return items.reduce((latest, item) => (item.synced_at > latest ? item.synced_at : latest), items[0].synced_at);
+}
+
+function InsightSection({
+  type,
+  items,
+  timezone,
+}: {
+  type: XInsightType;
+  items: XInsightItem[];
+  timezone: string;
+}) {
   if (items.length === 0) {
     return (
       <div className="flex flex-col gap-2">
@@ -59,9 +80,16 @@ function InsightSection({ type, items }: { type: XInsightType; items: XInsightIt
     );
   }
 
+  const syncedAt = mostRecentSyncedAt(items);
+
   return (
     <div className="flex flex-col gap-2">
-      <h3 className="text-sm font-semibold text-text-primary">{SECTION_META[type].title}</h3>
+      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+        <h3 className="text-sm font-semibold text-text-primary">{SECTION_META[type].title}</h3>
+        {syncedAt && (
+          <span className="text-xs text-text-tertiary">Atualizado {formatRelativeDate(syncedAt, timezone).toLowerCase()}</span>
+        )}
+      </div>
       <div className="overflow-x-auto">
         <table className="w-full min-w-[520px] text-left text-sm">
           <thead>
@@ -110,7 +138,7 @@ function InsightSection({ type, items }: { type: XInsightType; items: XInsightIt
   );
 }
 
-export function XInsightsPanel({ items }: { items: XInsightItem[] }) {
+export function XInsightsPanel({ items, timezone }: { items: XInsightItem[]; timezone: string }) {
   if (items.length === 0) {
     return <EmptyState message="Nenhum dado de X (Twitter) sincronizado ainda para este escopo — só disponível para Narrativas/Queries com presença relevante em X." />;
   }
@@ -118,7 +146,12 @@ export function XInsightsPanel({ items }: { items: XInsightItem[] }) {
   return (
     <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
       {SECTION_ORDER.map((type) => (
-        <InsightSection key={type} type={type} items={items.filter((item) => item.insight_type === type)} />
+        <InsightSection
+          key={type}
+          type={type}
+          items={items.filter((item) => item.insight_type === type)}
+          timezone={timezone}
+        />
       ))}
     </div>
   );

@@ -5164,6 +5164,90 @@ timestamp clearly past the latest one currently on disk, and always
 double check with a fresh `ls`/`git pull` immediately before naming the
 file, not from memory of what was there earlier in the session.
 
+### X Themes — auditoria de bw-sync + correção de bug real + frescor visível na UI (2026-08-03)
+
+User request: "reveja se os dados dessas tabelas [X Themes: Hashtags,
+Posters, Stories, Emojis] estão sendo corretamente atualizadas pelo
+bw-sync, pois os dados de uma publicação não está batendo com os dados
+vindos na integração."
+
+**Auditoria completa, sem divergência de mapeamento encontrada**:
+`syncXInsights`/`isXInsightsStale`/`runXInsightsStep` (`bw-sync/index.ts`)
+reconferidos linha a linha contra
+`developers.brandwatch.com/docs/twitter-insights` ao vivo nesta sessão —
+os 4 endpoints (`data/hashtags`/`data/emoticons`/`data/urls`/
+`data/mentionedauthors`), o parâmetro `category` (filtro documentado,
+mesmo padrão já usado por outras chamadas neste projeto) e o mapeamento de
+campo (`volume`/`tweets`/`retweets`/`impressions`/`reachEstimate`/
+`sentiment`) batem exatamente com o que já estava implementado — nenhuma
+divergência nova em relação à confirmação já feita em 2026-07-18. Upsert
+key (`project_id, query_id, category_id_key, insight_type, name,
+metric_week`) e dedupe (`dedupeByKey`) também corretos.
+
+**Um bug real encontrado e corrigido** (migration `20260803010000`):
+`get_x_insights`'s CTE `latest` escolhia "qual é a semana mais recente"
+agrupando só por `insight_type`, ignorando `category_id` — se
+`filter_category_ids` alguma vez resolver mais de uma Category
+simultaneamente (não acontece hoje pela UI atual, que nunca envia mais de
+uma Narrativa em `filters.narratives`, mas a function precisa estar
+correta independente disso), qualquer Category cujo sync mais recente
+caiu num dia diferente do "mais recente" combinado entre todas ficava
+silenciosamente excluída do resultado — o `join ... on l.w = s.metric_week`
+nunca casava as linhas dela. Corrigido: `latest` agora agrupa por
+`(insight_type, category_id)`, cada Category compara só contra o próprio
+snapshot mais recente.
+
+**Causa mais provável do relato do usuário, no entanto: ausência de
+indicação de frescor na UI, não um bug de dado.** `isXInsightsStale`
+sempre limitou X Insights a re-sincronizar a cada 7 dias por par (project,
+query, category) — mas nenhuma tela jamais mostrava desde quando aquele
+snapshot valia, então um número visto ao vivo na Brandwatch podia
+legitimamente divergir de um valor sincronizado até 7 dias atrás sem que
+isso fosse um bug de verdade. Fechado com um novo campo `synced_at
+timestamptz` no retorno de `get_x_insights` (nunca `null` — toda linha
+vem de uma sincronização real), propagado por Princípio 5 através de
+`packages/shared-types/src/envelope.ts` (`XInsightItem.synced_at`), da
+cópia canônica (`supabase/functions-shared-source/aggregated-metrics-service.ts`)
+e das 7 Edge Functions deployadas (`get-page-{overview,narratives,
+sentiment,platforms,themes,authors}`, `get-narrative-detail`) — todas
+mantidas manualmente em sincronia, mesma disciplina já usada por toda
+adição de campo anterior neste módulo. `XInsightsPanel`
+(`components/intelligence-center/x-insights-panel.tsx`) agora mostra
+"Atualizado hoje"/"Atualizado ontem"/"Atualizado há N dias" por seção
+(Hashtags/Posters/Stories/Emojis), reaproveitando `formatRelativeDate`
+(`lib/date/format.ts`) e o `timezone` do usuário (`useUserProfile()`, já
+buscado pela página `/authors` — só precisou ser repassado como prop).
+Corrigido de passagem: um comentário desatualizado em todas as 8 cópias
+de `XInsightItem` ainda dizia "só na página `platforms`" — o bloco mudou
+de página em 2026-07-25 e o comentário nunca foi atualizado; agora diz
+`authors` em todas.
+
+**Ponto adicional documentado, não um bug**: "Top Stories"
+(`insight_type = 'url'`) é um agregado por URL — soma o volume de **todos
+os posts que compartilham aquela URL**, não as métricas nativas de uma
+publicação específica isolada (`data/urls`, "Top Shared URLs" na doc da
+Brandwatch, ver `foundation/data-model.md`). Se o usuário estava
+comparando o número de uma Story com as métricas de um único post do X, a
+divergência é esperada por definição, não um defeito — registrado em
+`sql-aggregation.md` para o caso de o relato persistir e alguém precisar
+descartar essa explicação primeiro.
+
+**Limitação recorrente, mesma de toda sessão anterior sem acesso a
+produção**: sem credenciais Brandwatch/Supabase reais neste ambiente, não
+foi possível reproduzir o exemplo específico do usuário ("os dados de uma
+publicação não está batendo") ponto a ponto — o fix acima cobre as duas
+causas plausíveis e verificáveis por inspeção de código (bug de
+agrupamento + staleness silenciosa); se a divergência persistir depois
+deste deploy, o próximo passo é pedir ao usuário o hashtag/story/exemplo
+concreto comparado, para diagnosticar contra o dado real em vez de
+inspeção estática.
+
+**Verificação**: `npx tsc --noEmit` e `npm run build` — ver resultado
+abaixo desta entrada, rodados ao final da sessão. Migration
+`20260803010000` revisada manualmente, não executada contra um banco
+real — mesma limitação recorrente de toda sessão sem credenciais de
+deploy neste ambiente.
+
 ## Directory structure
 
 ```

@@ -47,6 +47,21 @@
 -- futura (nesta ou em qualquer outra sub-etapa) volte a derrubar o ciclo
 -- inteiro:
 
+-- 0) `SET LOCAL statement_timeout` — escopado só a esta transação de
+--    migration (reverte sozinho no COMMIT/fim da sessão, nunca vaza para
+--    o resto do sistema). Adicionado depois de uma primeira tentativa de
+--    deploy: o `CREATE INDEX` abaixo tem que varrer/ordenar a tabela
+--    inteira pra se construir — exatamente as mesmas tabelas que já
+--    acumulam histórico sem poda (CLAUDE.md, "Data storage is historical
+--    by design") e que já estouram o `statement_timeout` normal em
+--    tempo de consulta (o próprio bug que esta migration corrige). Sem
+--    isso, o `CREATE INDEX` pode tomar o mesmo timeout que a query que
+--    ele deveria evitar — e como a migration inteira roda numa única
+--    transação, essa falha reverte tudo, inclusive o `CREATE OR REPLACE
+--    FUNCTION` mais abaixo, deixando a função antiga (com o bug) rodando
+--    silenciosamente como se nada tivesse mudado.
+set local statement_timeout = '15min';
+
 -- 1) Índices parciais cobrindo exatamente o padrão de filtro usado pelas
 --    subqueries correlacionadas de `event_radar_reach_engagement_severity`
 --    (e por qualquer outro consumidor futuro do mesmo padrão "linha da

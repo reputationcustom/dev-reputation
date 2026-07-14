@@ -824,6 +824,7 @@ interface XInsightRow {
   retweets: number | null
   impressions: number | null
   reach_estimate: number | null
+  synced_at: string
 }
 
 async function fetchXInsights(supabase: SupabaseClient, ctx: PageContext): Promise<XInsightItem[]> {
@@ -844,6 +845,7 @@ async function fetchXInsights(supabase: SupabaseClient, ctx: PageContext): Promi
       retweets: row.retweets,
       impressions: row.impressions,
       reach_estimate: row.reach_estimate,
+      synced_at: row.synced_at,
     }))
   } catch (err) {
     console.error('[aggregated-metrics] fetchXInsights failed', err)
