@@ -3,7 +3,7 @@ tipo: feature-spec
 módulo: aggregated-metrics
 funcionalidade: sql-aggregation
 status: implementado
-atualizado: 2026-07-25
+atualizado: 2026-08-02
 ---
 
 # Camada SQL de Agregação
@@ -11,10 +11,14 @@ atualizado: 2026-07-25
 > ✅ **Implementado (migration `20260714000000`, evoluído em várias sessões
 > desde então — última alteração de schema `20260722010000`)**: 9 das 10
 > functions da tabela abaixo estão em produção. Só `get_active_highlights`
-> continua deferida (depende de `feed_events`/`event-radar`, ainda
-> `rascunho` — ver `_pending.md` gap #8). Este arquivo reflete o estado
-> atual do schema; qualquer nota `⚠️`/`✅` abaixo já foi aplicada ao banco
-> (quando citar uma migration).
+> continua deferida — ⚠️ **atualizado 2026-08-02**: o motivo original
+> ("depende de `feed_events`/`event-radar`, ainda `rascunho`") não é mais
+> verdade — `event-radar` está implementado (1.1-1.4/1.6, `feed_events`
+> populada desde 2026-07-31) e o gate real (`fluxo-aggregated-metrics.md`,
+> "Fase B") já está satisfeito. A function em si só ainda não foi escrita
+> nesta sessão (`_pending.md` gap #8, reaberto sem bloqueio real). Este
+> arquivo reflete o estado atual do schema; qualquer nota `⚠️`/`✅` abaixo
+> já foi aplicada ao banco (quando citar uma migration).
 
 ## Objetivo
 
@@ -72,7 +76,7 @@ observado — **sem `query_id`** (revertido 2026-07-13, ver nota abaixo).
 | `get_region_breakdown(...)`             | `breakdowns` (type `'region'`) | ✅ **Adicionado 2026-07-25** (migration `20260725010000`, gap #9, decisão do usuário na época: "país + net_sentiment"), **repivotado no mesmo dia para estado brasileiro** (migration `20260725060000`, pedido do usuário: "Precisamos de um breakdown por estado brasileiro") — `bw_query_demographics_daily` (`dimension_type = 'region'`, já sincronizada por `foundation`/`bw-sync` desde `20260711070000`, nenhuma mudança em `bw-sync` foi necessária), top 30 estados por volume, `value` = `net_sentiment` médio ponderado, `pct` = participação de menções. País deixou de ser exposto por este bloco — pra uma plataforma 100% de campanhas brasileiras, quebra por país é quase sempre "Brasil: 100%" (baixo valor). ⚠️ **Duas ressalvas não confirmadas contra payload real**: (1) o mapeamento exato da dimensão de chart `regions` da Brandwatch para UF brasileira — mesma ressalva já registrada em `foundation/data-model.md` desde que essa dimensão foi implementada; (2) esta tabela **nunca teve `category_id`** — só cobre o escopo "Query inteira"; com `filters.narratives` ativo (ex: `narrative_detail`), devolve vazio de propósito, nunca o dado da Query inteira mascarado como se fosse de uma Narrativa |
 | `get_volume_delta(...)`                 | nenhum (helper interno) | ✅ **Adicionado 2026-07-25** (migration `20260725020000`, gap #27) — não é um bloco do envelope, só usado por `fetchNarrativeText` (`service-layer-aggregation.md`) pra montar a Camada 0 de `ai-synthesis.md`. `total_mentions` do período atual vs. anterior, escopado por `filters.narratives` (mesmo padrão de `get_sentiment_breakdown`) |
 | `get_narratives_table(...)`             | `narratives`         | `reporting.narratives_overview`/`public.narratives_overview` (view já existente, ver `foundation/data-model.md`) pro dado bruto por dia (`sov_percent`, `net_sentiment`/`sentiment_bucket`, `total_mentions`, `reach_estimated`, `engagement_total`, `unique_authors`) — **mas** os 3 scores derivados (`momentum_score` período-dependente, `trend_score` sempre 14 dias fixos, `risk_score`) são calculados **nesta function**, não na view (a view não recebe `period_start`/`period_end`) — ver seção "Scores de Narrativa" abaixo |
-| `get_authors_ranking(...)`              | `authors`            | `bw_query_top_authors`/`bw_query_top_tweeters` (quando o escopo for X) — nativos da Brandwatch, não amostrados. `entity_id`/classificação por partido/espectro fica `null` até `entities` (Sprint 2) existir; quando existir, `LEFT JOIN entity_tags` via `entity_accounts.username = bw_query_top_authors.author` é enriquecimento aditivo, nunca pré-requisito do ranking. ✅ **`entities` especificado (2026-07-13)** — ver [entities/author-linking.md](../entities/author-linking.md) para o desenho exato desse `LEFT JOIN` e para os 3 campos novos (`entity_type`/`entity_influence_level`/`entity_tags`) que `AuthorRow` ganha quando a migration for aplicada; ainda não implementado, este bloco de texto continua descrevendo o comportamento atual (sempre `null`). ✅ **Ganhou `sentiment_positive`/`neutral`/`negative` (2026-07-17)** — `LEFT JOIN` agregado sobre `bw_query_author_topics` (soma os 3 contadores entre todos os temas do autor na semana mais recente sincronizada para aquele autor), não sobre `bw_query_top_authors.sentiment_*`. ⚠️ **Achado na mesma auditoria**: `bw_query_top_authors.sentiment_positive/neutral/negative` (e o mesmo em `bw_query_top_tweeters`) é escrito por `bw-sync` desde a criação da tabela lendo `d.sentiment` da resposta de `data/volume/topauthors/queries`, mas — diferente de todo campo vizinho na mesma tabela (`tweets`/`retweets`/`account_type`/`country_code`, todos com nota "confirmado contra developers.brandwatch.com/docs/top-tweeters") — esse mapeamento **nunca foi confirmado** contra a documentação real do endpoint, que não cita um objeto `sentiment` no payload. Risco real de ser sempre `0/0/0` em produção sem nenhum erro (fallback `?? 0`). Decisão do usuário (2026-07-17): documentar o achado e usar `bw_query_author_topics` (fonte já confirmada, mesmo padrão do `impressions` por autor) em vez de gastar uma chamada nova pra confirmar/substituir o campo agora — ver `foundation/data-model.md`, "bw_query_top_authors". Limitação herdada: só os top 10 autores por volume da Query inteira têm `bw_query_author_topics` — os demais autores do ranking vêm com os 3 campos `null` (nunca `0/0/0`, que seria "sentimento neutro" inventado). ✅ **Ganhou `p_scope`/`narrative_labels` (2026-07-21)** — ver nota dedicada abaixo, "Regras de negócio" |
+| `get_authors_ranking(...)`              | `authors`            | `bw_query_top_authors`/`bw_query_top_tweeters` (quando o escopo for X) — nativos da Brandwatch, não amostrados. `entity_id` e a classificação por partido/espectro (`entity_cargo`/`entity_partido`/`entity_ideologia`/`entity_influence_level`/`entity_tags`) vêm de um `LEFT JOIN entity_accounts`/`entities`/`entity_tags` (por `lower(trim(username)) = lower(trim(author))`, nunca uma FK — ver [entities/author-linking.md](../entities/author-linking.md)) — sempre enriquecimento aditivo, nunca pré-requisito do ranking, `null`/`[]` pra qualquer autor sem Entity vinculada. ✅ **Implementado (2026-08-01, migration `20260801010000`)** — também ganhou `mentions` (soma de menções por autor, já calculada internamente pra ordenar o ranking, agora também exposta ao client). ✅ **Ganhou `sentiment_positive`/`neutral`/`negative` (2026-07-17)** — `LEFT JOIN` agregado sobre `bw_query_author_topics` (soma os 3 contadores entre todos os temas do autor na semana mais recente sincronizada para aquele autor), não sobre `bw_query_top_authors.sentiment_*`. ⚠️ **Achado na mesma auditoria**: `bw_query_top_authors.sentiment_positive/neutral/negative` (e o mesmo em `bw_query_top_tweeters`) é escrito por `bw-sync` desde a criação da tabela lendo `d.sentiment` da resposta de `data/volume/topauthors/queries`, mas — diferente de todo campo vizinho na mesma tabela (`tweets`/`retweets`/`account_type`/`country_code`, todos com nota "confirmado contra developers.brandwatch.com/docs/top-tweeters") — esse mapeamento **nunca foi confirmado** contra a documentação real do endpoint, que não cita um objeto `sentiment` no payload. Risco real de ser sempre `0/0/0` em produção sem nenhum erro (fallback `?? 0`). Decisão do usuário (2026-07-17): documentar o achado e usar `bw_query_author_topics` (fonte já confirmada, mesmo padrão do `impressions` por autor) em vez de gastar uma chamada nova pra confirmar/substituir o campo agora — ver `foundation/data-model.md`, "bw_query_top_authors". Limitação herdada: só os top 10 autores por volume da Query inteira têm `bw_query_author_topics` — os demais autores do ranking vêm com os 3 campos `null` (nunca `0/0/0`, que seria "sentimento neutro" inventado). ✅ **Ganhou `p_scope`/`narrative_labels` (2026-07-21)** — ver nota dedicada abaixo, "Regras de negócio" |
 | `get_dissemination_graph(narrative_id)` | `graph`              | `mentions` (`reply_to`/`retweet_of`/`insights_mentioned`), restrito às mentions retornadas por `narrative_matched_mentions(narrative_id)` — reusa a função canônica já definida em `foundation/data-model.md`, mesma abordagem já decidida em `intelligence-center/narratives-exploration.md` ("grafo de disseminação simplificado"), não uma tabela `grafo_arestas` nova |
 | `get_term_signals(...)`                 | `term_signals`       | `bw_query_topics` (`label`, `sentiment_positive/neutral/negative`, `trending`) — já carrega tema/sentimento/tendência, não precisa extrair termo de `mentions` |
 | `get_x_insights(...)`                   | `x_insights` (só `platforms`) | ✅ **Adicionado 2026-07-18** — `bw_query_x_insights` (`insight_type`: `hashtag`/`emoticon`/`url`/`mentioned_author`), até 10 itens por tipo, ordenados por `volume` desc, da semana mais recente sincronizada por tipo. Fecha um gap real: o dado já era capturado desde `foundation` (2026-07-11), mas nenhuma function/bloco o expunha — era só uma "oportunidade futura" registrada em `intelligence-center/platform-analysis.md` (2026-07-13), nunca implementada até esta auditoria. É o dado por trás de "Top Hashtags"/"Most Mentioned X Posters"/"Top Stories"/"Top Emojis" (dashboard nativo "X Themes" da Brandwatch) |
@@ -512,11 +516,12 @@ Pedido do usuário: "Implementar termo de interação agora".
   armazenado — todos calculados sob demanda dentro de
   `get_narratives_table`, mesmo padrão de `sov_percent`/`trend_percent` já
   existentes na view.
-- `event-radar` (quando existir, Sprint 3): `severity_score` de um evento
-  ativo para a Narrativa é conceitualmente próximo de `risk_score` (pesos
-  parecidos — volume/sentimento/tendência/alcance/autores), mas é um score
-  irmão, calculado por uma fórmula diferente (por evento transiente, não
-  por Narrativa) — **`get_narratives_table` não recalcula nada a partir
+- `event-radar` (1.1-1.4/1.6 implementados desde 2026-07-27/31 — ver
+  `CLAUDE.md`): `severity_score` de um evento ativo para a Narrativa é
+  conceitualmente próximo de `risk_score` (pesos parecidos —
+  volume/sentimento/tendência/alcance/autores), mas é um score irmão,
+  calculado por uma fórmula diferente (por evento transiente, não por
+  Narrativa) — **`get_narratives_table` não recalcula nada a partir
   dele**. O ponto de integração é aditivo: quando a Narrativa tem um
   evento ativo publicado pelo radar, `risk_score = greatest(risk_score
   calculado acima, severity_score do evento ativo)` — um evento detectado
@@ -525,10 +530,25 @@ Pedido do usuário: "Implementar termo de interação agora".
   [../event-radar/aggregated-metrics-integration.md](../event-radar/aggregated-metrics-integration.md)
   desde 2026-07-13 — ver também
   [../event-radar/severity.md](../event-radar/severity.md), "Relação com
-  `risk_score`". Não implementado ainda (`event-radar` é `rascunho`, não
-  há `severity_score` real para ler) — a fórmula de `risk_score` acima
-  reflete o estado atual, sem o termo `greatest(...)`; ele entra na
-  mesma migration que ligar `get_active_highlights`.
+  `risk_score`".
+  ⚠️ **Precisão adicionada (2026-08-02)**, ao revisar `fluxo-aggregated-metrics.md`
+  antes de liberar esta etapa (Fase B): "evento ativo publicado pelo radar"
+  significa **`feed_events`**, nunca `radar_staging_events` diretamente —
+  um evento com `should_publish: false` (1.4) nunca chegou a ser
+  publicado, então não deve contar pro boost de risco, mesmo tendo
+  `severity_score` calculado em `radar_staging_events`. Fonte exata:
+  `MAX(feed_events.severity_score)` entre as linhas com
+  `related_narrative_id = narrativa` e `closed_at IS NULL` (uma Narrativa
+  pode ter mais de um evento ativo simultâneo — ex: um de volume e um de
+  sentimento — daí o `MAX`, nunca a soma). `feed_events.severity_score` é
+  mantido sincronizado com o `radar_staging_events` de origem enquanto o
+  evento segue ativo (migration `20260802000000`, ver
+  `fluxo-aggregated-metrics.md`) — sem essa sincronização, o boost leria um
+  valor congelado no momento da publicação, não o score real e atual.
+  **Ainda não implementado** (esta function `get_narratives_table` em si
+  não tem o termo `greatest(...)` ainda) — a fórmula de `risk_score` acima
+  reflete o estado atual, sem esse termo; ele entra na mesma migration que
+  ligar `get_active_highlights` (A1/A2 da Fase B, `fluxo-aggregated-metrics.md`).
 
 ### Campos do card de Narrativa (2026-07-21, migration `20260721010000`)
 
@@ -671,8 +691,8 @@ escopo deste pedido).
   componente `author_influence` de `risk_score`), `bw_query_top_tweeters`, `narratives`,
   `narrative_metrics`, `bw_categories`, `feed_events`; `mentions` só por-linha, nunca agregada
   (ver "Regra fundamental" acima); `entity_accounts`/`entities`/`entity_tags` (`entities`,
-  especificado — [entities/data-model.md](../entities/data-model.md) — ainda não implementado)
-  como enriquecimento opcional de `authors`, ver [entities/author-linking.md](../entities/author-linking.md).
+  [entities/data-model.md](../entities/data-model.md)) como enriquecimento opcional de
+  `authors`, ✅ implementado 2026-08-01 — ver [entities/author-linking.md](../entities/author-linking.md).
 - **Escreve**: nenhuma — todas as functions são somente leitura (`STABLE` no Postgres).
 
 ## Referências relacionadas

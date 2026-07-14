@@ -122,12 +122,18 @@ exibidos na UI ficam em português:
   `get_authors_ranking`, achado de 2026-07-17) e `narrative_labels` (`string[]`, sempre presente,
   título das Narrativas/pautas em que o autor teve atividade no escopo pedido — ver
   `get_authors_ranking`, `p_scope`, 2026-07-21). Nenhuma mudança de comportamento, só a spec
-  alcançando o código. ✅ **`entities` especificado (2026-07-13)** — quando implementado
-  ([entities/author-linking.md](../entities/author-linking.md)), este bloco ganha mais 3 campos
-  aditivos: `entity_type` (`entities.type`, `null` sem vínculo), `entity_influence_level`
-  (`entities.influence_level`, `null` sem vínculo ou sem avaliação), `entity_tags` (array de
-  `{tag_type, tag_value}`, `[]` sem vínculo — formato genérico de propósito, espelha `entity_tags`
-  linha a linha em vez de campos fixos, já que a taxonomia é extensível por design).
+  alcançando o código. ✅ **`entities` implementado (2026-08-01)** — ver
+  [entities/author-linking.md](../entities/author-linking.md) e
+  [intelligence-center/authors-and-influencers.md](../intelligence-center/authors-and-influencers.md),
+  "Redesenho interativo" — este bloco ganha 7 campos aditivos: `entity_type`
+  (`entities.type`, `null` sem vínculo), `entity_cargo`/`entity_partido`/`entity_ideologia`
+  (`entities.cargo`/`partido`/`ideologia`, `null` sem vínculo — colunas estruturadas, não
+  `entity_tags`), `entity_influence_level` (`entities.influence_level`, `null` sem vínculo ou sem
+  avaliação), `entity_tags` (array de `{tag_type, tag_value}`, `[]` sem vínculo — formato
+  genérico de propósito, espelha `entity_tags` linha a linha só pras dimensões que continuam EAV
+  — `state`/`power_branch`/`stance_to_candidate` — já que essa taxonomia é extensível por design),
+  e `mentions` (`number`, nunca nulo — soma de menções do autor, existia internamente na function
+  desde sempre só pra ordenar o ranking, nunca tinha sido exposta ao client).
 - **`highlights`**: cards de evento já publicados pelo módulo `event-radar`, lidos direto de
   `feed_events` — este bloco NUNCA recalcula insight, apenas filtra e ordena o que o radar já
   publicou (ver seção "Integração com event-radar" abaixo). Cada item usa o mesmo formato de

@@ -146,13 +146,33 @@ export interface NarrativeRow {
   tags: string[]
 }
 
+export interface AuthorEntityTag {
+  tag_type: string
+  tag_value: string
+}
+
 export interface AuthorRow {
   entity_id: string | null
   name: string
   type: string
   reach: number
   engagement: number
+  // ✅ Adicionado 2026-08-01 — soma de menções do autor, já calculada
+  // internamente pra ordenar o ranking desde sempre, nunca exposta ao
+  // client até agora. Nunca null.
+  mentions: number
   risk_level: RiskLevel | null
+  // ✅ Adicionados 2026-08-01 (.dev/specs/entities/author-linking.md) —
+  // enriquecimento aditivo via LEFT JOIN entity_accounts/entities/entity_tags
+  // (por username, lower/trim). null/[] quando o autor não tem Entity
+  // vinculada (a maioria hoje) ou a Entity está is_active=false.
+  entity_type: string | null
+  entity_cargo: string | null
+  entity_partido: string | null
+  // entities.ideologia — melhor esforço/não-oficial, ver data-model.md.
+  entity_ideologia: string | null
+  entity_influence_level: RiskLevel | null
+  entity_tags: AuthorEntityTag[]
   // Null pra maioria dos autores — só os top 10 por volume da Query inteira
   // são enriquecidos com temas por autor (bw_query_author_topics), única
   // fonte confiável de sentimento por autor. NUNCA vem de
@@ -389,7 +409,14 @@ interface AuthorRankingRow {
   type: string
   reach: number | null
   engagement: number | null
+  mentions: number | null
   risk_level: RiskLevel | null
+  entity_type: string | null
+  entity_cargo: string | null
+  entity_partido: string | null
+  entity_ideologia: string | null
+  entity_influence_level: RiskLevel | null
+  entity_tags: AuthorEntityTag[] | null
   is_influential: boolean
   sentiment_positive: number | null
   sentiment_neutral: number | null
@@ -700,7 +727,14 @@ async function fetchAuthors(page: PageKey, supabase: SupabaseClient, ctx: PageCo
       type: row.type,
       reach: row.reach ?? 0,
       engagement: row.engagement ?? 0,
+      mentions: row.mentions ?? 0,
       risk_level: row.risk_level,
+      entity_type: row.entity_type,
+      entity_cargo: row.entity_cargo,
+      entity_partido: row.entity_partido,
+      entity_ideologia: row.entity_ideologia,
+      entity_influence_level: row.entity_influence_level,
+      entity_tags: row.entity_tags ?? [],
       sentiment_positive: row.sentiment_positive,
       sentiment_neutral: row.sentiment_neutral,
       sentiment_negative: row.sentiment_negative,

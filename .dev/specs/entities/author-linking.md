@@ -2,11 +2,36 @@
 tipo: feature-spec
 módulo: entities
 funcionalidade: author-linking
-status: pronto
-atualizado: 2026-07-13
+status: implementado
+atualizado: 2026-08-01
 ---
 
 # Vínculo com Autores e Influenciadores
+
+> ✅ **Implementado (2026-08-01)**, pedido do usuário: "revise a página e
+> o backend de autores e influenciadores e sugira novas visualizações
+> integrando com a tabela entities... totalmente interativa". Auditoria de
+> código confirmou que **nada desta spec tinha sido implementado ainda** —
+> `get_authors_ranking` sempre devolveu `entity_id`/`risk_level` como
+> `null::uuid`/`null::text` hardcoded, sem nenhum `JOIN` real com
+> `entities`/`entity_accounts`. Migration
+> `supabase/migrations/20260801010000_authors_entity_enrichment.sql` —
+> `LEFT JOIN entity_accounts`/`entities`/`entity_tags` exatamente como
+> especificado abaixo (contra a definição **real** da function, migration
+> `20260721030000`, não uma suposição), mais o campo `mentions` (achado na
+> mesma revisão — `g.volume` já existia só pra ordenar, nunca tinha sido
+> exposto). Propagado em `AuthorRow`
+> (`packages/shared-types/src/envelope.ts` + cópia inline nas **7** Edge
+> Functions `get-page-*`/`get-narrative-detail`, Princípio técnico 5). O
+> desenho de UI completo (filtros, KPIs, dispersão alcance×sentimento,
+> breakdowns por ideologia/partido, painel de detalhe) foi implementado em
+> [`intelligence-center/authors-and-influencers.md`](../intelligence-center/authors-and-influencers.md)
+> — este arquivo é só o mecanismo de backend (o `JOIN`, os campos novos do
+> envelope). **Não implementado nesta sessão**: o botão "+ Cadastrar
+> Entidade" (ver "Cadastro rápido a partir de um autor já visto" abaixo) já
+> aparece no painel de detalhe, mas ainda não abre o `EntityFormModal` de
+> verdade — depende de `entity-registration.md` (CRUD ainda não
+> implementado) existir primeiro.
 
 ## Objetivo
 
@@ -48,43 +73,94 @@ uma colisão real for reportada.
 
 ## Extensão de `get_authors_ranking` (aggregated-metrics)
 
-✅ **Aditiva, nunca pré-requisito do ranking** — `get_authors_ranking`
-(`aggregated-metrics/sql-aggregation.md`) já reserva `entity_id` desde a
-criação do envelope (`standard-json-envelope.md`, bloco `authors`, campo
-sempre existente, só `null` até agora). Esta spec fecha essa pendência,
-sem mudar a assinatura da function nem o comportamento para quem não tem
-nenhuma Entity cadastrada.
+✅ **Aditiva, nunca pré-requisito do ranking** — mesma assinatura de
+entrada (`p_organization_id, p_period_start, p_period_end, p_filters,
+p_scope`), mesmo comportamento pra quem não tem nenhuma Entity cadastrada.
+A versão **real** e atual da function (confirmada por leitura direta da
+migration `20260721030000` nesta sessão — não a versão assumida quando
+esta spec foi escrita em 2026-07-13) já calcula um CTE final `grouped` (1
+linha por autor, deduplicado, com `reach_estimate`/`impact`/`volume`
+somados e `is_influential`/`narrative_labels` agregados) antes do
+`select` de saída. O vínculo entra **depois** desse `grouped`, como mais
+um `LEFT JOIN` sobre o resultado já pronto — não muda nenhum cálculo de
+ranking existente:
 
-Mudança em `get_authors_ranking`: `LEFT JOIN entity_accounts` (por
-`username`, ver "Mecanismo de vínculo" acima) sobre o resultado já
-calculado, e, quando casar, `LEFT JOIN entities`/`entity_tags` para trazer:
+```sql
+entity_match as (
+  -- 1 linha por handle (lower/trim), desempatando por created_at quando o
+  -- mesmo texto de username existe em 2 entity_accounts diferentes (ver
+  -- "Limitação aceita" abaixo — o vínculo ignora platform de propósito).
+  select distinct on (lower(trim(ea.username)))
+    lower(trim(ea.username)) as author_key,
+    ea.entity_id
+  from entity_accounts ea
+  join entities e on e.id = ea.entity_id and e.is_active = true
+  order by lower(trim(ea.username)), ea.created_at asc
+),
+entity_tags_agg as (
+  select et.entity_id,
+    jsonb_agg(jsonb_build_object('tag_type', et.tag_type, 'tag_value', et.tag_value)
+      order by et.tag_type, et.tag_value) as tags
+  from entity_tags et
+  group by et.entity_id
+)
+select
+  em.entity_id,
+  g.author as name,
+  coalesce(g.account_type, 'unknown') as type,
+  g.reach_estimate::numeric as reach,
+  g.impact as engagement,
+  g.volume::numeric as mentions,          -- ✅ novo, ver nota abaixo
+  null::text as risk_level,                -- inalterado, gap #11 de _pending.md
+  ent.type::text as entity_type,
+  ent.cargo as entity_cargo,
+  ent.partido as entity_partido,
+  ent.ideologia as entity_ideologia,
+  ent.influence_level::text as entity_influence_level,
+  coalesce(eta.tags, '[]'::jsonb) as entity_tags,
+  g.is_influential,
+  asent.sentiment_positive, asent.sentiment_neutral, asent.sentiment_negative,
+  coalesce(g.narrative_labels, '{}') as narrative_labels
+from grouped g
+left join author_sentiment asent on asent.author = g.author
+left join entity_match em on em.author_key = lower(trim(g.author))
+left join entities ent on ent.id = em.entity_id
+left join entity_tags_agg eta on eta.entity_id = em.entity_id
+order by g.volume desc nulls last
+```
 
-- `entity_id` (já existia no envelope, passa a ser preenchido de fato).
-- `entity_type` (novo — `entities.type`, `null` quando não há vínculo).
-- `entity_cargo` (novo — `entities.cargo`, ex: "Deputado Federal";
-  ✅ **atualizado 2026-07-13** junto da reorganização de campos de
-  `data-model.md` — antes desta nota este campo se chamava `description`).
-- `entity_partido` (novo — `entities.partido`, sigla, ex: "PT"; ✅
-  adicionado 2026-07-13, coluna nova).
-- `entity_ideologia` (novo — `entities.ideologia`, ex:
-  "centro-esquerda"; ✅ adicionado 2026-07-13, coluna nova — ver
-  `data-model.md` para a ressalva de que é classificação de melhor
-  esforço, não uma fonte oficial como cargo/partido).
-- `entity_influence_level` (novo — `entities.influence_level`, `null`
-  quando não há vínculo **ou** quando a Entity vinculada nunca teve esse
-  campo avaliado).
-- `entity_tags` (novo — array de `{tag_type, tag_value}`, um item por
-  linha de `entity_tags` daquela Entity — hoje cobre `state`/
-  `power_branch`/`stance_to_candidate` e qualquer dimensão nova que surgir;
-  **não** inclui mais `party`/`office`, que viraram `entity_partido`/
-  `entity_cargo` acima e foram removidos de `entity_tags` na mesma
-  migration; `[]` quando não há vínculo).
+Campos novos no `returns table`: `entity_type`, `entity_cargo`,
+`entity_partido`, `entity_ideologia`, `entity_influence_level`,
+`entity_tags jsonb` (array de `{tag_type, tag_value}` — hoje cobre
+`state`/`power_branch`/`stance_to_candidate`, **não** `party`/`office`,
+que viraram `entity_partido`/`entity_cargo` e foram removidos de
+`entity_tags`, ver `data-model.md`), e **`mentions numeric`** — ✅ achado
+nesta revisão: `g.volume` (soma de menções por autor) já era calculado
+para ordenar o ranking (`order by g.volume desc`) mas **nunca era
+devolvido ao client** — gap real, fechado na mesma migration por ser a
+mesma linha de código, e porque o usuário pediu explicitamente
+"menções" como uma das perspectivas de avaliação.
 
-Só considera Entities com `is_active = true` — uma Entity desativada
+Só considera Entities com `is_active = true` (`join entities e on ... and
+e.is_active = true` dentro de `entity_match`) — uma Entity desativada
 (`entity-registration.md`, "Regras de negócio") deixa de enriquecer o
 ranking, mesmo que a conta ainda exista em `entity_accounts` (efeito
 imediato de "Desativar": some do enriquecimento sem precisar apagar a
 conta).
+
+⚠️ **`p_period_start`/`p_period_end` continuam aceitos mas não usados por
+esta function** (achado confirmado nesta revisão, não uma regressão desta
+mudança) — `bw_query_top_authors`/`bw_query_top_tweeters` não guardam
+histórico por período: `metric_week` é só um marcador de frescor/throttle
+(mesmo caráter já documentado pra `bw_query_topics.metric_week` em
+`foundation/data-model.md`), a tabela sempre reflete o snapshot mais
+recente, não uma série histórica. Diferente de um bug real (como o de
+`daily_metrics`/`get_metrics_cards` já corrigidos em sessões anteriores),
+**não há dado histórico nenhum pra esta function filtrar por período** —
+tentar "consertar" isso fabricaria um filtro sobre um dado que não existe.
+Documentado aqui em vez de silenciosamente ignorado, e o parâmetro
+permanece na assinatura só por consistência com as demais functions do
+módulo.
 
 ## Extensão do envelope (`standard-json-envelope.md`, `AuthorRow`)
 
@@ -99,6 +175,7 @@ entity_partido: string | null         // entities.partido (sigla, ex: "PT")
 entity_ideologia: string | null       // entities.ideologia (ex: "centro-esquerda")
 entity_influence_level: string | null // entities.influence_level (low|medium|high|critical)
 entity_tags: { tag_type: string; tag_value: string }[]  // sempre array, nunca null
+mentions: number                      // g.volume — ✅ novo (2026-08-01), nunca opcional/null
 ```
 
 `entity_cargo`/`entity_partido`/`entity_ideologia` são campos fixos (não
@@ -114,27 +191,29 @@ rigidez que `entity_tags` foi desenhada para evitar no lado do banco.
 
 ## Onde isso aparece
 
-✅ **A página dedicada "Autores e Influenciadores" (`/authors`) já existe e
-já está implementada** (`intelligence-center/authors-and-influencers.md`,
-2026-07-25 — implementada em paralelo à redação desta spec, não fazia
-parte do escopo original quando esta seção foi pensada). Ela própria já
-lista, em "Gaps conhecidos", exatamente o que este módulo fecha:
-"Classificação de espectro político/tipo de autor (`entities`/
-`entity_tags`) — depende de Sprint 3, não implementada. A página de hoje
-mostra ranking por alcance/engajamento, não uma visão editorializada por
-afiliação." O enriquecimento descrito nesta spec passa a aparecer, sem
-mudança de layout própria deste módulo, em **todo** lugar que já renderiza
-o componente `AuthorsList` (`components/intelligence-center/authors-list.tsx`)
-— `/authors` (ranking completo, escopo Query inteira), detalhe de
-Narrativa (principais disseminadores), `/platforms` (perfis relevantes por
-plataforma), `/themes` (autores e comunidades por pauta, escopo
-`'pautas'`). Quando `entity_id` vem preenchido, a linha do autor ganha um
-selo compacto (ex: tipo + partido, quando existir essa dimensão) ao lado
-do nome — quando `entity_id` é `null` (autor não cadastrado como Entity, o
-caso mais comum hoje), a linha permanece exatamente como já é, sem nenhuma
-mudança visual. Nenhuma mudança de escopo/filtro/rota é necessária em
-`authors-and-influencers.md` para isso — é só `AuthorsList` passando a
-usar campos que já chegam no mesmo `AuthorRow` que ela já consome.
+`components/intelligence-center/authors-list.tsx` é o componente
+compartilhado que recebe o enriquecimento — hoje renderizado em 3 lugares
+(✅ confirmado por grep nesta sessão, corrige a lista desatualizada que
+esta spec tinha antes — `/platforms` **não** renderiza mais
+`AuthorsList` desde 2026-07-25, foi movido para a página dedicada
+`/authors`):
+
+| Página | Envelope/escopo | `p_scope` |
+|---|---|---|
+| `/authors` (`get-page-authors`) | Ranking completo, Query inteira | `null` |
+| `/themes` (`get-page-themes`) | Só autores que citaram alguma pauta | `'pautas'` |
+| `/narratives/[id]` (`get-narrative-detail`) | Só a Narrativa aberta | `null` (escopado via `filters.narratives`) |
+
+O desenho completo de UI (como o selo de partido/ideologia aparece, o
+painel de detalhe, os novos gráficos que cruzam menções/sentimento com
+partido/ideologia) é responsabilidade de `intelligence-center`, não deste
+módulo — ver
+[`intelligence-center/authors-and-influencers.md`](../intelligence-center/authors-and-influencers.md),
+"Redesenho interativo (2026-08-01)". Este arquivo garante só que o dado
+(`entity_id`/`entity_cargo`/`entity_partido`/`entity_ideologia`/
+`entity_tags`/`mentions`) chega correto no `AuthorRow` — quando `entity_id`
+é `null` (autor não cadastrado como Entity), a linha degrada normalmente,
+sem nenhum campo extra preenchido.
 
 ## Cadastro rápido a partir de um autor já visto
 
@@ -191,19 +270,21 @@ estabelecido em `communication-registration.md`.
 - Alteração em `get_authors_ranking` (função SQL existente,
   `aggregated-metrics/sql-aggregation.md`) — aditiva, mesma assinatura,
   só ganha os `LEFT JOIN`s descritos acima.
-- Alteração em `AuthorRow`/`standard-json-envelope.md` — 3 campos novos
-  opcionais, ver "Extensão do envelope" acima. Propagar em
-  `@reputation/shared-types` (`packages/shared-types/src/envelope.ts`) e,
-  por Princípio técnico 5, nas 6 cópias inline das Edge Functions que
-  usam `AuthorRow` (`get-page-narratives`... — ver
-  `aggregated-metrics/service-layer-aggregation.md`).
+- Alteração em `AuthorRow`/`standard-json-envelope.md` — 7 campos novos
+  (6 de entity + `mentions`), ver "Extensão do envelope" acima. Propagar
+  em `@reputation/shared-types` (`packages/shared-types/src/envelope.ts`)
+  e, por Princípio técnico 5, nas **7** cópias inline das Edge Functions
+  que usam `AuthorRow` (`get-page-overview`, `get-page-narratives`,
+  `get-narrative-detail`, `get-page-sentiment`, `get-page-platforms`,
+  `get-page-themes`, `get-page-authors` — ✅ lista corrigida nesta sessão,
+  a nota anterior dizia "6" porque `get-page-authors` ainda não existia
+  quando esta spec foi escrita em 2026-07-13).
 - `components/intelligence-center/authors-list.tsx` ganha o selo
   compacto + a ação "+ Cadastrar Entidade" — trabalho de
   `intelligence-center`, não deste módulo, mas listado aqui porque é o
   único componente de UI afetado por esta funcionalidade; por ser
-  compartilhado por `/authors`/`platforms`/`themes`/detalhe de Narrativa
-  (ver "Onde isso aparece" acima), uma única mudança neste componente
-  cobre todas as telas de uma vez.
+  compartilhado pelas 3 páginas da tabela acima ("Onde isso aparece"),
+  uma única mudança neste componente cobre todas de uma vez.
 
 ## Referências relacionadas
 

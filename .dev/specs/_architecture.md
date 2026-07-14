@@ -119,6 +119,13 @@ fallback), mas fica mais completo com ela.
 > para `cargo`; `partido`/`ideologia` viraram colunas novas (a segunda é a primeira classificação
 > de melhor esforço/não-oficial do módulo, ver `entities/data-model.md`). Dado já semeado
 > reorganizado nas colunas novas, nada buscado de novo.
+>
+> ✅ **`entities/author-linking.md` implementado (2026-08-01)** — migration `20260801010000`,
+> `LEFT JOIN entity_accounts`/`entities`/`entity_tags` em `get_authors_ranking`, propagado nas 7
+> Edge Functions `get-page-*`/`get-narrative-detail`. Nó **permanece amarelo** — só
+> `entity-registration.md` (CRUD pela UI) ainda não tem código; ver
+> `intelligence-center/authors-and-influencers.md`, "Redesenho interativo", pro consumo completo
+> (dispersão/breakdowns/painel de detalhe em `/authors`).
 
 > ✅ **`event-radar` passou a verde em 2026-07-31** — 5 das 6 funcionalidades do módulo
 > implementadas em sessões consecutivas (2026-07-27 a 2026-07-31): `detection-engine` (1.1),

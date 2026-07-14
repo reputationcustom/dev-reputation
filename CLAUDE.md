@@ -4126,6 +4126,116 @@ schema exatamente como já especificado em `data-model.md`.
   não executada contra um banco de verdade. Sem componente TypeScript/
   frontend (SQL puro, sem Edge Function).
 
+### `frontend-highlights-feed` (2026-08-01) — primeiro spec de frontend do módulo, só documentação
+
+Pedido do usuário: "crie a documentação do frontend do módulo event-radar
+de acordo com o que foi desenvolvido. A ideia é que o usuário tenha uma
+visão rápida e fácil do que aconteceu nas últimas 72h." Sessão
+puramente de Fase 1 (Especificação) — nenhum código escrito, seguindo a
+própria divisão em duas fases que `overview.md` já define pro módulo.
+Novo arquivo: `event-radar/frontend-highlights-feed.md` (`status:
+rascunho`).
+
+- **Não reaproveita o bloco `highlights` genérico já especificado em
+  `aggregated-metrics/standard-json-envelope.md`** — aquele bloco é
+  filtrado pelo período selecionado no header de cada página
+  (`get_active_highlights`), o que é certo pra "highlights relevantes à
+  janela que estou olhando agora" mas errado pro pedido específico desta
+  sessão: "últimas 72h" tem que ser sempre as mesmas 72h corridas,
+  independente de qual período o usuário tenha selecionado em qualquer
+  página. Por isso o spec propõe uma fonte de dado própria
+  (`get_recent_highlights`, function nova, ainda não implementada) — os
+  dois blocos convivem, servindo propósitos diferentes.
+- **Onde vive**: um widget novo ("Radar de Eventos", subtítulo "Últimas 72
+  horas") na Visão Geral (`/overview`), no lugar hoje ocupado pelo
+  `HighlightsPanel` vazio (`insights-panel.tsx`) — não uma rota nova.
+  `overview.md`, "Rotas/Páginas", atualizado pra registrar isso (antes
+  dizia que o módulo não expõe nenhuma UI própria).
+- **Inclui eventos já fechados** (`closed_at` preenchido), ordenado por
+  `created_at` desc (linha do tempo), não por `severity_score` — diferente
+  do bloco `highlights` genérico, que só mostra ativos e ordena por
+  severidade. Aqui o objetivo é "o que aconteceu", não "o que está
+  acontecendo agora".
+- **Feedback do analista** (`feed_event_feedback`, schema já implementado
+  na sessão anterior) ganha finalmente um lugar de verdade pra ser usado —
+  um menu "⋮" por card com as 4 opções já existentes no schema, `INSERT`
+  direto do cliente (sem Edge Function, mesma decisão já tomada quando o
+  schema foi criado).
+- **Gap real encontrado e documentado, não bloqueante**: o tipo
+  `Highlight` (`packages/shared-types/src/envelope.ts`) não tem `id` nem
+  `created_at` — sem eles não dá pra vincular feedback a um card nem
+  calcular "há Xh"/ordenar cronologicamente. Resolvido no próprio desenho
+  do spec, não alterando o contrato do envelope existente: este widget usa
+  sua própria forma de resposta (que já nasce com `id`/`created_at`), não
+  o tipo `Highlight` padrão — evita o risco de alterar um contrato já
+  consumido por 6 Edge Functions em produção só por causa de um widget
+  novo.
+- **Uma decisão de implementação deixada em aberto de propósito** (não é
+  uma decisão de produto, não precisa do usuário): expor
+  `get_recent_highlights` via `get-page-overview` (mais um bloco no
+  envelope daquela página) ou via RPC chamada direto pelo cliente (mais
+  simples, já que não depende do período/filtros do header como o resto
+  do envelope) — registrado no spec pra decidir na Fase 2.
+- **Fora de escopo, deliberadamente**: página dedicada de histórico
+  completo/paginado, filtro por tipo/severidade dentro do widget (contra
+  o próprio objetivo de "visão rápida"), notificação em tempo real.
+
+### `feed_events.severity_score` desatualizado — bug real encontrado e corrigido antes da Fase B (2026-08-02)
+
+Pedido do usuário: "algum ajuste para fazer na fase 2?", mostrando o
+subgrafo `AGG` ("Fase B") de `fluxo-aggregated-metrics.md` — o mesmo
+diagrama que trava A1 (`get_active_highlights`)/A2 (boost de
+`risk_score`)/A3 (`ai-synthesis` Camada 1) até `feed_events` estar sendo
+populada de verdade (o que já é o caso desde 2026-07-31). Revisão desse
+diagrama antes de liberar a Fase B encontrou um bug real, não implementado
+ainda nesta sessão como parte de Fase B em si.
+
+- **O bug**: A2 lê `risk_score = greatest(risk_score calculado,
+  severity_score do evento ativo)` a partir de `feed_events` — tem que ser
+  um evento **publicado**, `sql-aggregation.md` já dizia isso, nunca
+  `radar_staging_events` direto (que inclui `should_publish: false`). Só
+  que 1.3 (`severity`) recalcula `severity_score`/`severity` em
+  `radar_staging_events` a cada ciclo de 15min pra **todo** evento ativo,
+  publicado ou não — e `feed_events.severity_score` só era gravado **uma
+  vez**, no momento em que a Edge Function `event-radar-agent-orchestrator`
+  publicava o card (1.4). Resultado: um card publicado ficava com
+  severidade cada vez mais desatualizada em relação ao valor real em
+  `radar_staging_events`, enquanto o evento de origem seguisse ativo —
+  exatamente o mesmo problema que o espelhamento de `closed_at`
+  (migration `20260731020000`) já resolvia pra "o card sumir quando o
+  evento fecha", só que pra severidade em vez de status. Sem esse fix, A2
+  (quando implementado) leria um número congelado, cada vez mais errado.
+- **Correção**: mais um `CREATE OR REPLACE` de `run_event_detection()`
+  (migration `20260802000000`, mesmo padrão já usado pra 1.2/1.3/1.6) —
+  um novo bloco logo depois de 1.3 (severity), espelhando
+  `severity_score`/`severity` pro `feed_events` vinculado, só quando o
+  evento continua ativo (`closed_at is null`) e o valor realmente mudou
+  (`is distinct from`, evita `UPDATE` desnecessário na maioria dos
+  ciclos). Nenhuma mudança de schema.
+- **Precisão adicionada em `sql-aggregation.md`/`fluxo-aggregated-metrics.md`**:
+  A2 lê especificamente `MAX(feed_events.severity_score)` entre as linhas
+  com `related_narrative_id = narrativa` e `closed_at IS NULL` — uma
+  Narrativa pode ter mais de um evento ativo simultâneo (ex: um de volume
+  e um de sentimento), daí o `MAX`, nunca soma. `get_active_highlights`
+  (A1) também ganhou uma nota: filtrar por plataforma (quando aplicável)
+  exige `JOIN radar_staging_events` via `feed_events.radar_staging_event_id`
+  — `feed_events` não duplica `scope_type`/`scope_id`.
+- **Achado de documentação, não de código**: o "resumo executivo em lote
+  (últimas 72h)" no rodapé do diagrama de sincronismo de
+  `fluxo-aggregated-metrics.md` nunca foi implementado — já estava fora de
+  escopo de 1.4 (ver nota de 2026-07-31 acima), mas o diagrama ainda o
+  desenhava como parte do fluxo normal, sem qualquer aviso. Marcado
+  explicitamente como aspiracional, não confundir com o widget "Radar de
+  Eventos" (últimas 72h) de `frontend-highlights-feed.md`, que é uma
+  leitura direta de `feed_events`, não uma terceira chamada de IA em lote.
+- **Fase B (A1/A2/A3) continua não implementada** — esta sessão só
+  corrigiu a pré-condição que A2 precisava ter antes de poder ler dado
+  confiável de `feed_events`, não implementou nenhuma das 3 etapas.
+- **Verificação**: migration revisada manualmente linha por linha — sem
+  acesso a um Supabase real nesta sessão (mesma limitação recorrente), não
+  executada contra um banco de verdade. Sem componente TypeScript/
+  frontend (SQL puro).
+
 ### Módulo `entities` — spec completa + `data-model.md` implementado + seed real de partidos/parlamentares (2026-07-13)
 
 Duas sessões na mesma data. **Primeira**: usuário pediu a spec do módulo de
@@ -4449,6 +4559,97 @@ mudam, todo o resto (scope/momentum/tendência/risco/tags) é idêntico.
 `npx tsc --noEmit` limpo (SQL puro). **Não executado contra um banco
 real** — mesma limitação recorrente de toda sessão sem credenciais de
 deploy; `git push` pra `develop` é o próximo passo.
+
+### Redesenho de "Autores e Influenciadores" com vínculo real a `entities` (2026-08-01)
+
+Pedido do usuário, 2 turnos na mesma sessão: (1) "revise a página e o
+backend de autores e influenciadores e sugira novas visualizações
+integrando com a tabela entities... totalmente interativa... partido,
+ideologia, menções, sentimentos"; (2) depois de um protótipo interativo
+aprovado ("protótipo aprovadíssimo"): "pode escrever a spec e iniciar o
+desenvolvimento".
+
+**Revisão (turno 1)** — auditoria de código (não de spec) encontrou que o
+vínculo com `entities` descrito em `entities/author-linking.md` desde
+2026-07-13 **nunca tinha sido implementado**: `get_authors_ranking`
+sempre devolvia `entity_id`/`risk_level` como `null` hardcoded, sem
+nenhum `LEFT JOIN` real; `AuthorsList` não tinha nenhum código referente a
+`entities`. Achado também que a lista completa de autores/`p_period_start`/
+`p_period_end` nunca eram usados pela function (documentado como
+limitação estrutural, não bug — `bw_query_top_authors`/`bw_query_top_tweeters`
+não guardam histórico por período, só o snapshot mais recente). Protótipo
+HTML interativo (Artifact, dados ilustrativos) construído seguindo o skill
+`dataviz` do workspace, para o usuário avaliar o desenho antes de
+implementar de verdade.
+
+**Implementação (turno 2)**:
+- **Specs atualizadas primeiro**: `entities/author-linking.md` (SQL exata
+  do `LEFT JOIN`, contra a definição real da function, não uma suposição)
+  e `intelligence-center/authors-and-influencers.md` (nova seção
+  "Redesenho interativo" — toda a UI nova documentada campo a campo antes
+  de escrever código), `aggregated-metrics/standard-json-envelope.md`
+  (`AuthorRow` formalizado), `_design-tokens.md`/`tailwind.config.ts`
+  (paleta nova "Ideologia" — 5 faixas esquerda→direita, violeta↔teal
+  deliberadamente distinto de vermelho/verde de sentimento e laranja/
+  vermelho de risco, pra não sugerir "esquerda é ruim"/confundir as 3
+  escalas quando aparecem juntas).
+- **Migration `supabase/migrations/20260801010000_authors_entity_enrichment.sql`**
+  — `drop function`/`create or replace function get_authors_ranking`
+  (mesma assinatura de entrada) ganhando `entity_match`/`entity_tags_agg`
+  (CTEs novas, `LEFT JOIN` só depois do `grouped` já existente, nenhum
+  cálculo de ranking mudou) e a coluna `mentions` (`g.volume`, já
+  calculada só pra `order by`, nunca devolvida). Vínculo por
+  `lower(trim(entity_accounts.username)) = lower(trim(author))`,
+  desempatado por `created_at` quando o mesmo handle existe em 2
+  `entity_accounts` diferentes (mesma limitação já aceita de "JOIN só por
+  username, não platform").
+- **`AuthorRow` ganhou 7 campos** (`mentions`, `entity_type`,
+  `entity_cargo`, `entity_partido`, `entity_ideologia`,
+  `entity_influence_level`, `entity_tags`) — `packages/shared-types/src/envelope.ts`
+  + a mesma mudança replicada manualmente (Princípio técnico 5, sem
+  ferramenta de propagação automática) nas **7** Edge Functions
+  `get-page-{overview,narratives,sentiment,platforms,themes,authors}`/
+  `get-narrative-detail` (a lista cresceu de 6 pra 7 desde que
+  `get-page-authors` foi criada em 2026-07-25 — a nota antiga de
+  `author-linking.md` ainda dizia "6", corrigida nesta sessão).
+- **Frontend**: `authors-list.tsx` evoluiu de lista estática cortada em 15
+  linhas pra tabela ordenável/paginada (`Pagination`/`DEFAULT_PAGE_SIZE`)
+  com colunas Partido/Ideologia/Menções — continua sendo a mesma
+  componente reusada em `/themes` e no detalhe de Narrativa (prop
+  `onSelectAuthor` é opcional, as 2 páginas mais simples não precisam
+  passar). Novo helper `author-color.ts` (sem JSX) centraliza
+  `dominantSentiment`/cor por ideologia (token fixo)/partido (hash
+  determinístico, mesmo mecanismo já usado por `trend-line-chart.tsx` pra
+  grupos sem paleta conhecida) — reusado por 6 componentes, evita 6
+  implementações divergentes da mesma regra de cor. 5 componentes novos em
+  `components/intelligence-center/`: `charts/author-scatter-chart.tsx`
+  (dispersão Alcance×Sentimento, SVG à mão com `viewBox` acompanhando a
+  largura real via `ResizeObserver` — mesmo padrão de
+  `trend-line-chart.tsx`, evita o bug de 2026-07-19 de rótulo escalando
+  com a largura do card), `author-ideology-breakdown.tsx` (menções por
+  ideologia + sentimento médio por ideologia, ordem sempre fixa
+  esquerda→direita), `author-party-breakdown.tsx` (top 8 partidos por
+  alcance, ordem por valor), `author-detail-panel.tsx` (slide-over lateral,
+  não modal central), `author-filters-toolbar.tsx` ("Colorir por" +
+  busca/partido/sentimento/só-vinculados + chips de ideologia). `/authors`
+  (`app/(intelligence-center)/(analytics)/authors/page.tsx`) reescrita
+  pra orquestrar tudo — toda a interatividade é `useState`/`useMemo` local
+  sobre `envelope.authors` já carregado, **nenhuma chamada de rede nova**
+  por filtro/ordenação/clique (mesmo princípio de `dominantSentiment()`
+  já existente, agora formalizado como regra da spec).
+- **Não implementado nesta sessão**: o botão "+ Cadastrar Entidade" no
+  painel de detalhe aparece (só pra admin, `useUserProfile().isAdmin`) mas
+  ainda não abre um formulário de verdade — depende de
+  `entity-registration.md` (CRUD do módulo `entities`, ainda `pronto`, não
+  implementado) existir primeiro.
+- **Verificação**: `npx tsc --noEmit` limpo; `npm run build` limpo (19
+  rotas, só 2 warnings pré-existentes e não relacionados sobre `<img>` em
+  `sidebar.tsx`/`layout.tsx`) — um warning novo de `react-hooks/exhaustive-deps`
+  em `authors/page.tsx` (`allAuthors` recriado a cada render) foi
+  encontrado e corrigido (`useMemo` próprio) antes de finalizar. **Não
+  executado contra um banco real** — sem credenciais/deploy neste
+  ambiente, mesma limitação recorrente de toda sessão sem acesso ao
+  Supabase Dashboard já registrada em várias entradas deste arquivo.
 
 ## Directory structure
 

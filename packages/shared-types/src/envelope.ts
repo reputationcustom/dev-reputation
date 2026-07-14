@@ -159,16 +159,42 @@ export interface NarrativeRow {
   tags: string[];
 }
 
+// Item de AuthorRow.entity_tags — espelha entity_tags linha a linha (state/
+// power_branch/stance_to_candidate, qualquer dimensão nova) — nunca party/
+// office, que viraram entity_partido/entity_cargo abaixo. Ver
+// .dev/specs/entities/data-model.md.
+export interface AuthorEntityTag {
+  tag_type: string;
+  tag_value: string;
+}
+
 export interface AuthorRow {
   entity_id: string | null;
   name: string;
   type: string;
   reach: number;
   engagement: number;
+  // ✅ Adicionado 2026-08-01 — soma de menções do autor (bw_query_top_authors/
+  // bw_query_top_tweeters), já calculada internamente pra ordenar o ranking
+  // desde sempre, nunca tinha sido exposta ao client. Nunca null.
+  mentions: number;
   // Null in practice today: unlike narratives (get_narratives_table's full
   // "Scores de Narrativa" formula), no spec defines a risk formula for an
   // individual author — see sql-aggregation.md, get_authors_ranking.
   risk_level: RiskLevel | null;
+  // ✅ Adicionados 2026-08-01 (.dev/specs/entities/author-linking.md) —
+  // enriquecimento aditivo via LEFT JOIN entity_accounts/entities/entity_tags
+  // (por username, lower/trim — nunca uma FK real). Todos null/[] quando o
+  // autor não tem nenhuma Entity vinculada (a maioria hoje) ou a Entity
+  // vinculada está is_active=false.
+  entity_type: string | null; // entities.type ("person"|"media_outlet"|"party"|...)
+  entity_cargo: string | null; // entities.cargo (ex: "Deputado Federal")
+  entity_partido: string | null; // entities.partido (sigla, ex: "PT")
+  // entities.ideologia — melhor esforço/não-oficial, ver data-model.md.
+  // Vocabulário em uso: esquerda | centro-esquerda | centro | centro-direita | direita.
+  entity_ideologia: string | null;
+  entity_influence_level: RiskLevel | null; // entities.influence_level (severity_level)
+  entity_tags: AuthorEntityTag[]; // sempre array, nunca null
   // Null para a maioria dos autores: só os top 10 por volume da Query
   // inteira são enriquecidos com temas por autor (bw_query_author_topics),
   // única fonte confiável de sentimento por autor — ver

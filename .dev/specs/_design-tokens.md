@@ -123,6 +123,27 @@ diferentes?") — sim, `risk-high` e `risk-critical` são tons distintos:
 `neutral-gray` (`#c9cdd3` / `#8a8f98`) segue disponível pra outros usos
 neutros fora dos 4 scores acima (ex: estado vazio, texto secundário).
 
+### Ideologia (`entities.ideologia`, 5 faixas — esquerda → direita)
+
+✅ **Adicionado 2026-08-01** — `intelligence-center/authors-and-influencers.md`,
+"Redesenho interativo" (dispersão/badges de Autores e Influenciadores).
+Diverging de 2 polos (violeta↔teal) com neutro cinza no centro —
+**deliberadamente não reusa vermelho/verde** (já significam sentimento
+negativo/positivo neste produto) nem laranja/vermelho de risco, pra não
+sugerir "esquerda é ruim"/"direita é boa" ou confundir com as outras 2
+escalas quando aparecem juntas (ex: um autor de esquerda com sentimento
+negativo não deve ler como "duplo vermelho"). Ordem sempre fixa
+esquerda→direita nos gráficos (nunca reordenado por valor) — é o próprio
+eixo político, não um ranking.
+
+| Ideologia | Token | Hex (texto/ícone) | Hex (fundo) |
+|---|---|---|---|
+| Esquerda | `ideology-left` | `#6d28d9` | `#f3ecfd` |
+| Centro-esquerda | `ideology-center-left` | `#a78bda` | `#f5f1fb` |
+| Centro | `ideology-center` | `#8a8f98` | `#f3f4f6` (= `neutral-gray`) |
+| Centro-direita | `ideology-center-right` | `#5fb8ba` | `#eaf7f7` |
+| Direita | `ideology-right` | `#0d9488` | `#e3f6f4` |
+
 ## Cores — plataformas
 
 Dots/linhas identificadoras por plataforma no protótipo — **não são as

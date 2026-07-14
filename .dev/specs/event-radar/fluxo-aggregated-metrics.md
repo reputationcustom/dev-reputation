@@ -1,7 +1,7 @@
 ---
 tipo: cross-module-flow
 módulos: [event-radar, aggregated-metrics]
-atualizado: 2026-07-25
+atualizado: 2026-08-02
 ---
 
 # Fluxo e Sincronismo — Radar de Eventos ↔ Métricas Agregadas
@@ -16,6 +16,27 @@ atualizado: 2026-07-25
 > escreve, agora que existe um `data-model.md` consolidado para consultar. Toda referência a este
 > arquivo em `_index.md`/`_architecture.md`/`overview.md`/`aggregated-metrics-integration.md` foi
 > atualizada para o novo caminho na mesma sessão.
+>
+> ✅ **R1–R6 implementados (2026-07-27 a 2026-08-01), diagrama revisado
+> (2026-08-02)** — pedido do usuário: "algum ajuste para fazer na fase 2?"
+> (Fase B, o subgrafo `AGG` abaixo), depois de ver o mesmo diagrama desta
+> seção. O gate "só depois de R6 publicar eventos reais" **está satisfeito**
+> — `feed_events` existe e está sendo populada desde 2026-07-31. Achado
+> real ao revisar antes de liberar a Fase B: A2 (`risk_score` boost) lê
+> `severity_score` de `feed_events` (o evento tem que estar **publicado**,
+> não só detectado — ver nota em "Tabelas por etapa" abaixo), mas
+> `feed_events.severity_score` só era gravado uma vez, no momento da
+> publicação (1.4) — 1.3 (`severity`) recalcula `severity_score` em
+> `radar_staging_events` a cada ciclo de 15min pra todo evento ativo,
+> publicado ou não, então um card publicado ficava com severidade cada vez
+> mais desatualizada enquanto o evento de origem seguisse ativo. Corrigido
+> na migration `20260802000000` — mais um espelhamento dentro de
+> `run_event_detection()` (mesmo padrão já usado pra `closed_at`,
+> migration `20260731020000`), rodando logo depois de 1.3, na mesma
+> transação. Ver `CLAUDE.md`, "Módulo `event-radar`", pro detalhe
+> completo. Nenhuma das etapas A1/A2/A3 (Fase B) foi implementada nesta
+> sessão — só a correção que as etapas de `event-radar` (R1-R6)
+> precisavam ter antes de Fase B poder ler dado confiável.
 
 Este documento existe para deixar visual o que está espalhado em texto nos dois módulos: como o
 Radar de Eventos e as Métricas Agregadas se conectam, **em que ordem cada peça deve ser
@@ -35,21 +56,21 @@ flowchart TD
         FOUND["foundation<br/>bw_query_metrics_daily/weekly/monthly/hourly<br/>bw_query_metrics_daily_by_platform<br/>narrative_metrics"]
     end
 
-    subgraph RADAR["event-radar — construir nesta ordem, uma etapa por sessão"]
+    subgraph RADAR["event-radar — implementado (2026-07-27 a 2026-08-01)"]
         direction TB
-        R1["1.1 detection-engine (SQL)<br/>lê agregados de foundation<br/>escreve radar_staging_events"]
-        R2["1.2 deduplication-grouping (SQL)<br/>lê/escreve radar_staging_events<br/>(upsert por chave de dedup + closed_at)"]
-        R3["1.3 severity (SQL)<br/>escreve radar_staging_events.severity_score/severity"]
-        R4["1.6 volume-limits (SQL)<br/>filtra radar_staging_events por cap diário<br/>(entra ANTES da IA, não depois)"]
-        R5["1.4 agent-orchestrator (1 chamada IA/evento)<br/>lê radar_staging_events já filtrado"]
-        R6["1.5 schema-integration<br/>escreve feed_events (toda severidade, sem aprovação manual)<br/>+ feed_event_feedback"]
+        R1["✅ 1.1 detection-engine (SQL)<br/>lê agregados de foundation<br/>escreve radar_staging_events"]
+        R2["✅ 1.2 deduplication-grouping (SQL)<br/>lê/escreve radar_staging_events<br/>(upsert por chave de dedup + closed_at)"]
+        R3["✅ 1.3 severity (SQL)<br/>escreve radar_staging_events.severity_score/severity<br/>+ espelha em feed_events se já publicado (fix 2026-08-02)"]
+        R4["✅ 1.6 volume-limits (SQL)<br/>filtra radar_staging_events por cap diário<br/>(entra ANTES da IA, não depois)"]
+        R5["✅ 1.4 agent-orchestrator (1 chamada IA/evento)<br/>lê radar_staging_events já filtrado"]
+        R6["⚠️ 1.5 schema-integration<br/>escreve feed_events — feito (parte do código de 1.4)<br/>feed_event_feedback — schema pronto, sem UI"]
         R1 --> R2 --> R3 --> R4 --> R5 --> R6
     end
 
-    subgraph AGG["aggregated-metrics — Fase B (só depois de R6 publicar eventos reais)"]
+    subgraph AGG["aggregated-metrics — Fase B (gate satisfeito — R6 já publica eventos reais, ainda não implementada)"]
         direction TB
         A1["get_active_highlights<br/>SELECT filtrado em feed_events"]
-        A2["risk_score = greatest(risk_score calculado, severity_score de evento ativo)<br/>(get_narratives_table)"]
+        A2["risk_score = greatest(risk_score calculado, MAX(severity_score) dos feed_events ativos da Narrativa)<br/>(get_narratives_table)"]
         A3["ai-synthesis Camada 1<br/>2+ highlights → page_narrative_synthesis"]
         A1 --> A3
         A2 -.-> A3
@@ -61,7 +82,7 @@ flowchart TD
     A1 --> A3
 
     style PRE fill:#eaf3ea,stroke:#2e7d32
-    style RADAR fill:#fdf1e0,stroke:#c07a00
+    style RADAR fill:#c3e6cb,stroke:#2e7d32
     style AGG fill:#eaeefb,stroke:#3355aa
 ```
 
@@ -77,13 +98,13 @@ implementado, ele passa a alimentar `aggregated-metrics` (A1–A3, "Fase B").
 | Etapa | Lê | Escreve |
 |---|---|---|
 | 1.1 detection-engine | `bw_query_metrics_daily`/`weekly`/`monthly`/`hourly`/`_by_platform`, `narrative_metrics` | `radar_staging_events` (INSERT) |
-| 1.2 deduplication-grouping | `radar_staging_events` (linhas novas) | `radar_staging_events` (UPDATE se já ativo, INSERT se novo, `closed_at` se encerrado) |
-| 1.3 severity | `radar_staging_events` (ativos deduplicados) | `radar_staging_events.severity_score`/`severity` (UPDATE) |
+| 1.2 deduplication-grouping | `radar_staging_events` (linhas novas) | `radar_staging_events` (UPDATE se já ativo, INSERT se novo, `closed_at` se encerrado) — cascade pra `feed_events.closed_at` do card vinculado |
+| 1.3 severity | `radar_staging_events` (ativos deduplicados) | `radar_staging_events.severity_score`/`severity` (UPDATE) — ✅ **cascade pra `feed_events.severity_score`/`severity` (migration `20260802000000`)**, quando o `radar_staging_events` já tiver um `feed_events` vinculado e ainda ativo |
 | 1.6 volume-limits | `radar_staging_events` (candidatos com severidade), contagem do dia em `feed_events` | nenhuma (só filtra o que segue para 1.4) |
 | 1.4 agent-orchestrator | `radar_staging_events` (já filtrado pelo cap) | via 1.5 |
-| 1.5 schema-integration | saída estruturada do agent | `feed_events` (INSERT, qualquer severidade), `feed_event_feedback` (INSERT, assíncrono, vindo do analista) |
-| A1 `get_active_highlights` | `feed_events` | nenhuma (leitura pura) |
-| A2 `risk_score` boost | `feed_events`/`radar_staging_events.severity_score` (evento ativo da Narrativa) | nenhuma (calculado sob demanda em `get_narratives_table`) |
+| 1.5 schema-integration | saída estruturada do agent | `feed_events` (INSERT, qualquer severidade — já implementado, dentro do próprio código de 1.4), `feed_event_feedback` (INSERT direto do cliente, assíncrono, vindo do analista — schema pronto, sem UI ainda) |
+| A1 `get_active_highlights` | `feed_events` — ⚠️ escopo por plataforma (quando aplicável) exige `JOIN radar_staging_events` via `feed_events.radar_staging_event_id` pra recuperar `scope_type`/`scope_id` (`feed_events` não duplica essas colunas) | nenhuma (leitura pura) |
+| A2 `risk_score` boost | `feed_events` **apenas** (nunca `radar_staging_events` direto — só evento **publicado** conta) — `MAX(severity_score)` entre os `feed_events` com `related_narrative_id = narrativa` e `closed_at IS NULL` | nenhuma (calculado sob demanda em `get_narratives_table`) |
 | A3 `ai-synthesis` Camada 1 | `feed_events.summary`/`explanation` (2+ highlights) | `page_narrative_synthesis` |
 
 ## 2. Sincronismo — quando cada parte roda
@@ -132,6 +153,14 @@ sequenceDiagram
 
 **Pontos de atenção no sincronismo:**
 
+- ⚠️ **O "resumo executivo em lote (últimas 72h)" no rodapé do diagrama acima NÃO está
+  implementado** — `agent-orchestrator.md` menciona essa feature ("antigo Agent 4") como
+  rodando separado, em lote, mas nunca a descreveu no próprio "Fluxo principal" desse arquivo;
+  ficou deliberadamente fora do escopo de 1.4 (ver `CLAUDE.md`, "Módulo `event-radar`",
+  2026-07-31). Quem vem depois consultar este diagrama: essa parte do fluxo é aspiracional, não
+  uma promessa de código já existente — não confundir com o widget "Radar de Eventos" (últimas
+  72h) especificado em `frontend-highlights-feed.md`, que é uma **leitura** direta de
+  `feed_events` pelo frontend, não uma terceira chamada de IA em lote.
 - O radar roda **independente** de qualquer usuário estar olhando a tela — ele é um cron
   contínuo. As páginas só leem o que já está pronto em `feed_events`.
 - ✅ **`page_cache` já existe** (migration `20260725040000`, ver `CLAUDE.md`) — o TTL de 5min é

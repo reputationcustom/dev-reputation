@@ -68,6 +68,21 @@ const config: Config = {
         "risk-critical": "#c62828",
         "risk-critical-bg": "#fbe3e1",
 
+        // Ideologia (entities.ideologia, 5 faixas esquerda→direita) — ver
+        // .dev/specs/_design-tokens.md. Diverging violeta↔teal com neutro
+        // cinza no centro — deliberadamente não reusa vermelho/verde
+        // (sentimento) nem laranja/vermelho (risco).
+        "ideology-left": "#6d28d9",
+        "ideology-left-bg": "#f3ecfd",
+        "ideology-center-left": "#a78bda",
+        "ideology-center-left-bg": "#f5f1fb",
+        "ideology-center": "#8a8f98",
+        "ideology-center-bg": "#f3f4f6",
+        "ideology-center-right": "#5fb8ba",
+        "ideology-center-right-bg": "#eaf7f7",
+        "ideology-right": "#0d9488",
+        "ideology-right-bg": "#e3f6f4",
+
         // Plataformas (identificadores visuais, não cor de marca oficial)
         "platform-twitter": "#1a1d29",
         "platform-instagram": "#c2417a",

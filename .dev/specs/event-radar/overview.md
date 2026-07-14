@@ -71,6 +71,7 @@ exata.
 | `schema-integration`                | Escrita em `feed_events` (toda severidade, sem aprovação manual) + feedback do analista | rascunho  | [schema-integration.md](schema-integration.md)                           |
 | `volume-limits`                     | Cap diário de eventos publicados por organização                   | implementado  | [volume-limits.md](volume-limits.md)                                 |
 | `aggregated-metrics-integration`    | Contrato de campos compartilhado com o envelope de página          | rascunho  | [aggregated-metrics-integration.md](aggregated-metrics-integration.md)   |
+| `frontend-highlights-feed`          | Widget "Radar de Eventos" na Visão Geral — últimas 72h, independente do período do header | rascunho  | [frontend-highlights-feed.md](frontend-highlights-feed.md)   |
 
 ## Dependências
 
@@ -108,9 +109,12 @@ Este módulo tem uma ordem interna estrita — cada etapa consome a saída da an
 
 ## Rotas/Páginas
 
-Este módulo não expõe páginas próprias — ele alimenta só `feed_events`, já existente no schema
-(`cases` não é mais tocado por este módulo, ver `schema-integration.md`). As páginas de frontend
-que exibem sua saída são as de `aggregated-metrics` (bloco `highlights`).
+Este módulo não expõe uma rota própria — ele alimenta `feed_events`, já existente no schema
+(`cases` não é mais tocado por este módulo, ver `schema-integration.md`). O bloco `highlights`
+genérico (por página/período) é exibido pelas páginas de `aggregated-metrics`. ✅ **Especificado
+em 2026-08-01** (`frontend-highlights-feed.md`, ainda `rascunho`/não implementado): um widget
+próprio do módulo, "Radar de Eventos", dentro da Visão Geral (`/overview`) — janela fixa de
+últimas 72h, independente do período selecionado no header, com feedback do analista por card.
 
 ## Dados gerenciados
 
