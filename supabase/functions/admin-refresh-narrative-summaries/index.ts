@@ -50,6 +50,31 @@ const MAX_BATCH_SIZE = 50;
 const SUMMARY_MODEL = Deno.env.get("NARRATIVE_SUMMARY_MODEL") ?? "claude-haiku-4-5";
 const SUMMARY_MAX_CHARS = 500;
 
+// ✅ 2026-07-14 — user report: "as mensagens ainda aparecem cortadas no
+// frontend". Mesma correção duplicada em narrative-summary-composer/
+// aggregated-metrics-service.ts (Princípio técnico 5) — um
+// `text.slice(0, N)` cru cortava no meio de palavra/frase quando o modelo
+// respondia um pouco mais longo que o limite pedido no prompt. Prefere a
+// última pontuação de fim de frase dentro do limite e, na ausência de
+// uma, o último espaço — nunca corta no meio de uma palavra.
+function truncateAtSentence(text: string, maxChars: number): string {
+  if (text.length <= maxChars) return text;
+  const slice = text.slice(0, maxChars);
+  const minAcceptable = maxChars * 0.5;
+  let lastSentenceEnd = -1;
+  for (const terminator of [". ", "! ", "? ", ".\n", "!\n", "?\n"]) {
+    lastSentenceEnd = Math.max(lastSentenceEnd, slice.lastIndexOf(terminator));
+  }
+  if (lastSentenceEnd >= minAcceptable) {
+    return slice.slice(0, lastSentenceEnd + 1).trim();
+  }
+  const lastSpace = slice.lastIndexOf(" ");
+  if (lastSpace >= minAcceptable) {
+    return `${slice.slice(0, lastSpace).trim()}…`;
+  }
+  return `${slice.trim()}…`;
+}
+
 // Mesmo SYSTEM_PROMPT de narrative-summary-composer/index.ts, verbatim —
 // manter os 2 em sincronia manualmente se um mudar (Princípio técnico 5).
 const SYSTEM_PROMPT = `Você é um redator de comunicação para uma campanha política/monitoramento de reputação, escrevendo em português do Brasil. Você recebe dados agregados já calculados sobre uma Narrativa (scores de share of voice, sentimento, momentum, tendência e risco, tópicos que puxam sentimento positivo/negativo, eventos recentes e Comunicações/Decisões já registradas) e uma pequena amostra de mentions reais ("sample_mentions") — e escreve um resumo executivo curto para a equipe de comunicação.
@@ -198,7 +223,7 @@ Deno.serve(async (req) => {
         const textBlock = response.content.find((block) => block.type === "text");
         if (!textBlock || textBlock.type !== "text") continue;
 
-        const summary = textBlock.text.trim().slice(0, SUMMARY_MAX_CHARS);
+        const summary = truncateAtSentence(textBlock.text.trim(), SUMMARY_MAX_CHARS);
         if (!summary) continue;
 
         const { error: updateError } = await supabaseAdmin

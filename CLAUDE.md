@@ -7946,6 +7946,68 @@ credenciais de deploy; `git push` para `develop` é o próximo passo, e o
 sinal de que funcionou é o `ReferenceError: createClient is not defined`
 parar de aparecer nos logs de qualquer uma das 8 funções.
 
+### "As mensagens ainda aparecem cortadas no frontend" — truncamento de texto por IA cortava no meio de frase (2026-07-14)
+
+User report, mesmo dia da Camada 2 de `ai-synthesis.md` acima: mesmo com o
+`ExpandableText`/"mostrar mais" já implementado, os textos compostos por
+IA ainda pareciam cortados. Causa real, **não** era um bug de CSS/frontend
+— todo truncamento defensivo de texto composto por IA neste projeto
+(`composeLayer1NarrativeText`/`composeSectionText` em
+`aggregated-metrics-service.ts`, e `narrative-summary-composer`/
+`admin-refresh-narrative-summaries`, Princípio técnico 5) era um
+`text.slice(0, N)` cru. O limite de caracteres pedido em cada
+`SYSTEM_PROMPT` (400/500) é uma **instrução** pro modelo, não uma
+garantia — quando a resposta real vinha um pouco mais longa que o limite,
+o corte caía no meio de uma palavra ou frase, e "mostrar mais" no
+frontend não revelava nada a mais, porque não havia mais nada armazenado:
+o texto já tinha sido cortado ali, permanentemente, no momento da
+composição.
+
+**Fix**: nova `truncateAtSentence(text, maxChars)` (duplicada nos 3
+lugares, Princípio técnico 5) — prefere cortar na última pontuação de fim
+de frase (`.`/`!`/`?` seguido de espaço/quebra de linha) dentro do limite;
+na ausência de uma (raro), corta no último espaço e acrescenta `…` pra
+sinalizar que o texto foi truncado, em vez de terminar como se fosse uma
+frase completa. Nunca corta no meio de uma palavra. Exige uma "folga
+mínima" (50% do limite) antes de aceitar um ponto de corte — evita aceitar
+uma "última frase" ridiculamente curta perto do início do texto só porque
+havia um `.` cedo (ex: uma sigla como "Art. 5º").
+
+**Achado de processo, durante a própria correção** (não chegou a ir pro
+código final, mas vale registrar): a primeira tentativa de propagar o
+helper pros 8 arquivos deployados usou um script `node -e "..."` inline
+via Bash, com o corpo da function (que tem template literals com
+crases e `${...}`) escapado manualmente dentro de uma string de shell —
+o Bash interpretou parte da sintaxe escapada (`\n` dentro do array de
+terminadores, os `${}` dos template literals) antes de repassar ao Node,
+corrompendo a function nos 8 arquivos (`return \`${...}\`` virou `return
+}` truncado). Sem `tsc` cobrindo arquivos Deno, isso só seria pego em
+runtime, exatamente como o incidente do import `createClient` documentado
+na entrada acima. Detectado por um `diff` da function extraída (via `sed`)
+contra o canônico antes de seguir em frente — nenhum deploy chegou a
+acontecer com o conteúdo corrompido. Corrigido reaplicando a técnica de
+propagação "wholesale prefix replace" (que já preserva template
+literals corretamente, por operar em string-a-string via `fs.readFileSync`/
+`split`/`join` do Node, nunca via shell) a partir do canônico já correto,
+seguida da mesma correção de import (`createClient`) que essa técnica
+sempre exige depois. **Lição**: para qualquer edição futura envolvendo
+template literals/crases/`${}` em código a propagar pros 8 arquivos,
+sempre escrever o script num arquivo (`Write` + `Bash node arquivo.js`),
+nunca inline via `node -e "..."` dentro do Bash — o shell não escapa o
+conteúdo de forma previsível quando ele mesmo contém aspas/crases/backslashes
+aninhados.
+
+**Verificação**: `npx tsc --noEmit` limpo. Balanço de parênteses/chaves
+conferido nos 10 arquivos afetados (8 deployados + `narrative-summary-composer`
++ `admin-refresh-narrative-summaries`). Diff da function `truncateAtSentence`
+extraída de cada um dos 8 arquivos deployados contra o canônico — idêntica
+em todos. Sem ambiente Deno/Supabase real nesta sessão — não testado
+contra uma chamada real à Anthropic, mesma limitação recorrente de toda
+sessão sem credenciais de deploy; `git push` para `develop` é o próximo
+passo, e o sinal a acompanhar é um resumo executivo composto depois do
+deploy terminando numa frase completa (com pontuação final), nunca no
+meio de uma palavra.
+
 ## Directory structure
 
 ```

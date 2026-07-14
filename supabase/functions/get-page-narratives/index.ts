@@ -1054,6 +1054,37 @@ interface PageNarrativeSynthesisRow {
 // prompt, agora adaptada dos padrões concretos da skill (mesmo padrão já
 // usado por event-radar-agent-orchestrator/index.ts e
 // narrative-summary-composer/index.ts).
+// ✅ 2026-07-14 — user report: "as mensagens ainda aparecem cortadas no
+// frontend". Causa real: todo truncamento defensivo de texto composto por
+// IA neste arquivo (e em narrative-summary-composer/admin-refresh-
+// narrative-summaries, Princípio técnico 5, mesma função duplicada) era
+// um `text.slice(0, N)` cru — se o modelo respondesse um pouco mais longo
+// que o limite pedido no prompt (comum, o limite é uma instrução, não uma
+// garantia), o corte caía no meio de uma palavra/frase, e "mostrar mais"
+// no frontend não ajudava, porque não havia mais nada armazenado: o texto
+// já tinha sido cortado ali, pra sempre. Substituído por um corte que
+// prefere a última pontuação de fim de frase (`.`/`!`/`?`) dentro do
+// limite e, só na ausência de uma (raro), o último espaço — nunca corta
+// no meio de uma palavra. Sempre com folga mínima (50% do limite) pra não
+// aceitar uma "última frase" ridiculamente curta perto do início.
+function truncateAtSentence(text: string, maxChars: number): string {
+  if (text.length <= maxChars) return text
+  const slice = text.slice(0, maxChars)
+  const minAcceptable = maxChars * 0.5
+  let lastSentenceEnd = -1
+  for (const terminator of ['. ', '! ', '? ', '.\n', '!\n', '?\n']) {
+    lastSentenceEnd = Math.max(lastSentenceEnd, slice.lastIndexOf(terminator))
+  }
+  if (lastSentenceEnd >= minAcceptable) {
+    return slice.slice(0, lastSentenceEnd + 1).trim()
+  }
+  const lastSpace = slice.lastIndexOf(' ')
+  if (lastSpace >= minAcceptable) {
+    return `${slice.slice(0, lastSpace).trim()}…`
+  }
+  return `${slice.trim()}…`
+}
+
 const NARRATIVE_SYNTHESIS_MODEL = Deno.env.get('AI_SYNTHESIS_MODEL') ?? 'claude-haiku-4-5'
 
 // ai-synthesis.md — recomposição periódica de um período aberto (2026-07-14,
@@ -1181,7 +1212,7 @@ async function composeLayer1NarrativeText(
     const textBlock = response.content.find((block) => block.type === 'text')
     if (!textBlock || textBlock.type !== 'text') return null
     const text = textBlock.text.trim()
-    return text ? text.slice(0, 500) : null
+    return text ? truncateAtSentence(text, 500) : null
   } catch (err) {
     console.error('[aggregated-metrics] composeLayer1NarrativeText failed', err)
     return null
@@ -1452,7 +1483,7 @@ async function composeSectionText(
     const textBlock = response.content.find((block) => block.type === 'text')
     if (!textBlock || textBlock.type !== 'text') return null
     const text = textBlock.text.trim()
-    return text ? text.slice(0, 400) : null
+    return text ? truncateAtSentence(text, 400) : null
   } catch (err) {
     console.error(`[aggregated-metrics] composeSectionText(${page}:${section}) failed`, err)
     return null
