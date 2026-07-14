@@ -166,6 +166,10 @@ export function Sidebar({
           {/* Administração é a única real (gated por isAdmin) entre as 4 do
               protótipo — Ajuda continua estática (tela "em desenvolvimento"). */}
           {isAdmin && <NavLink href="/admin/users" label="Administração" collapsed={collapsed} onNavigate={onNavigate} />}
+          {/* Módulo `finops` — pedido do usuário (painel de custo de IA +
+              custos extras cadastráveis), admin-only, mesmo gate de
+              /admin/users. Ver .dev/specs/finops/overview.md. */}
+          {isAdmin && <NavLink href="/admin/finops" label="FinOps" collapsed={collapsed} onNavigate={onNavigate} />}
           <NavLink href="/help" label="Ajuda" collapsed={collapsed} onNavigate={onNavigate} />
           {/* Perfil não existe na IA do protótipo (sem avatar/seção de
               usuário na tela original) — mantido por ser funcionalidade

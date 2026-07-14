@@ -951,12 +951,58 @@ Regras obrigatórias:
 - Máximo de 500 caracteres no total.
 - Responda apenas com o parágrafo final, sem títulos, sem marcadores, sem aspas envolvendo o texto.`
 
+// finops/data-model.md — registro de uso real de IA (nunca estimativa),
+// gravado a partir do `usage` retornado pela própria API da Anthropic.
+// Duplicado em cada Edge Function que chama Claude (Princípio técnico 5) —
+// `event-radar-agent-orchestrator/index.ts` tem sua própria cópia idêntica.
+const AI_MODEL_PRICING: Record<string, { inputPerMToken: number; outputPerMToken: number }> = {
+  'claude-haiku-4-5': { inputPerMToken: 1.0, outputPerMToken: 5.0 },
+}
+
+function computeAiCostUsd(model: string, inputTokens: number, outputTokens: number): number {
+  const pricing = AI_MODEL_PRICING[model]
+  if (!pricing) {
+    console.error(`[ai-usage] preço desconhecido para o modelo "${model}" — custo gravado como 0`)
+    return 0
+  }
+  return (inputTokens / 1_000_000) * pricing.inputPerMToken + (outputTokens / 1_000_000) * pricing.outputPerMToken
+}
+
+async function recordAiUsage(
+  supabase: SupabaseClient,
+  params: {
+    source: 'event_radar_agent_orchestrator' | 'ai_synthesis_narrative'
+    model: string
+    inputTokens: number
+    outputTokens: number
+    organizationId?: string | null
+    referenceId?: string | null
+  },
+): Promise<void> {
+  const costUsd = computeAiCostUsd(params.model, params.inputTokens, params.outputTokens)
+  const { error } = await supabase.from('ai_usage_log').insert({
+    source: params.source,
+    model: params.model,
+    input_tokens: params.inputTokens,
+    output_tokens: params.outputTokens,
+    cost_usd: costUsd,
+    organization_id: params.organizationId ?? null,
+    reference_id: params.referenceId ?? null,
+  })
+  if (error) console.error('[ai-usage] recordAiUsage insert failed', error)
+}
+
 // ai-synthesis.md "Camada 1" — composição em lote via IA, só reescreve/
 // conecta summary/explanation já existentes dos highlights (nunca recebe
 // dado bruto/ui_meta, "Regras de negócio" da spec). Modelo Haiku 4.5
 // (mesma decisão de custo já tomada pra event-radar-agent-orchestrator,
 // tarefa ainda mais simples aqui — "não analisa dados, só reescreve").
-async function composeLayer1NarrativeText(highlights: Highlight[]): Promise<string | null> {
+async function composeLayer1NarrativeText(
+  supabase: SupabaseClient,
+  ctx: PageContext,
+  page: PageKey,
+  highlights: Highlight[],
+): Promise<string | null> {
   const apiKey = Deno.env.get('ANTHROPIC_API_KEY')
   if (!apiKey) {
     console.error('[aggregated-metrics] composeLayer1NarrativeText: ANTHROPIC_API_KEY não configurada')
@@ -979,6 +1025,16 @@ async function composeLayer1NarrativeText(highlights: Highlight[]): Promise<stri
         },
       ],
     })
+    // finops/data-model.md — grava o uso real (billado pela Anthropic
+    // independente do que acontece depois: parse, truncamento, etc.)
+    await recordAiUsage(supabase, {
+      source: 'ai_synthesis_narrative',
+      model: NARRATIVE_SYNTHESIS_MODEL,
+      inputTokens: response.usage.input_tokens,
+      outputTokens: response.usage.output_tokens,
+      organizationId: ctx.organizationId,
+      referenceId: `${page}:${ctx.period.start}..${ctx.period.end}`,
+    })
     const textBlock = response.content.find((block) => block.type === 'text')
     if (!textBlock || textBlock.type !== 'text') return null
     const text = textBlock.text.trim()
@@ -1000,7 +1056,7 @@ async function composeAndPersistLayer1(
   filtersHashValue: string,
   highlights: Highlight[],
 ): Promise<void> {
-  const text = await composeLayer1NarrativeText(highlights)
+  const text = await composeLayer1NarrativeText(supabase, ctx, page, highlights)
   if (!text) return
   const { error } = await supabase.from('page_narrative_synthesis').upsert(
     {

@@ -42,7 +42,7 @@
 // (schema-integration.md item 2 — retroalimentação pós-publicação do
 // analista, precisa de UI própria, ainda não pedida).
 
-import { createClient } from "npm:@supabase/supabase-js@2";
+import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 // Sem pin de versão — ao contrário do @supabase/supabase-js@2 (pin de major
 // já usado neste projeto), não há confirmação de qual major está publicado
 // no momento do deploy; Deno resolve pra latest em build. Revisar se um
@@ -145,6 +145,47 @@ function feedEventType(radarEventType: string): "threshold_triggered" | "sentime
   return radarEventType.startsWith("volume_") ? "threshold_triggered" : "sentiment_changed";
 }
 
+// finops/data-model.md — registro de uso real de IA (nunca estimativa),
+// gravado a partir do `usage` retornado pela própria API da Anthropic.
+// Duplicado em `aggregated-metrics-service.ts` (Princípio técnico 5) —
+// mesma cópia idêntica, mantida manualmente em sincronia.
+const AI_MODEL_PRICING: Record<string, { inputPerMToken: number; outputPerMToken: number }> = {
+  "claude-haiku-4-5": { inputPerMToken: 1.0, outputPerMToken: 5.0 },
+};
+
+function computeAiCostUsd(model: string, inputTokens: number, outputTokens: number): number {
+  const pricing = AI_MODEL_PRICING[model];
+  if (!pricing) {
+    console.error(`[ai-usage] preço desconhecido para o modelo "${model}" — custo gravado como 0`);
+    return 0;
+  }
+  return (inputTokens / 1_000_000) * pricing.inputPerMToken + (outputTokens / 1_000_000) * pricing.outputPerMToken;
+}
+
+async function recordAiUsage(
+  supabase: SupabaseClient,
+  params: {
+    source: "event_radar_agent_orchestrator" | "ai_synthesis_narrative";
+    model: string;
+    inputTokens: number;
+    outputTokens: number;
+    organizationId?: string | null;
+    referenceId?: string | null;
+  },
+): Promise<void> {
+  const costUsd = computeAiCostUsd(params.model, params.inputTokens, params.outputTokens);
+  const { error } = await supabase.from("ai_usage_log").insert({
+    source: params.source,
+    model: params.model,
+    input_tokens: params.inputTokens,
+    output_tokens: params.outputTokens,
+    cost_usd: costUsd,
+    organization_id: params.organizationId ?? null,
+    reference_id: params.referenceId ?? null,
+  });
+  if (error) console.error("[ai-usage] recordAiUsage insert failed", error);
+}
+
 Deno.serve(async (_req: Request) => {
   log("invocation:start");
 
@@ -222,6 +263,17 @@ Deno.serve(async (_req: Request) => {
             }`,
           },
         ],
+      });
+
+      // finops/data-model.md — grava o uso real (billado pela Anthropic
+      // independente do que acontece depois: refusal, parse, insert etc.)
+      await recordAiUsage(supabase, {
+        source: "event_radar_agent_orchestrator",
+        model: AGENT_MODEL,
+        inputTokens: response.usage.input_tokens,
+        outputTokens: response.usage.output_tokens,
+        organizationId: event.organization_id,
+        referenceId: event.id,
       });
 
       if (response.stop_reason === "refusal") {
