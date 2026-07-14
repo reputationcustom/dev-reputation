@@ -3629,13 +3629,38 @@ usuário direto.
   botão para registrar uma comunicação".
 
 **Verificação**: `npx tsc --noEmit` e `npm run build` passam limpos (21
-rotas, incluindo as 2 novas). **Não verificado** com `npm run dev`/
-navegador real nem contra um banco Supabase real — sem credenciais/deploy
-neste ambiente, mesma limitação recorrente de toda sessão sem acesso ao
-Dashboard já registrada em várias entradas deste arquivo. As duas
-migrations foram revisadas manualmente, linha por linha, mas não
-executadas — confirmar contra logs reais (e rodar o Security Advisor,
-regra global "Database security") antes/depois do próximo deploy.
+rotas, incluindo as 2 novas). Revisado manualmente linha por linha antes
+do primeiro deploy, mas — como sempre nas sessões sem acesso ao Supabase
+Dashboard — não executado contra um banco real até o usuário rodar
+`supabase db push` de verdade pelo GitHub Action.
+
+**Bug real de produção encontrado e corrigido no deploy (2026-07-26)**:
+`supabase db push` aplicou `20260726000000` com sucesso mas falhou em
+`20260726010000` — `ERROR: column reference "id" is ambiguous`
+(SQLSTATE 42702) na criação de `get_communication_impact`. Causa raiz:
+`before_scores`/`after_scores` faziam `select w.id, gnt.*` — `gnt.*`
+(saída de `get_narratives_table`) já traz sua própria coluna `id` (o id da
+Narrativa, primeira coluna do retorno daquela function), então cada CTE
+acabava com **duas** colunas chamadas `id` (a da comunicação/decisão e a
+da Narrativa) — algo que o Postgres aceita dentro da CTE em si, mas que
+vira ambíguo assim que a CTE é referenciada de fora (`bs.id`/`af.id` no
+`left join` final, exatamente onde o erro apontava). Como é uma function
+`language sql` (não `plpgsql`), o Postgres já valida/planeja o corpo no
+próprio `CREATE FUNCTION` — o erro apareceu na hora de aplicar a migration,
+não em runtime, e a migration inteira fez rollback (transação por
+arquivo). `20260726000000` já estava aplicada e não precisou ser
+reaplicada. Corrigido substituindo `gnt.*` por uma lista explícita das 7
+colunas de fato usadas (`net_sentiment`/`sentiment_label`/
+`momentum_score`/`trend_score`/`trend_label`/`risk_score`/`risk_label`) —
+nunca `gnt.id`/`title`/`sov_pct`/etc., que esta function não consome mesmo.
+Mesma correção nas duas CTEs (`before_scores` e `after_scores`);
+`get_narrative_communication_timeline` nunca teve esse risco (já
+qualificava toda coluna explicitamente, sem `select *` em lugar nenhum).
+Lição geral pra qualquer function futura deste projeto que faça `left
+join lateral` sobre outra function e precise só de parte do retorno dela:
+sempre listar as colunas por nome, nunca `alias.*`, quando outra fonte na
+mesma CTE também tiver uma coluna `id` (ou qualquer nome genérico
+repetido).
 
 ### 7 pedidos pontuais de UI/dado — Narrativas, Sentimento, Autores e Influenciadores (2026-07-25)
 

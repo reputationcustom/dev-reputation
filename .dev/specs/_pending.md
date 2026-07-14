@@ -26,9 +26,20 @@ atualizado: 2026-07-25 (rev. 27)
 
 ## Decisões de produto pendentes
 
-| # | Módulo | Decisão | Spec |
-|---|---|---|---|
-| 5 | `event-radar` | UI de aprovação (aceitar/rejeitar) de `cases` pendentes `high`/`critical` — ainda sem spec própria, bloqueia só esse passo específico de `schema-integration.md` | [event-radar/schema-integration.md](event-radar/schema-integration.md) |
+Nenhuma no momento — a última (#5, `event-radar`) foi retirada em 2026-07-25, ver nota logo
+abaixo.
+
+✅ **Decisão #5 retirada (2026-07-25)**, pedido do usuário: "retire a pendência e coloque todos
+os tipos de evento publicando no feed_events." A UI de aprovação (aceitar/rejeitar) de `cases`
+`high`/`critical` deixou de existir como conceito — `event-radar/schema-integration.md` não
+cria mais linha pendente em `cases` para nenhuma severidade; todo evento aprovado pela IA
+(`should_publish: true`) publica direto em `feed_events`, `low` a `critical`, sem gate humano
+intermediário. `event-radar` deixou de depender de `intelligence-center`/`cases` por completo
+(`overview.md`, "Dependências"). `feed_event_feedback` continua existindo, mas como
+retroalimentação pós-publicação (útil/irrelevante/severidade errada/explicação incorreta), nunca
+como aprovação prévia. Arquivos atualizados: `schema-integration.md`, `agent-orchestrator.md`,
+`overview.md`, `fluxo-aggregated-metrics.md` (diagramas), `intelligence-center/data-model.md`
+(nota de pendência de `organization_id` em `cases`, que citava esse fluxo como exemplo).
 
 ✅ **7 pedidos pontuais de UI/dado resolvidos (2026-07-25)**, mesma sessão,
 usuário: "1) renomeie Top 3 Narrativas para Top 3 Narrativas por Menções.

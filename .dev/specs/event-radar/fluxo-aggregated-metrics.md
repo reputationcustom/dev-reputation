@@ -42,7 +42,7 @@ flowchart TD
         R3["1.3 severity (SQL)<br/>escreve radar_staging_events.severity_score/severity"]
         R4["1.6 volume-limits (SQL)<br/>filtra radar_staging_events por cap diário<br/>(entra ANTES da IA, não depois)"]
         R5["1.4 agent-orchestrator (1 chamada IA/evento)<br/>lê radar_staging_events já filtrado"]
-        R6["1.5 schema-integration<br/>escreve feed_events (+ cases se high/critical)<br/>+ feed_event_feedback"]
+        R6["1.5 schema-integration<br/>escreve feed_events (toda severidade, sem aprovação manual)<br/>+ feed_event_feedback"]
         R1 --> R2 --> R3 --> R4 --> R5 --> R6
     end
 
@@ -81,7 +81,7 @@ implementado, ele passa a alimentar `aggregated-metrics` (A1–A3, "Fase B").
 | 1.3 severity | `radar_staging_events` (ativos deduplicados) | `radar_staging_events.severity_score`/`severity` (UPDATE) |
 | 1.6 volume-limits | `radar_staging_events` (candidatos com severidade), contagem do dia em `feed_events` | nenhuma (só filtra o que segue para 1.4) |
 | 1.4 agent-orchestrator | `radar_staging_events` (já filtrado pelo cap) | via 1.5 |
-| 1.5 schema-integration | saída estruturada do agent | `feed_events` (INSERT), `cases` (INSERT, só `high`/`critical`), `feed_event_feedback` (INSERT, assíncrono, vindo do analista) |
+| 1.5 schema-integration | saída estruturada do agent | `feed_events` (INSERT, qualquer severidade), `feed_event_feedback` (INSERT, assíncrono, vindo do analista) |
 | A1 `get_active_highlights` | `feed_events` | nenhuma (leitura pura) |
 | A2 `risk_score` boost | `feed_events`/`radar_staging_events.severity_score` (evento ativo da Narrativa) | nenhuma (calculado sob demanda em `get_narratives_table`) |
 | A3 `ai-synthesis` Camada 1 | `feed_events.summary`/`explanation` (2+ highlights) | `page_narrative_synthesis` |
@@ -97,7 +97,6 @@ sequenceDiagram
     participant Cap as Cap diário (1.6)
     participant Agent as Orquestrador IA (1.4)
     participant Feed as feed_events (1.5)
-    participant CC as cases (fila de aprovação)
     participant Edge as Edge Function de página
     participant Cache as page_cache (TTL 5min)
     participant Synth as Síntese (ai-synthesis)
@@ -109,9 +108,7 @@ sequenceDiagram
     Dedup->>Sev: eventos únicos/ativos
     Sev->>Cap: eventos com severity_score
     Cap->>Agent: top N dentro do cap diário
-    Agent->>Feed: should_publish=true → grava card
-    Agent-->>CC: severity high/critical → caso pendente p/ aprovação
-    CC-->>Feed: aprovado → publica
+    Agent->>Feed: should_publish=true → grava card (qualquer severidade, sem aprovação manual)
 
     Note over User,Edge: A qualquer momento, usuário abre uma página
     User->>Edge: GET /overview (ou outra página)

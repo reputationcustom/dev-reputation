@@ -386,8 +386,24 @@ as $$
       and nm.metric_date between w.after_start and w.after_end
     group by w.id
   ),
+  -- ⚠️ Bug real corrigido (2026-07-26, achado via `supabase db push`):
+  -- `select w.id, gnt.*` trazia DUAS colunas chamadas `id` pra dentro desta
+  -- CTE — `w.id` (id da comunicação/decisão) e `gnt.id` (id da Narrativa,
+  -- primeira coluna de retorno de `get_narratives_table`) — o que tornava
+  -- `bs.id`/`af.id` ambíguos lá embaixo (`ERROR: column reference "id" is
+  -- ambiguous`, SQLSTATE 42702). Corrigido listando explicitamente só as
+  -- colunas de `gnt` realmente usadas (nunca `gnt.id`/`title`/`sov_pct`/etc,
+  -- que esta function não consome de qualquer forma).
   before_scores as (
-    select w.id, gnt.*
+    select
+      w.id,
+      gnt.net_sentiment,
+      gnt.sentiment_label,
+      gnt.momentum_score,
+      gnt.trend_score,
+      gnt.trend_label,
+      gnt.risk_score,
+      gnt.risk_label
     from windows w
     left join lateral get_narratives_table(
       p_organization_id => w.organization_id,
@@ -398,7 +414,15 @@ as $$
     ) gnt on true
   ),
   after_scores as (
-    select w.id, gnt.*
+    select
+      w.id,
+      gnt.net_sentiment,
+      gnt.sentiment_label,
+      gnt.momentum_score,
+      gnt.trend_score,
+      gnt.trend_label,
+      gnt.risk_score,
+      gnt.risk_label
     from windows w
     left join lateral get_narratives_table(
       p_organization_id => w.organization_id,

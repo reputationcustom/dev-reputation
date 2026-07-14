@@ -23,6 +23,18 @@ atualizado: 2026-07-25
 > score). Não executado contra um banco real nesta sessão (sem
 > credenciais) — revisado manualmente; `npx tsc --noEmit`/`npm run build`
 > passam limpos do lado frontend.
+>
+> ✅ **Bug real de produção encontrado e corrigido (2026-07-26)**, via
+> `supabase db push` real do usuário: `get_communication_impact` falhava
+> na criação (`ERROR: column reference "id" is ambiguous`) porque
+> `before_scores`/`after_scores` traziam `gnt.*` (saída de
+> `get_narratives_table`, que já tem sua própria coluna `id` — o id da
+> Narrativa) junto de `w.id` (id da comunicação/decisão), duplicando o
+> nome `id` dentro da mesma CTE. Corrigido listando explicitamente as 7
+> colunas de `gnt` realmente usadas em vez de `gnt.*`. Ver `CLAUDE.md`,
+> "Módulo communications (Sprint 2.1)", para o detalhe completo — inclui
+> a lição geral para futuras functions que façam `left join lateral`
+> sobre outra function.
 
 ## Objetivo
 

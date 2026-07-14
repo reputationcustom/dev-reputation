@@ -16,7 +16,8 @@ legível para a equipe de comunicação — com exatamente uma chamada de IA por
 ## Usuários afetados
 
 Consumido indiretamente por qualquer usuário autenticado que visualize uma página com
-`highlights` (ver módulo `aggregated-metrics`) ou a fila de aprovação de `cases` pendentes.
+`highlights` (ver módulo `aggregated-metrics`) — todo evento aprovado pela IA publica direto,
+sem fila de aprovação humana intermediária (✅ decisão do usuário, 2026-07-25).
 
 ## Fluxo principal
 
@@ -76,8 +77,8 @@ Consumido indiretamente por qualquer usuário autenticado que visualize uma pág
 ## Dados envolvidos
 
 - **Lê**: `radar_staging_events` (deduplicados, com severidade, dentro do cap diário).
-- **Escreve**: via [schema-integration.md](schema-integration.md) — `feed_events` e,
-  quando aplicável, linha pendente em `cases`.
+- **Escreve**: via [schema-integration.md](schema-integration.md) — `feed_events`, qualquer
+  severidade.
 
 ## Referências relacionadas
 

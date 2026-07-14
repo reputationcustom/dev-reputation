@@ -2,7 +2,7 @@
 tipo: data-model
 módulo: intelligence-center
 status: pronto
-atualizado: 2026-07-13
+atualizado: 2026-07-25
 ---
 
 # Modelo de Dados — Intelligence Center
@@ -67,11 +67,12 @@ user_profiles ──< cases.assignee_id (nullable)
 
 `organization_id` é resolvido a partir de `narrative_id` (via `narratives.organization_id`),
 não recebido do client — isso só importa de verdade quando `cases` ganhar um caminho de escrita
-(hoje é 100% somente leitura, populada via SQL/backend direto). Quando isso acontecer (ex: o
-fluxo de aprovação `high`/`critical` do `event-radar`, ver
-`../event-radar/schema-integration.md`, ou um CRUD completo de Casos no futuro), a Edge Function
-correspondente **deve** derivar `organization_id` no servidor a partir do `narrative_id`
-recebido — nunca aceitar `organization_id` direto do payload do client, pelo mesmo motivo já
-corrigido em `aggregated-metrics/edge-functions-per-page.md` (isolamento multi-tenant real
-depende de nunca confiar em valor vindo do client pra decidir a organização). Registrar esta
-regra explicitamente na spec daquele write path quando ela for escrita, não reinventar.
+(hoje é 100% somente leitura, populada via SQL/backend direto). ✅ **`event-radar` não é mais um
+candidato a esse write path (2026-07-25)** — `schema-integration.md` passou a publicar toda
+severidade direto em `feed_events`, sem gate de aprovação via `cases`; se um CRUD completo de
+Casos for pedido no futuro por outro motivo, a Edge Function correspondente **deve** derivar
+`organization_id` no servidor a partir do `narrative_id` recebido — nunca aceitar
+`organization_id` direto do payload do client, pelo mesmo motivo já corrigido em
+`aggregated-metrics/edge-functions-per-page.md` (isolamento multi-tenant real depende de nunca
+confiar em valor vindo do client pra decidir a organização). Registrar esta regra explicitamente
+na spec daquele write path quando ela for escrita, não reinventar.

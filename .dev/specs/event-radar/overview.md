@@ -42,7 +42,7 @@ exata.
 | `deduplication-grouping`            | Dedup determinístico antes de qualquer chamada de IA               | rascunho  | [deduplication-grouping.md](deduplication-grouping.md)             |
 | `severity`                          | Score 0-100 determinístico + mapeamento para categoria de risco    | rascunho  | [severity.md](severity.md)                                         |
 | `agent-orchestrator`                | Única chamada de IA por evento, saída estruturada                  | rascunho  | [agent-orchestrator.md](agent-orchestrator.md)                         |
-| `schema-integration`                | Escrita em `feed_events`, `cases`, feedback do analista | rascunho  | [schema-integration.md](schema-integration.md)                           |
+| `schema-integration`                | Escrita em `feed_events` (toda severidade, sem aprovação manual) + feedback do analista | rascunho  | [schema-integration.md](schema-integration.md)                           |
 | `volume-limits`                     | Cap diário de eventos publicados por organização                   | rascunho  | [volume-limits.md](volume-limits.md)                                 |
 | `aggregated-metrics-integration`    | Contrato de campos compartilhado com o envelope de página          | rascunho  | [aggregated-metrics-integration.md](aggregated-metrics-integration.md)   |
 
@@ -51,10 +51,11 @@ exata.
 - **Módulos que este depende**: `foundation` — `sync-brandwatch` popula os agregados oficiais
   usados nas regras de detecção (`bw_query_metrics_daily`/`weekly`/`monthly`,
   `bw_query_metrics_daily_by_platform`), `narratives`/`narrative_metrics` dá a categorização de
-  narrativa/pauta (ver `detection-engine.md`). Fluxo de aprovação de eventos `high`/`critical`
-  (ver [schema-integration.md](schema-integration.md)) depende de um mecanismo de aprovação ainda
-  sem spec própria — não bloqueante, ver nota em `schema-integration.md`. `entities`/`entity_tags`
-  (Sprint 2) só como enriquecimento opcional do payload da IA, nunca pré-requisito.
+  narrativa/pauta (ver `detection-engine.md`). `entities`/`entity_tags` (Sprint 2) só como
+  enriquecimento opcional do payload da IA, nunca pré-requisito. ✅ **`intelligence-center`
+  (`cases`) deixou de ser dependência (2026-07-25)** — toda severidade publica direto em
+  `feed_events` (ver [schema-integration.md](schema-integration.md)), sem gate de aprovação
+  humana via `cases`.
 - **Módulos que dependem deste**: `aggregated-metrics` — especificamente os blocos `highlights`
   e `narrative_text` do envelope, e o boost de `risk_score` de `narratives` quando há um evento
   ativo (✅ correção de 2026-07-13 — este campo era `momentum_score` na versão original desta nota;
@@ -72,7 +73,7 @@ Este módulo tem uma ordem interna estrita — cada etapa consome a saída da an
 2. `deduplication-grouping` (1.2) → roda sobre `radar_staging_events`, antes de qualquer IA
 3. `severity` (1.3) → calcula score sobre os eventos já deduplicados
 4. `agent-orchestrator` (1.4) → única chamada de IA, consome eventos com severidade calculada
-5. `schema-integration` (1.5) → grava saída do agent em `feed_events` e (quando `high`/`critical`) `cases`
+5. `schema-integration` (1.5) → grava saída do agent em `feed_events`, qualquer severidade
 6. `volume-limits` (1.6) → cap aplicado antes da fila de IA (entra como filtro entre 1.3 e 1.4)
 
 > Ver [fluxo-aggregated-metrics.md](fluxo-aggregated-metrics.md) para o diagrama completo do
@@ -81,9 +82,9 @@ Este módulo tem uma ordem interna estrita — cada etapa consome a saída da an
 
 ## Rotas/Páginas
 
-Este módulo não expõe páginas próprias — ele alimenta `cases` (linhas pendentes de severidade
-alta/crítica, ver `schema-integration.md`) e `feed_events`, ambos já existentes no schema. As
-páginas de frontend que exibem sua saída são as de `aggregated-metrics` (bloco `highlights`).
+Este módulo não expõe páginas próprias — ele alimenta só `feed_events`, já existente no schema
+(`cases` não é mais tocado por este módulo, ver `schema-integration.md`). As páginas de frontend
+que exibem sua saída são as de `aggregated-metrics` (bloco `highlights`).
 
 ## Dados gerenciados
 
