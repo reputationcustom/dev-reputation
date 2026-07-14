@@ -6768,6 +6768,46 @@ narrativas, Por tipo de Entidade, Top Sites) e o comportamento de ocultar
 linhas zeradas em `NarrativesTable` não foram confirmados visualmente num
 navegador real.
 
+### Radar de Eventos: KPIs em uma linha única + cards sem menção ocultados em `/narratives` (2026-08-08)
+
+User request, 2 itens na mesma mensagem, ambos frontend-only:
+
+1. **`RecentEventsExecutiveSummary`** (`components/intelligence-center/
+   recent-events-panel.tsx`) — as 5 estatísticas do "Resumo executivo"
+   (Total de eventos, Críticos, Altos, Médios, Baixos) usavam
+   `grid-cols-2 sm:grid-cols-4`, deixando o 5º item ("Baixos") quebrar pra
+   uma segunda linha mesmo em telas largas (screenshot do usuário
+   confirmou o problema). Trocado para `grid-cols-5` incondicional — as 5
+   caixas sempre numa única linha, independente do tamanho da tela;
+   `SummaryStat`'s padding reduzido (`p-2 sm:p-3`, era `p-3` fixo) pra
+   caber melhor em 5 colunas em telas estreitas.
+2. **`NarrativeCategoryLanes`** (`components/intelligence-center/
+   narrative-category-lanes.tsx`, visualização por cards de `/narratives`)
+   ganhou o mesmo filtro que `NarrativesTable` já aplicava (adicionado
+   pela sessão concorrente que terminou pouco antes desta: "Linhas com
+   SOV zerado/nulo são ocultadas" — uma Narrativa sem nenhuma menção no
+   período selecionado não tem SOV nenhum a mostrar) — `hasMentions()`
+   (`row.sov_pct !== null && row.sov_pct !== 0`) filtra antes de agrupar
+   por categoria, então a contagem no cabeçalho de cada raia já reflete
+   só as Narrativas visíveis. Como a página só verificava `rows.length >
+   0` (existem Narrativas cadastradas, não que alguma tenha menção no
+   período), `NarrativeCategoryLanes` ganhou seu próprio `<EmptyState />`
+   pro caso de o filtro remover tudo (comum ao trocar pra período
+   "Diário") — antes renderizaria uma grade vazia sem explicação.
+
+**Especificações atualizadas**: `event-radar/frontend-highlights-feed.md`
+("Resumo executivo" — 5 estatísticas em uma linha, não mais "4
+estatísticas... Médios+Baixos", que já estava desalinhado do código antes
+desta sessão), `intelligence-center/narratives-exploration.md` (nova nota
+sobre o filtro de menção + `EmptyState` na visualização por cards).
+
+**Verificação**: `npx tsc --noEmit` limpo. Sem mudança de backend/
+migration — os dois itens são puramente CSS/filtro client-side sobre dado
+já buscado. Sem automação de browser disponível neste ambiente — o layout
+de 5 colunas numa linha e o `EmptyState` novo não foram confirmados
+visualmente num navegador real, mesma limitação já registrada em toda
+sessão anterior de `intelligence-center` neste arquivo.
+
 ## Directory structure
 
 ```

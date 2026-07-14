@@ -157,7 +157,10 @@ function RecentEventsExecutiveSummary({
 
   return (
     <div className="flex flex-col gap-5">
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+      {/* ✅ Uma única linha (2026-08-08), pedido do usuário — antes
+          `grid-cols-2 sm:grid-cols-4` deixava "Baixos" (5º item) quebrar
+          pra uma segunda linha mesmo em telas largas. */}
+      <div className="grid grid-cols-5 gap-2 sm:gap-3">
         <SummaryStat label="Total de eventos" value={highlights.length} />
         {(["critical", "high", "medium", "low"] as const).map((severity) => (
           <SummaryStat key={severity} label={SEVERITY_LABEL[severity]} value={bySeverity[severity]} />
@@ -206,7 +209,7 @@ function RecentEventsExecutiveSummary({
 
 function SummaryStat({ label, value }: { label: string; value: number }) {
   return (
-    <div className="rounded-lg bg-bg-page p-3 text-center">
+    <div className="rounded-lg bg-bg-page p-2 text-center sm:p-3">
       <p className="text-lg font-bold text-text-primary">{value}</p>
       <p className="text-xs text-text-tertiary">{label}</p>
     </div>

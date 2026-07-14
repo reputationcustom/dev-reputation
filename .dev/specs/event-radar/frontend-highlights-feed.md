@@ -157,9 +157,13 @@ própria UI, não só na documentação.
   persiste entre navegações (mesmo padrão de `filtrosOpen` no header).
   - **Lista** (default): os cards individuais, exatamente como descrito
     nos itens 3-5 do "Fluxo principal".
-  - **Resumo executivo** (`RecentEventsExecutiveSummary`): 4 estatísticas
-    (Total de eventos, Críticos, Altos, Médios+Baixos), uma linha de
-    chips "Eventos por tipo" (contagem por `event_type`), e uma lista
+  - **Resumo executivo** (`RecentEventsExecutiveSummary`): 5 estatísticas
+    em **uma única linha** (`grid-cols-5`, sempre — ✅ fixado 2026-08-08,
+    pedido do usuário: antes `grid-cols-2 sm:grid-cols-4` deixava o 5º
+    item, "Baixos", quebrar pra uma segunda linha mesmo em telas largas):
+    Total de eventos, Críticos, Altos, Médios, Baixos — cada severidade
+    com sua própria estatística, não agrupadas. Uma linha de chips
+    "Eventos por tipo" (contagem por `event_type`), e uma lista
     "Principais eventos" com os 5 eventos de maior `severity_score`
     (`RiskBadge` + `title` + `explanation`/`summary` + tempo relativo).
     Nenhuma chamada de rede adicional — deriva do mesmo array

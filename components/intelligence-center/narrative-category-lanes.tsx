@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { NarrativeRow } from "@reputation/shared-types";
 import { NarrativeCard } from "./narrative-card";
+import { EmptyState } from "@/components/ui/empty-state";
 
 // Agrupamento por categoria da grade de cards de Narrativa — pedido do
 // usuário 2026-07-25: "os cards que ficam abaixo devem ser organizados
@@ -44,8 +45,18 @@ function groupByCategory(rows: NarrativeRow[]): Array<{ category: string; rows: 
     .sort((a, b) => a.category.localeCompare(b.category, "pt-BR"));
 }
 
+// ✅ Oculta Narrativas com SOV zerado/nulo (pedido do usuário, 2026-08-08:
+// "na visualização por cards, ocultar os cards que tiverem 0 menções,
+// assim como já é feito com a tabela") — mesmo critério de
+// `NarrativesTable` (`sov_pct !== null && sov_pct !== 0`): uma Narrativa
+// sem nenhuma menção no período selecionado não tem SOV nenhum a mostrar,
+// então o card só confundia (0%/"—" sem contexto).
+function hasMentions(row: NarrativeRow): boolean {
+  return row.sov_pct !== null && row.sov_pct !== 0;
+}
+
 export function NarrativeCategoryLanes({ rows }: { rows: NarrativeRow[] }) {
-  const groups = groupByCategory(rows);
+  const groups = groupByCategory(rows.filter(hasMentions));
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
 
   function toggle(category: string) {
@@ -58,6 +69,14 @@ export function NarrativeCategoryLanes({ rows }: { rows: NarrativeRow[] }) {
       }
       return next;
     });
+  }
+
+  // Todas as Narrativas do período selecionado ficaram sem menção nenhuma
+  // (ex: período "Diário" muito curto) — `rows.length > 0` na página
+  // (narratives/page.tsx) só garante que existem Narrativas cadastradas,
+  // não que alguma tenha menção neste período específico.
+  if (groups.length === 0) {
+    return <EmptyState message="Nenhuma Narrativa com menções neste período." />;
   }
 
   return (

@@ -254,6 +254,20 @@ categorias começam expandidas; o estado (`Set` de categorias recolhidas)
 vive só no componente, sem persistência entre navegações — mesmo padrão
 já aceito para `filtrosOpen` no header.
 
+✅ **Narrativas sem menção ocultadas na visualização por cards (2026-08-08)**
+— pedido do usuário: "na visualização por cards, ocultar os cards que
+tiverem 0 menções, assim como já é feito com a tabela." `NarrativesTable`
+já filtrava (`sov_pct !== null && sov_pct !== 0` — uma Narrativa sem
+menção no período não tem SOV nenhum a mostrar, 2026-08-08, mesma sessão);
+`NarrativeCategoryLanes` ganhou o mesmo critério, aplicado antes de
+agrupar por categoria (então a contagem no cabeçalho de cada raia já
+reflete só as Narrativas visíveis). Se todas as Narrativas ficarem sem
+menção no período selecionado (comum ao trocar pra "Diário"),
+`NarrativeCategoryLanes` mostra `<EmptyState />` ("Nenhuma Narrativa com
+menções neste período.") em vez de renderizar vazio silenciosamente — a
+página só verificava `rows.length > 0` (existem Narrativas cadastradas),
+não que alguma tivesse menção no período.
+
 ### Detalhe (`/narratives/[id]`)
 
 - **Cabeçalho**: nome, badges de SOV/sentimento/risco/momentum/tendência
