@@ -3768,6 +3768,388 @@ none of the 7 changes above (renamed widget, chart labels, table headers,
 the Brazil map's actual rendering/colors, the new `/authors` page) were
 visually confirmed in a real browser.
 
+## Módulo `event-radar` (Sprint 3) — 1.1 `detection-engine`, 1.2 `deduplication-grouping`, 1.3 `severity` e 1.6 `volume-limits` implementados (2026-07-27/28/29/30)
+
+Primeiro código real do módulo `event-radar` (Sprint 3, `.dev/specs/event-radar/`
+— até esta sessão, 100% `rascunho`, nenhuma tabela existia). Usuário pediu
+diretamente a implementação da funcionalidade 1.1 (`detection-engine`); como
+todo spec do módulo ainda estava `rascunho` e `overview.md` trava
+explicitamente "Fase 2 — Implementação só começar depois que os specs da Fase
+1 estiverem com status pronto", parei e perguntei antes de escrever qualquer
+código (`CLAUDE.md`, regra de spec-driven development). Usuário confirmou:
+prosseguir e promover a spec, e criar a migration da tabela que faltava.
+Revisão do conteúdo confirmou que não havia nenhum ⚠️ DECISÃO PENDENTE real em
+aberto (a última foi resolvida em 2026-07-25) — só o status formal estava
+desatualizado.
+
+- **Migration única** (`20260727000000_event_radar_detection_engine.sql`):
+  `radar_staging_events` (schema exato de `data-model.md` — RLS deny-all,
+  índice único parcial `WHERE closed_at IS NULL` como chave de dedup pra
+  eventos "ativos") + a função `run_event_detection()` agendada via
+  `pg_cron` a cada 15 minutos (mesma cadência do heartbeat de `bw-sync`,
+  decisão já resolvida em `detection-engine.md` 2026-07-22) — 100%
+  SQL/Postgres, sem Edge Function e sem chamada à Brandwatch, mesmo padrão
+  de `refresh_narrative_metrics_hourly` (não o padrão `net.http_post` de
+  `bw-sync-heartbeat`).
+- **Correção de nomenclatura no próprio spec**: `data-model.md` chamava o
+  tipo da coluna `severity` de "risk_level" — esse tipo não existe no
+  schema. O enum reaproveitado por `narratives.risk_level` chama-se
+  `severity_level` (`low`\|`medium`\|`high`\|`critical`,
+  `foundation_schema.sql`) — usado na migration, e o texto do spec corrigido
+  na mesma sessão.
+- **Séries agregadas nunca leem `mentions`**: duas funções (`event_radar_hourly_series`/
+  `event_radar_daily_series`) unem query/narrative/platform sobre
+  `bw_query_metrics_hourly`/`bw_query_metrics_daily`/`narrative_metrics`
+  (`source = 'bw_aggregate'`)/`bw_query_metrics_daily_by_platform` — nunca
+  `SELECT`/`SUM` direto sobre `mentions`, mesma premissa já fixada
+  project-wide depois do bug real de SOV (ver "Brandwatch sync model"
+  acima). `net_sentiment`/`negative_share` de query/narrative são
+  derivados localmente de `sentiment_positive`/`negative`/`neutral` (nunca
+  lidos da coluna oficial `net_sentiment`) — mesma escolha já adotada em
+  `aggregated-metrics/sql-aggregation.md` (migration `20260725060000`)
+  depois de dois bugs reais de divergência entre o score oficial e o
+  breakdown mostrado na mesma tela. **Gap honesto, não inventado**:
+  `bw_query_metrics_daily_by_platform` não tem breakdown positivo/neutro/
+  negativo (só o score composto) — escopo `platform` usa o `net_sentiment`
+  oficial mesmo, e `negative_share` fica sempre `null` para esse escopo,
+  o que por sua vez significa que as 2 regras de sentimento negativo
+  (`negative_sentiment_increase`/`negative_sentiment_spike`) só rodam para
+  `query`/`narrative`, nunca `platform`.
+- **Mapeamento janela → regra é uma escolha de MVP, documentada inline na
+  migration** — nenhum spec define exatamente qual das 5 janelas cada
+  `event_type` usa: `3h`/`24h`/`today_vs_last_week`/`3d` cobrem
+  `volume_spike`/`volume_drop` (variação percentual + volume mínimo);
+  `24h` também cobre `sentiment_change`/`negative_sentiment_increase`
+  (diferença absoluta); `current_hour_vs_4week_avg` cobre
+  `volume_spike`/`volume_drop` (via z-score, banda ≥2 já fixada em
+  `detection-engine.md`) e `negative_sentiment_spike` (z-score sobre
+  `negative_share`). Thresholds (`event_radar_config()`: volume mínimo 20,
+  pico/queda ±50%, delta de `net_sentiment` 20 pontos, delta de share
+  negativo 15 pontos percentuais) não têm número exato em nenhum spec —
+  inferência de MVP documentada num único lugar, mesmo padrão já usado em
+  `get_volume_trend` (granularidade) e na regressão de Tendência.
+- **Bug real evitado antes de aplicar a migration**: toda regra percentual
+  originalmente dividia `(atual - anterior) * 100 / anterior` tanto no
+  `SELECT` quanto, de novo, no `WHERE` (guardado só por um `AND anterior >
+  0` antecedente) — o Postgres **não garante** ordem de avaliação de
+  operandos de `AND`, então essa divisão podia, em tese, ser avaliada antes
+  do guard e estourar divisão por zero. Extraído para
+  `event_radar_delta_pct(atual, anterior)` — divisão protegida por `CASE`
+  (mesmo padrão de guarda já usado por `norm_growth`,
+  `aggregated-metrics/sql-aggregation.md`, onde `CASE` garante
+  short-circuit de verdade) — usada em todo lugar, nunca mais uma divisão
+  crua dependendo de ordem de `WHERE`.
+- **Ainda não implementado neste módulo** (rascunho): `severity` (1.3 —
+  `severity_score`/`severity` ficam sempre `null`), `agent-orchestrator`
+  (1.4), `schema-integration` (1.5 — nunca grava em `feed_events`, que
+  continua não existindo) e `volume-limits` (1.6).
+  `aggregated-metrics`'s bloco `highlights` (`get_active_highlights`)
+  continua vazio até 1.5 existir — sem mudança nesta sessão.
+
+### 1.2 `deduplication-grouping` (2026-07-28)
+
+Pedido do usuário na sessão seguinte: promover `deduplication-grouping.md`
+de `rascunho` pra `pronto` e implementar. Migration
+`20260728000000_event_radar_deduplication_grouping.sql`.
+
+- **Metade do spec já estava feita desde 1.1, e isso é intencional, não
+  uma sobreposição a corrigir**: os itens 2-4 do "Fluxo principal"
+  (inserir se a chave de dedup não existe ativa, atualizar métricas se já
+  existe) são exatamente o que `run_event_detection()` já fazia via
+  `INSERT ... ON CONFLICT (...) WHERE closed_at IS NULL DO UPDATE` desde
+  `20260727000000`. Esta migration não escreve uma segunda camada de dedup
+  em cima disso — seria redundante e mais uma fonte de divergência.
+- **A peça genuinamente nova é o item 5 (encerramento automático)**,
+  implementada dentro do próprio `run_event_detection()` (`CREATE OR
+  REPLACE`, não uma função/step separado) — "o indicador voltou ao normal"
+  só é conhecível comparando contra a mesma varredura de regras que 1.1 já
+  calcula a cada ciclo; uma função separada precisaria recalcular a mesma
+  matriz de agregações só pra descobrir a mesma coisa, dobrando o custo de
+  leitura sem benefício. Mecanismo: `v_cycle_start` (nova variável,
+  capturada uma vez no início do ciclo) substitui todo `now()` que antes
+  era usado como valor de `detected_at` em cada `INSERT`/`UPDATE` — ao
+  final do ciclo, uma única instrução (`UPDATE radar_staging_events SET
+  closed_at = v_cycle_start WHERE closed_at IS NULL AND detected_at <
+  v_cycle_start`) fecha qualquer linha ativa que não foi tocada nesta
+  varredura, ou seja, cuja regra deixou de disparar.
+- **Por que isso é seguro**: `run_event_detection()` reavalia as 13
+  combinações regra×janela por completo a cada ciclo (sem execução
+  faseada, diferente de `bw-sync`) — "não foi tocada neste ciclo" só tem
+  um significado possível: a regra parou de valer para aquele escopo. Não
+  há risco de fechar por engano um evento que uma fase futura ainda
+  precisaria confirmar (não existe fase parcial aqui).
+- **Verificação**: as duas migrations (`20260727000000`/`20260728000000`)
+  revisadas manualmente linha por linha — sem acesso a um Supabase real
+  nesta sessão (mesma limitação recorrente de toda sessão sem credenciais
+  de deploy), nenhuma delas foi executada contra um banco de verdade. Sem
+  componente TypeScript/frontend nesta mudança (SQL puro), então `npx tsc
+  --noEmit`/`npm run build` não se aplicam.
+
+### 1.3 `severity` (2026-07-29)
+
+Pedido do usuário na sessão seguinte: seguir com a implementação da 1.3.
+Migration `20260729000000_event_radar_severity.sql` — mais um `CREATE OR
+REPLACE` de `run_event_detection()` (mesma razão de 1.2: rodar como job
+separado no mesmo cron de 15min não garante ordem entre os dois jobs, o
+que deixaria a severidade até 15min atrasada em relação à
+detecção/fechamento mais recente).
+
+- **`severity.md` só dá os 7 pesos, nenhuma fórmula por fator** (Volume
+  20%, Sentimento 20%, Velocidade 20%, Alcance/engajamento 15%, Relevância
+  dos autores 10%, Risco da narrativa relacionada 10%, Persistência 5%) —
+  toda fórmula abaixo é inferência de MVP, documentada por fator na
+  própria migration (mesmo padrão já usado nos thresholds de 1.1 e na
+  regressão de Tendência de `aggregated-metrics`):
+  - **Volume/Sentimento (20%+20%)**: reaproveitam o z-score já calculado
+    por `event_radar_hourly_zscore` (1.1) — `|z| * 100/3` (z=3, banda
+    "relevante" já fixada em `detection-engine.md`, → 100). Fallback pra
+    `platform` (sem grão horário) e pra quando não há histórico
+    suficiente: variação da janela de 3 dias (`event_radar_daily_range`),
+    escalada. `platform` nunca tem `negative_share` (sem breakdown
+    positivo/neutro/negativo na fonte) — Sentimento fica `null` pra esse
+    escopo, sem fallback possível.
+  - **Velocidade (20%)**: variação percentual de volume nas últimas 3h vs.
+    3h anteriores (mesma janela da regra `volume_spike`/`volume_drop` de
+    "3h" em 1.1) — conceitualmente "rapidez de escalada do evento", uma
+    janela bem mais curta que a regressão de 14 dias da Tendência de
+    Narrativa (ver a nota já existente em `severity.md` sobre essa
+    diferença, 2026-07-22). Só existe pra `query`/`narrative`.
+  - **Alcance/engajamento (15%)**: percentil do dia mais recente
+    disponível, relativo ao máximo entre os pares do mesmo tipo na mesma
+    organização — mesmo princípio do `reach_risk`/`impact_risk` de
+    `risk_score`, mas comparando contra toda a organização, não só "a
+    mesma Query" (este módulo não centraliza esse agrupamento). `platform`
+    usa `engagement_score` (não tem `reach_estimate` na fonte).
+  - **Relevância dos autores (10%)**: % dos Top Authors (semana mais
+    recente) que são `is_influential` (nativo, followers ≥100k — mesmo
+    campo que `author_influence` de `risk_score`). `platform` não tem
+    breakdown de autores — `null`.
+  - **Risco da narrativa relacionada (10%)**: só existe pra `scope_type =
+    'narrative'` — chama `get_narratives_table` filtrando por
+    `p_filters->'narratives'` (mesmo shape já usado por
+    `get_communication_impact`) e lê `risk_score` direto, sem recalcular
+    nada. `query`/`platform` não têm "uma" narrativa relacionada (já são
+    agregados de várias) — `null`.
+  - **Persistência (5%)**: `now() - created_at` da própria linha (o `id`
+    nunca muda entre ciclos — é sempre `UPDATE`, nunca um novo `INSERT`,
+    enquanto o evento continua ativo, ver 1.2), escalada linearmente (0h
+    → 0, 24h → 100, capada em 100).
+- **Fator ausente = `null`, nunca inventado**: todo fator que não se
+  aplica ao escopo (a maioria das combinações envolvendo `platform`)
+  retorna `null` em vez de um valor fabricado — o cálculo final faz
+  `coalesce(fator, 50)` (50 = neutro, mesma convenção já usada por
+  `norm_growth`), então um evento de `platform` (que só tem sinal real de
+  Volume/Velocidade... na verdade só Volume via fallback de 3 dias, já
+  que Velocidade também precisa de grão horário) severity_score inclina
+  bastante pro neutro — honesto dado o quanto menos dado existe pra esse
+  escopo, não uma falha.
+- **Categoria de risco reaproveita as 4 faixas exatas de `risk_score`**
+  (0-33 low, 34-59 medium, 60-84 high, 85-100 critical,
+  `aggregated-metrics/sql-aggregation.md`) — `severity.md` já pedia
+  explicitamente "não criar uma segunda escala de risco em paralelo à já
+  existente no schema".
+- **Verificação**: as três migrations (`20260727000000`/`20260728000000`/
+  `20260729000000`) revisadas manualmente linha por linha — sem acesso a
+  um Supabase real nesta sessão (mesma limitação recorrente), nenhuma
+  executada contra um banco de verdade. Sem componente TypeScript/
+  frontend (SQL puro).
+
+### 1.6 `volume-limits` (2026-07-30) — implementado antes de 1.4, não depois
+
+Pedido do usuário: "na documentação está pedido para ir para o item 1.6
+antes do 1.4 — verifique se é isso mesmo e siga, seguindo a ordem de
+dependências." Verificado e confirmado: `overview.md`, "Ordem de
+implementação" já dizia explicitamente que `volume-limits` (1.6) "entra
+como filtro entre 1.3 e 1.4" — a numeração é só rótulo de catálogo (a
+tabela de funcionalidades foi listada nessa ordem, não a ordem de
+execução real), e `agent-orchestrator.md` (1.4, ainda não implementado)
+já assume "dentro do cap diário" como pré-condição do próprio "Fluxo
+principal". Migration `20260730000000_event_radar_volume_limits.sql` —
+mais um `CREATE OR REPLACE` de `run_event_detection()` (mesma razão de
+1.2/1.3: dois jobs agendados pro mesmo horário de `pg_cron` não têm ordem
+garantida entre si).
+
+- **Coluna nova, não antecipada em `data-model.md`**:
+  `radar_staging_events.queued_for_agent_at` (`timestamptz`, nullable) —
+  sem ela não havia como saber "quantos eventos já foram considerados hoje
+  contra o cap", já que `feed_events` (onde a saída da IA seria gravada,
+  por 1.5) não existe ainda, e mesmo que existisse, o corte tem que
+  acontecer *antes* da chamada de IA (`volume-limits.md`: "nunca depois"),
+  não dá pra inferir a partir do que já foi publicado.
+- **Mecanismo**: a cada ciclo, conta (por organização) quantos eventos
+  ativos já foram marcados hoje (UTC); classifica os ainda não marcados
+  hoje por `severity_score` desc; marca só os primeiros N (cap - já
+  marcados) com `queued_for_agent_at = v_cycle_start`. Um evento marcado
+  permanece marcado mesmo que seu `severity_score` mude depois — o cap não
+  "desconta" retroativamente.
+- **Cap fixado em 15** — `event_radar_config()` ganhou `daily_event_cap`
+  (precisou de `DROP FUNCTION` antes do `CREATE`, mesma lição já paga
+  antes em `get_narratives_table` — não dá pra acrescentar coluna a uma
+  function `RETURNS TABLE` via `CREATE OR REPLACE` puro). 15 é o ponto
+  médio do "aproximadamente 10-20" do próprio `volume-limits.md` — mesma
+  inferência de MVP já documentada pros outros thresholds em 1.1.
+- **Verificação**: as quatro migrations (`20260727000000`–`20260730000000`)
+  revisadas manualmente linha por linha — sem acesso a um Supabase real
+  nesta sessão (mesma limitação recorrente), nenhuma executada contra um
+  banco de verdade. Sem componente TypeScript/frontend (SQL puro).
+
+### Módulo `entities` — spec completa + `data-model.md` implementado + seed real de partidos/parlamentares (2026-07-13)
+
+Duas sessões na mesma data. **Primeira**: usuário pediu a spec do módulo de
+cadastro de Entidades (CRUD, admin-only) para classificar pessoas/veículos/
+partidos/instituições monitorados em múltiplos espectros e vincular esse
+cadastro à visão de Autores e Influenciadores. Especificado do zero —
+`entities` só existia como linha reservada em `_index.md`/`_glossary.md`
+desde a criação do projeto, nunca tinha spec própria. 4 arquivos novos em
+`.dev/specs/entities/` (`overview.md`, `data-model.md`,
+`entity-registration.md`, `author-linking.md`), todos `status: pronto`
+nesta primeira parte. Uma decisão de escopo genuinamente ambígua foi
+resolvida com o usuário via pergunta direta (não assumida): o catálogo é
+**global/nacional** (sem `organization_id`), mantido pelos admins da
+plataforma (`is_admin`, já global desde `auth`), não um catálogo por
+organização — combina com o nome "Cadastro **Nacional** de Entidades" já
+reservado desde antes desta spec existir.
+
+**Achado durante a revisão de coerência da documentação** (pedido explícito
+do usuário: "revise a documentação existente"): outra sessão estava
+implementando a página `/authors` ("Autores e Influenciadores") em
+paralelo, exatamente enquanto esta sessão escrevia a spec de `entities` —
+descoberto via `git status` mostrando arquivos modificados que não
+existiam no início da sessão (`intelligence-center/authors-and-influencers.md`
+era novo, `_index.md`/`_architecture.md`/`aggregated-metrics/*` já vinham
+sendo editados por aquela outra sessão). A spec de `entities` foi ajustada
+para reconhecer essa realidade em vez de presumir que `/authors` não
+existia — `authors-and-influencers.md` já lista "classificação de espectro
+político/tipo de autor (`entities`/`entity_tags`)" como gap conhecido,
+exatamente o que `entities/author-linking.md` fecha. Referências cruzadas
+corrigidas em `_index.md`, `_architecture.md`, `_glossary.md`,
+`aggregated-metrics/overview.md`/`sql-aggregation.md`/
+`standard-json-envelope.md`, `foundation/overview.md`. Bug de drift de
+documentação real encontrado e corrigido de passagem: o bloco `authors` do
+envelope (`standard-json-envelope.md`) não documentava dois campos que já
+existem no código (`AuthorRow.sentiment_positive/neutral/negative`,
+`narrative_labels`) desde sessões anteriores — nenhuma mudança de
+comportamento, só a spec alcançando a implementação.
+
+**Segunda sessão, mesma data, pedido do usuário**: "crie um seed com todos
+os partidos e parlamentares complementando todas as informações que vc
+conseguir na internet". Isso implicava implementar o schema de
+`entities/data-model.md` primeiro (nenhuma migration criava essas tabelas
+ainda) — feito em `supabase/migrations/20260731000000_entities_schema.sql`,
+sem desvio do spec (`entity_type` enum + `entities`/`entity_accounts`/
+`entity_tags`, reaproveitando `severity_level` já existente desde
+`foundation` para `entities.influence_level`, `set_updated_at` e
+`is_current_user_admin()` já existentes — nenhuma function nova).
+
+O seed em si (`supabase/migrations/20260731010000_seed_parties_and_parliamentarians.sql`)
+foi construído a partir de dado real, consultado ao vivo nesta sessão
+contra as APIs de dados abertos oficiais do Congresso Nacional — nunca
+"complementado" com informação inventada da memória do modelo, mesma
+premissa de "nunca fabricar dado sem fonte real" já aplicada em todo o
+resto do projeto (`mentions`/sampling):
+- **Câmara dos Deputados**: `dadosabertos.camara.leg.br/api/v2/deputados`
+  (512 deputados da legislatura atual, um único request com
+  `itens=600` cobriu tudo — sem paginação necessária) e `/api/v2/partidos`
+  (siglas/nomes oficiais dos partidos com representação atual).
+- **Senado Federal**: `legis.senado.leg.br/dadosabertos/senador/lista/atual`
+  (81 senadores em exercício, incl. `SexoParlamentar` — usado para
+  "Senador"/"Senadora" no cargo).
+- Consolidado num script Node local (`gen-seed.js`, scratchpad da sessão,
+  não commitado) que gerou UUIDs próprios por linha (`crypto.randomUUID()`)
+  e o SQL final — evita qualquer correlação frágil por nome (nomes
+  duplicados existem em tese, embora nenhum tenha sido encontrado nos 512
+  deputados desta consulta).
+- Normalização mínima e documentada: Senado usa `PODEMOS`, Câmara usa
+  `PODE` para o mesmo partido — unificado para `PODE`. Nenhuma outra sigla
+  precisou de normalização (conferido programaticamente: toda sigla de
+  partido de todo deputado/senador bate com a lista de partidos da
+  Câmara após essa única normalização).
+
+**Cobertura final**: 21 partidos (toda sigla com representação federal
+ativa hoje, Câmara e/ou Senado) + 512 deputados + 81 senadores = 593
+parlamentares, cada um com 3 `entity_tags` (`office`/`party`/`state`) —
+1779 linhas de tag, todas direto do mesmo dado oficial já buscado, nenhuma
+inferência local.
+
+**Deliberadamente fora do seed** — mesmo critério acima, nunca apresentar
+como fato algo sem fonte confiável/verificada:
+- **`entity_accounts`** (handles de redes sociais) — não populado. Não
+  existe API oficial em lote para 593 handles de Twitter/Instagram/etc., e
+  um handle errado quebraria silenciosamente o vínculo com
+  `bw_query_top_authors` (`author-linking.md`) sem nenhum erro visível —
+  risco pior que simplesmente deixar em branco para cadastro manual
+  (`/admin/entities`, quando implementada) ou uma futura rotina de
+  enriquecimento.
+- **`influence_level`** — já documentado desde a spec original como campo
+  manual/subjetivo do admin; um seed automatizado não deveria opinar por
+  ele.
+- **`political_spectrum`/`ideology`** (`entity_tags`) — classificação
+  real, mas contestável e sem uma fonte única/oficial que resolva a
+  ambiguidade para os 21 partidos com o rigor que este projeto exige de
+  qualquer dado apresentado como fato (mesmo padrão já aplicado a
+  `authors[].risk_level`, `_pending.md` gap #11 — não inventar uma fórmula/
+  classificação sem uma fonte que a sustente). Fica para classificação
+  manual pelo admin via `/admin/entities`.
+- **Partidos registrados no TSE sem parlamentar federal eleito hoje** (ex:
+  PCO, PSTU, PCB, UP, PMB, PRTB) — as duas fontes oficiais usadas cobrem só
+  representação federal atual; adicionar os demais é um `INSERT` direto
+  quando/se algum cliente precisar deles.
+
+**Verificação**: as duas migrations foram revisadas manualmente (contagem
+de linhas por bloco batendo com o esperado — 21/593/1779 —, ausência de
+vírgula solta antes de `on conflict`, encoding UTF-8 dos nomes acentuados
+conferido em amostras como "Célia Xakriabá"/"Átila Lins") mas **não
+executadas contra um banco real** nesta sessão — sem credenciais/deploy
+neste ambiente, mesma limitação recorrente de toda sessão sem acesso ao
+Supabase Dashboard já registrada em várias entradas deste arquivo. `git
+push` para `develop` (fluxo já estabelecido do projeto) é o próximo passo
+para essas duas migrations realmente rodarem. `entity-registration.md`
+(CRUD pela UI) e `author-linking.md` (o `LEFT JOIN` que liga uma Entity a
+um autor do ranking) continuam só especificados — o catálogo já existe e
+já está populado no schema, mas hoje só é editável via SQL direto, não
+pela UI do produto.
+
+### `page_cache` desabilitado — investigação em aberto de `/narratives` retornando vazio (2026-07-14)
+
+User report: `get-page-narratives` devolvendo `narratives: []` para uma
+organização com Narrativas-folha ativas. Diagnóstico por leitura de código
++ queries SQL fornecidas pelo usuário descartou duas causas óbvias: (1) o
+`scope` da function (`bw_categories.status = 'active'`, `parent_id is not
+null`) tem várias Narrativas ativas pra essa organização; (2) essas
+Narrativas têm linhas reais em `narrative_metrics` (`period = 'daily'`)
+dentro da janela de 7 dias pedida — o que deveria produzir linhas via
+`get_narratives_table('leaves')`. Também descartado: a Edge Function
+`get-page-narratives` deployada é idêntica ao arquivo canônico
+(`supabase/functions-shared-source/aggregated-metrics-service.ts`), sem
+divergência de deploy.
+
+Usuário pediu para desabilitar `page_cache` (gap #21, implementado
+2026-07-25, TTL 5min por `(organization_id, page, period, filters)`) e
+retomar essa funcionalidade depois, em vez de continuar investigando se
+era a causa. `getPageEnvelopeWithCache()` — na service layer canônica e
+nas 7 Edge Functions `get-page-{overview,narratives,sentiment,platforms,
+themes,authors}`/`get-narrative-detail` (Princípio técnico 5, cada cópia
+editada manualmente) — agora só chama `assemblePageResponse()` direto,
+sem ler/gravar `page_cache`. Tabela/migration/RLS (`20260725040000`)
+ficam intactas, só não usadas; reativar é restaurar o corpo original da
+function (ver histórico do git). `npx tsc --noEmit` confirma que isso não
+afeta o lado Next.js (arquivos `supabase/functions*` são excluídos do
+`tsconfig.json` de propósito).
+
+**Bug de `/narratives` continua em aberto** — o cache nunca foi
+confirmado como a causa real, só o principal suspeito ainda não
+descartado no momento do pedido. Hipóteses restantes, nenhuma verificada
+nesta sessão (sem acesso a logs/DB ao vivo): RLS sob a sessão JWT real do
+usuário divergindo da sessão elevada usada para rodar as queries de
+diagnóstico (mesmo `auth_organization_ids()`/RLS deveria valer igual, já
+que o mesmo client autenticado passa tanto pela checagem de
+`organization_members` quanto pela RPC — mas não descartado com certeza
+sem testar de verdade), ou uma exceção silenciosa em `fetchNarratives`
+(captura qualquer erro e retorna `[]`, só visível em Dashboard → Edge
+Functions → Logs → `get-page-narratives`, procurando por
+`fetchNarratives failed`). Ver `_pending.md`, gap #34, para o registro
+completo e os próximos passos de diagnóstico sugeridos.
+
 ## Directory structure
 
 ```

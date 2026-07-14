@@ -922,48 +922,24 @@ async function cacheFingerprint(ctx: PageContext): Promise<string> {
     .slice(0, 32)
 }
 
+// ⚠️ DESABILITADO (2026-07-14, pedido do usuário) — `/narratives` estava
+// devolvendo `narratives: []` mesmo com dado confirmado via SQL direto
+// (scope + narrative_metrics com linhas reais na janela pedida); page_cache
+// era o suspeito ainda não descartado quando o pedido de desabilitar
+// chegou. Em vez de investigar mais a fundo agora, o usuário pediu para
+// tirar o cache do caminho e retomar essa funcionalidade depois — ver
+// _pending.md. `getPageEnvelopeWithCache` passou a só chamar
+// `assemblePageResponse` direto, sem ler/gravar `page_cache` — mesma
+// assinatura, nenhum dos 7 handlers precisou mudar. `cacheFingerprint`/
+// `PAGE_CACHE_TTL_MS`/`PageCacheRow`/a tabela `page_cache` (migration
+// 20260725040000) ficam intactos, só não usados — reativar é só
+// restaurar o corpo original desta function (ver histórico do git).
 export async function getPageEnvelopeWithCache(
   supabase: SupabaseClient,
   page: PageKey,
   context: PageContext,
 ): Promise<PageEnvelope> {
-  const filtersHash = await cacheFingerprint(context)
-  const cacheKey = {
-    organization_id: context.organizationId,
-    page,
-    period_start: context.period.start,
-    period_end: context.period.end,
-    filters_hash: filtersHash,
-  }
-
-  try {
-    const { data, error } = await supabase
-      .from('page_cache')
-      .select('envelope, expires_at')
-      .match(cacheKey)
-      .maybeSingle()
-    if (error) throw error
-    const cached = data as PageCacheRow | null
-    if (cached && new Date(cached.expires_at).getTime() > Date.now()) {
-      return cached.envelope
-    }
-  } catch (err) {
-    console.error('[aggregated-metrics] page_cache read failed', err)
-  }
-
-  const envelope = await assemblePageResponse(supabase, page, context)
-
-  try {
-    const { error } = await supabase.from('page_cache').upsert(
-      { ...cacheKey, envelope, expires_at: new Date(Date.now() + PAGE_CACHE_TTL_MS).toISOString() },
-      { onConflict: 'organization_id,page,period_start,period_end,filters_hash' },
-    )
-    if (error) throw error
-  } catch (err) {
-    console.error('[aggregated-metrics] page_cache write failed', err)
-  }
-
-  return envelope
+  return assemblePageResponse(supabase, page, context)
 }
 
 

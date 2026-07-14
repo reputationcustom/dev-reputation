@@ -2,7 +2,7 @@
 tipo: data-model
 módulo: event-radar
 status: rascunho
-atualizado: 2026-07-25
+atualizado: 2026-07-30
 ---
 
 # Modelo de Dados — Radar de Eventos
@@ -28,6 +28,17 @@ atualizado: 2026-07-25
 
 ### `radar_staging_events`
 
+> ✅ **Implementado (2026-07-27)** — migration
+> `20260727000000_event_radar_detection_engine.sql`, schema exatamente como
+> especificado abaixo. ⚠️ Correção de nomenclatura encontrada durante a
+> implementação: a coluna `severity` diz "Tipo: `risk_level`" na tabela
+> abaixo, mas não existe um tipo chamado `risk_level` neste schema — o
+> enum de fato reaproveitado por `narratives.risk_level` chama-se
+> `severity_level` (`low`\|`medium`\|`high`\|`critical`,
+> `foundation_schema.sql`), corrigido na tabela abaixo. `feed_events`/
+> `feed_event_feedback` (resto deste arquivo) continuam rascunho, sem
+> migration — só `radar_staging_events` existe hoje.
+
 Staging interno do motor de detecção (etapa 1.1) — **nunca lido pelo frontend**, só por
 `deduplication-grouping` (1.2), `severity` (1.3) e `agent-orchestrator` (1.4). Ver
 `detection-engine.md`, `deduplication-grouping.md`, `severity.md`.
@@ -46,8 +57,9 @@ Staging interno do motor de detecção (etapa 1.1) — **nunca lido pelo fronten
 | `z_score`            | `numeric`        | não | Quando a regra for z-score (≥2 atenção, ≥3 relevante) |
 | `detected_at`        | `timestamptz`    | sim | Quando o motor de detecção (1.1) gravou esta linha |
 | `severity_score`     | `numeric`        | não | 0-100, preenchido pela etapa 1.3 (`severity.md`) — `null` até essa etapa rodar |
-| `severity`           | `risk_level`     | não | `low`\|`medium`\|`high`\|`critical`, mesmo enum de `narratives.risk_level` — preenchido pela etapa 1.3 |
+| `severity`           | `severity_level` | não | `low`\|`medium`\|`high`\|`critical`, mesmo enum de `narratives.risk_level` — preenchido pela etapa 1.3 |
 | `closed_at`          | `timestamptz`    | não | Preenchido pela etapa 1.2 quando o indicador volta ao normal e a regra deixa de disparar — evento deixa de ser "ativo" (ver `deduplication-grouping.md`) |
+| `queued_for_agent_at` | `timestamptz`   | não | ✅ **Coluna nova (2026-07-30, `volume-limits.md`)** — preenchida pela etapa 1.6 quando o evento entra no cap diário de organização (`daily_event_cap`, `event_radar_config()`); `null` enquanto não for a vez dele. Uma futura Edge Function de 1.4 lê `queued_for_agent_at is not null` pra saber o que processar |
 | `created_at`/`updated_at` | `timestamptz` | sim | Padrão (`set_updated_at`) |
 
 **Índices**: unique parcial em `(organization_id, scope_type, scope_id, event_type, window) WHERE closed_at IS NULL` —

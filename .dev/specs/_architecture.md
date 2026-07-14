@@ -1,6 +1,6 @@
 ---
 tipo: architecture-map
-atualizado: 2026-07-25
+atualizado: 2026-07-30
 ---
 
 # Mapa de Arquitetura — Digital Intelligent Communication
@@ -70,7 +70,7 @@ graph TD
     style INTEL fill:#c3e6cb,stroke:#2e7d32
     style ENTITIES fill:#fff3cd,stroke:#856404
     style COMMUNICATIONS fill:#c3e6cb,stroke:#2e7d32
-    style EVENTRADAR fill:#e2e3e5,stroke:#6c757d
+    style EVENTRADAR fill:#fff3cd,stroke:#856404
     style PROPGRAPH fill:#e2e3e5,stroke:#6c757d
     style DECISIONCENTER fill:#e2e3e5,stroke:#6c757d
     style REPORTS fill:#e2e3e5,stroke:#6c757d
@@ -101,6 +101,15 @@ fallback), mas fica mais completo com ela.
 > nunca um pré-requisito do ranking). Não bloqueia nem é bloqueado por `intelligence-center` —
 > `intelligence-center/authors-and-influencers.md` (`/authors`, já implementada) já documenta a
 > classificação de espectro/`entities` como gap conhecido, exatamente o que este módulo especifica.
+>
+> ✅ **`entities/data-model.md` implementado no mesmo dia (2026-07-13)** — schema (migration
+> `20260731000000`) + seed real de 21 partidos e 593 parlamentares federais (dados oficiais de
+> `dadosabertos.camara.leg.br`/`legis.senado.leg.br`, migration `20260731010000`), pedido do
+> usuário. Nó **permanece amarelo**, não vira verde — `entity-registration.md` (CRUD pela UI) e
+> `author-linking.md` (o `LEFT JOIN` que efetivamente liga uma Entity a um autor do ranking) ainda
+> não têm código, mesmo critério já usado para não marcar um módulo verde por ter só uma parte
+> pronta (ver `aggregated-metrics`/`auth` acima). Ver `entities/data-model.md` para o detalhe
+> completo, inclusive o que foi deliberadamente deixado fora do seed.
 
 `threshold-engine` e `intelligent-feed` (módulos que existiam na tabela original de `_index.md`,
 Sprint 3) não aparecem como nós próprios — foram **absorvidos por `event-radar`** antes de
@@ -149,9 +158,9 @@ de `intelligence-center`, ver `_index.md`, "Módulo `command-center` removido".
 | `auth` | Login/recuperação de senha (Supabase Auth) + administração de usuários (admin-only) + `/perfil` (fuso horário) | implementado | [auth/overview.md](auth/overview.md) |
 | `entities` | Cadastro Nacional de Entidades (partido/espectro/cargo) + vínculo aditivo com o ranking de Autores e Influenciadores | pronto — não implementado | [entities/overview.md](entities/overview.md) |
 | `intelligence-center` | As 5 páginas do frontend (Executive Overview, Narrativas, Sentimento, Plataformas, Pautas Eleitorais) + `cases` (ações/decisões, ex-`command-center`) | implementado — `cases` (schema) ainda não | [intelligence-center/overview.md](intelligence-center/overview.md) |
-| `aggregated-metrics` | Envelope JSON único + SQL de agregação + Edge Functions por página, consumido pelo frontend e pela IA | implementado — `get_active_highlights`/região/`page_narrative_synthesis` pendentes, ver `_pending.md` | [aggregated-metrics/overview.md](aggregated-metrics/overview.md) |
+| `aggregated-metrics` | Envelope JSON único + SQL de agregação + Edge Functions por página, consumido pelo frontend e pela IA | implementado — `get_active_highlights`/região/`page_narrative_synthesis` pendentes; `page_cache` **desabilitado** (2026-07-14, investigação em aberto de `/narratives` vazio), ver `_pending.md` gap #34 | [aggregated-metrics/overview.md](aggregated-metrics/overview.md) |
 | `communications` | Registro de Comunicações/Decisões por Narrativa + acompanhamento de impacto (sentimento/menções/risco/momentum antes vs. depois) — Sprint 2.1 | implementado | [communications/overview.md](communications/overview.md) |
-| `event-radar` | Detecção estatística de picos/quedas/mudanças + 1 card de IA por evento — absorve `threshold-engine`/`intelligent-feed` | rascunho | [event-radar/overview.md](event-radar/overview.md) |
+| `event-radar` | Detecção estatística de picos/quedas/mudanças + 1 card de IA por evento — absorve `threshold-engine`/`intelligent-feed` | rascunho — 1.1 `detection-engine` (2026-07-27), 1.2 `deduplication-grouping` (2026-07-28), 1.3 `severity` (2026-07-29) e 1.6 `volume-limits` (2026-07-30) implementados (1.6 antes de 1.4, ver `overview.md`), 1.4-1.5 não | [event-radar/overview.md](event-radar/overview.md) |
 | `propagation-graph` | Grafo de propagação com rollup materializado completo (versão simplificada já em `intelligence-center/narratives-exploration.md`) | rascunho | — |
 | `decision-center` | AI Advisors — perguntas livres/interativas do analista sobre mentions/narrativas | rascunho | — |
 | `executive-reports` | Relatórios periódicos (diário/semanal/mensal/executivo/crise) | rascunho | — |

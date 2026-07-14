@@ -1,11 +1,55 @@
 ---
 tipo: data-model
 módulo: entities
-status: pronto
+status: implementado
 atualizado: 2026-07-13
 ---
 
 # Modelo de Dados — Cadastro de Entidades
+
+> ✅ **Implementado (2026-07-13)**: migration
+> `supabase/migrations/20260731000000_entities_schema.sql` — `entity_type`
+> (enum) + `entities`/`entity_accounts`/`entity_tags` exatamente como
+> especificado abaixo, sem desvio. Reaproveita `severity_level` (enum já
+> existente desde `foundation`, `20260707000000` — comentário original já
+> dizia "Reusado por risk_level e priority em narratives e futuramente
+> cases"), `set_updated_at` (`foundation`) e `is_current_user_admin()`
+> (`auth`, `20260713000000`) — nenhuma função nova precisou ser criada.
+>
+> ✅ **Seed de partidos e parlamentares (2026-07-13)**, pedido do usuário:
+> "crie um seed com todos os partidos e parlamentares complementando todas
+> as informações que vc conseguir na internet" — migration
+> `supabase/migrations/20260731010000_seed_parties_and_parliamentarians.sql`.
+> Dados consultados ao vivo nesta sessão contra as APIs de dados abertos
+> oficiais do Congresso Nacional (`dadosabertos.camara.leg.br/api/v2/
+> deputados`+`/partidos`, `legis.senado.leg.br/dadosabertos/senador/lista/
+> atual`) — nunca inventados/estimados, mesma premissa de "nunca fabricar
+> dado sem fonte real" já aplicada em todo o resto do projeto (`mentions`/
+> sampling, ver `CLAUDE.md`). Cobertura: **21 partidos** com representação
+> federal ativa (Câmara e/ou Senado) + **512 deputados federais** + **81
+> senadores** = **593 parlamentares**, cada um com 3 `entity_tags`
+> (`office`/`party`/`state`) direto dos mesmos endpoints oficiais.
+> **Deliberadamente fora do seed** (mesmo critério de nunca fabricar sem
+> fonte confiável, ver o comentário completo no topo do arquivo da
+> migration): `entity_accounts` (handles de rede social — sem API oficial
+> em lote confiável para 593 pessoas; um handle errado quebraria
+> silenciosamente o vínculo com `bw_query_top_authors`, ver
+> `author-linking.md`), `influence_level` (campo explicitamente manual/
+> subjetivo por design), `political_spectrum`/`ideology` (classificação
+> contestável — não apresentada como fato sem fonte verificada nesta
+> sessão), e partidos registrados no TSE sem parlamentar federal eleito
+> hoje (ex: PCO, PSTU, PCB, UP, PMB, PRTB — fora do escopo "partidos e
+> parlamentares" tal como as duas fontes oficiais usadas confirmam agora).
+> Ambas as migrations foram revisadas manualmente (estrutura de `INSERT`,
+> ausência de vírgula solta antes de `on conflict`, encoding UTF-8 dos
+> nomes acentuados) mas **não executadas contra um banco real** nesta
+> sessão — sem credenciais/deploy neste ambiente, mesma limitação
+> recorrente de toda sessão sem acesso ao Supabase Dashboard já registrada
+> em várias entradas de `CLAUDE.md`. `entity-registration.md`
+> (CRUD/Edge Functions) e `author-linking.md` (`LEFT JOIN` em
+> `get_authors_ranking`) continuam `pronto`, não implementados — o módulo
+> `entities` como um todo permanece amarelo em `_architecture.md` até os
+> dois existirem também.
 
 ## Entidades
 

@@ -28,6 +28,18 @@ atualizado: 2026-07-25
 > conhece `page_cache`; não existe botão "Atualizar dados" no header do
 > frontend). Revisitar se o TTL sozinho se mostrar insuficiente na
 > prática.
+>
+> ⚠️ **Desabilitado 2026-07-14** (pedido do usuário) — investigando um bug
+> real de `/narratives` retornando `narratives: []` mesmo com dado
+> confirmado por SQL direto (Narrativas-folha ativas com
+> `narrative_metrics` reais na janela pedida), `page_cache` era o suspeito
+> ainda não descartado quando o usuário pediu para tirar o cache do
+> caminho e retomar depois. `getPageEnvelopeWithCache()` (service layer +
+> as 7 Edge Functions, incluindo `get-page-authors` que não existia em
+> 2026-07-25) agora só chama `assemblePageResponse()` direto — nunca lê/
+> grava `page_cache`. Tabela/migration/RLS intactas, só não usadas;
+> reativar é restaurar o corpo original da function (ver histórico do
+> git). Ver `_pending.md`, gap #34.
 
 ## Objetivo
 

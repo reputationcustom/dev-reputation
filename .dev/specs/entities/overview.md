@@ -23,6 +23,19 @@ atualizado: 2026-07-13
 > Nacional de Entidades", nome já reservado em `_glossary.md`), não
 > isolado por organização — ver "Escopo: catálogo global, não por
 > organização" abaixo.
+>
+> ✅ **`data-model.md` implementado no mesmo dia (2026-07-13)** — schema
+> (migration `20260731000000`) + seed real de 21 partidos e 593
+> parlamentares federais (512 deputados + 81 senadores, migration
+> `20260731010000`, dados oficiais de `dadosabertos.camara.leg.br`/
+> `legis.senado.leg.br`) — ver `data-model.md`
+> para o detalhe completo, inclusive o que foi deliberadamente deixado de
+> fora do seed (contas de rede social, nível de influência, espectro
+> político — tudo sem fonte confiável em lote ou explicitamente subjetivo).
+> `entity-registration.md` (tela de CRUD) e `author-linking.md` (vínculo
+> com o ranking de Autores) continuam só especificados, não implementados
+> — o catálogo já existe e já está populado, mas ainda só editável via SQL
+> direto, não pela UI.
 
 ## Objetivo
 
@@ -77,7 +90,7 @@ aqui.
 
 | Funcionalidade | Descrição resumida | Status | Spec |
 |---|---|---|---|
-| Modelo de dados (`entities`, `entity_accounts`, `entity_tags`) | Estrutura EAV — pessoa/veículo/partido/instituição/empresa/movimento, contas por plataforma, classificação extensível por dimensão | pronto | [data-model.md](data-model.md) |
+| Modelo de dados (`entities`, `entity_accounts`, `entity_tags`) | Estrutura EAV — pessoa/veículo/partido/instituição/empresa/movimento, contas por plataforma, classificação extensível por dimensão | **implementado** (2026-07-13, migration `20260731000000` + seed de partidos/parlamentares `20260731010000` — ver `data-model.md`) | [data-model.md](data-model.md) |
 | Cadastro de Entidades (CRUD) | Tela `/admin/entities`, admin-only — criar/editar/desativar/excluir | pronto | [entity-registration.md](entity-registration.md) |
 | Vínculo com Autores e Influenciadores | Como uma Entity se conecta ao ranking nativo de autores da Brandwatch (`get_authors_ranking`) e habilita cadastro rápido a partir de um autor já visto | pronto | [author-linking.md](author-linking.md) |
 

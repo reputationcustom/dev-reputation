@@ -2,10 +2,26 @@
 tipo: module-overview
 módulo: event-radar
 status: rascunho
-atualizado: 2026-07-25
+atualizado: 2026-07-30
 ---
 
 # Módulo: Radar de Eventos
+
+> ✅ **1.1 `detection-engine` (2026-07-27), 1.2 `deduplication-grouping`
+> (2026-07-28), 1.3 `severity` (2026-07-29) e 1.6 `volume-limits`
+> (2026-07-30) implementados** — primeiro código real deste módulo
+> (migrations
+> `20260727000000`/`20260728000000`/`20260729000000`/`20260730000000`, ver
+> `detection-engine.md`/`deduplication-grouping.md`/`severity.md`/
+> `volume-limits.md` e `CLAUDE.md`, "Módulo `event-radar`"). 1.2, 1.3 e 1.6
+> foram implementados dentro do próprio `run_event_detection()` (não como
+> função/step separado) — ver os respectivos specs pro porquê. **1.6 foi
+> implementado antes de 1.4** — apesar da numeração, "Ordem de
+> implementação" abaixo já diz que esse filtro entra entre 1.3 e 1.4, e o
+> próprio 1.4 depende dele. Status do módulo continua `rascunho` porque
+> 1.4 (`agent-orchestrator`) e 1.5 (`schema-integration`, escrita em
+> `feed_events`) ainda não existem — nada é lido pelo frontend até 1.5
+> publicar em `feed_events`.
 
 > ✅ **Absorve `threshold-engine`/`intelligent-feed`** (Sprint 3 em `_index.md`, nunca tiveram
 > spec própria) — é a especificação concreta do mesmo motor de risco + feed de eventos que esses
@@ -37,13 +53,13 @@ exata.
 
 | Funcionalidade                    | Descrição resumida                                              | Status    | Spec                                                                |
 |-------------------------------------|--------------------------------------------------------------------|-----------|------------------------------------------------------------------------|
-| Modelo de dados (`radar_staging_events`, `feed_events`, `feed_event_feedback`) | Schema completo consolidado (2026-07-25) | rascunho  | [data-model.md](data-model.md) |
-| `detection-engine`                  | Views/functions SQL que calculam janelas de comparação e regras   | rascunho  | [detection-engine.md](detection-engine.md)                                 |
-| `deduplication-grouping`            | Dedup determinístico antes de qualquer chamada de IA               | rascunho  | [deduplication-grouping.md](deduplication-grouping.md)             |
-| `severity`                          | Score 0-100 determinístico + mapeamento para categoria de risco    | rascunho  | [severity.md](severity.md)                                         |
+| Modelo de dados (`radar_staging_events`, `feed_events`, `feed_event_feedback`) | Schema completo consolidado (2026-07-25) — só `radar_staging_events` tem migration | rascunho  | [data-model.md](data-model.md) |
+| `detection-engine`                  | Views/functions SQL que calculam janelas de comparação e regras   | implementado  | [detection-engine.md](detection-engine.md)                                 |
+| `deduplication-grouping`            | Dedup determinístico antes de qualquer chamada de IA               | implementado  | [deduplication-grouping.md](deduplication-grouping.md)             |
+| `severity`                          | Score 0-100 determinístico + mapeamento para categoria de risco    | implementado  | [severity.md](severity.md)                                         |
 | `agent-orchestrator`                | Única chamada de IA por evento, saída estruturada                  | rascunho  | [agent-orchestrator.md](agent-orchestrator.md)                         |
 | `schema-integration`                | Escrita em `feed_events` (toda severidade, sem aprovação manual) + feedback do analista | rascunho  | [schema-integration.md](schema-integration.md)                           |
-| `volume-limits`                     | Cap diário de eventos publicados por organização                   | rascunho  | [volume-limits.md](volume-limits.md)                                 |
+| `volume-limits`                     | Cap diário de eventos publicados por organização                   | implementado  | [volume-limits.md](volume-limits.md)                                 |
 | `aggregated-metrics-integration`    | Contrato de campos compartilhado com o envelope de página          | rascunho  | [aggregated-metrics-integration.md](aggregated-metrics-integration.md)   |
 
 ## Dependências

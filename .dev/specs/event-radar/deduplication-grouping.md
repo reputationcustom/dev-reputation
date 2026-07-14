@@ -2,11 +2,43 @@
 tipo: feature-spec
 módulo: event-radar
 funcionalidade: deduplication-grouping
-status: rascunho
-atualizado: 2026-07-25
+status: implementado
+atualizado: 2026-07-28
 ---
 
 # Deduplicação e Agrupamento Determinístico (SQL, sem IA)
+
+> ✅ **Implementado (2026-07-28)** — migration
+> `20260728000000_event_radar_deduplication_grouping.sql`. Pedido do
+> usuário: promover este spec de `rascunho` pra `pronto` e implementar em
+> seguida — na prática, ao terminar o código, o status já vai direto pra
+> `implementado` (mesmo padrão de `detection-engine.md`), sem ficar parado
+> em `pronto`.
+>
+> ⚠️ **Achado ao implementar**: metade deste spec (itens 2-4 do "Fluxo
+> principal" — inserir se a chave de dedup não existe ativa, atualizar se
+> já existe) **já estava implementada desde 1.1**
+> (`20260727000000_event_radar_detection_engine.sql`) — o próprio
+> `run_event_detection()` já faz isso via `INSERT ... ON CONFLICT (...)
+> WHERE closed_at IS NULL DO UPDATE` sobre a mesma chave de dedup que este
+> spec descreve. Não existe uma segunda camada de dedup escrita nesta
+> migration em cima disso — seria redundante. A peça genuinamente nova
+> (item 5 — encerramento automático quando o indicador volta ao normal)
+> foi adicionada dentro do próprio `run_event_detection()` (`CREATE OR
+> REPLACE`), não como uma função/step separado: "voltou ao normal" só é
+> conhecível comparando contra a mesma varredura de regras que 1.1 já
+> calcula a cada ciclo — uma função separada precisaria recalcular a mesma
+> matriz de agregações só pra descobrir a mesma coisa, dobrando o custo de
+> leitura sem benefício. Mecanismo: `v_cycle_start` (capturado uma vez no
+> início do ciclo, usado como valor de `detected_at` em todo INSERT/UPDATE
+> que antes usava `now()` diretamente) permite, ao final do ciclo, fechar
+> numa única instrução (`UPDATE ... WHERE closed_at IS NULL AND detected_at
+> < v_cycle_start`) qualquer linha ativa que não foi tocada nesta
+> varredura — ou seja, cuja regra deixou de disparar. Seguro porque
+> `run_event_detection()` reavalia **todas** as 13 combinações regra×janela
+> por completo a cada ciclo (sem execução faseada, diferente de
+> `bw-sync`), então "não foi tocada" tem exatamente um significado: a regra
+> parou de valer.
 
 ## Objetivo
 

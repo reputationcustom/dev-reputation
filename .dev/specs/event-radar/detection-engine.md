@@ -2,11 +2,30 @@
 tipo: feature-spec
 módulo: event-radar
 funcionalidade: detection-engine
-status: rascunho
-atualizado: 2026-07-25
+status: implementado
+atualizado: 2026-07-27
 ---
 
 # Motor de Detecção (100% SQL, sem IA)
+
+> ✅ **Implementado (2026-07-27)** — migration
+> `20260727000000_event_radar_detection_engine.sql`: tabela
+> `radar_staging_events` (schema exato de `data-model.md`) +
+> `run_event_detection()` agendada via `pg_cron` a cada 15 minutos (item 1
+> deste "Fluxo principal", já resolvido em 2026-07-22). Cobre as 5 janelas
+> e os 5 `event_type` de exemplo listados abaixo — mapeamento janela↔regra é
+> uma escolha de MVP não especificada em nenhum lugar deste arquivo,
+> documentada inline na migration e em `CLAUDE.md` ("Módulo `event-radar`").
+> Thresholds (variação %, volume mínimo, diferença absoluta de sentimento
+> negativo) também não tinham número exato definido aqui — só a banda de
+> z-score (≥2/≥3) é explícita — inferência de MVP em
+> `event_radar_config()`, revisar com dado real de produção. Escopo
+> `platform` não roda as 2 regras de sentimento negativo
+> (`negative_sentiment_increase`/`negative_sentiment_spike`) — não existe
+> breakdown positivo/neutro/negativo em `bw_query_metrics_daily_by_platform`,
+> só o score composto (gap honesto, ver `CLAUDE.md`). Etapas 1.2–1.6
+> (dedup, severidade, agent, escrita em `feed_events`, cap de volume)
+> continuam rascunho — esta função só grava em `radar_staging_events`.
 
 ## Objetivo
 

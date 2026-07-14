@@ -2,11 +2,36 @@
 tipo: feature-spec
 módulo: event-radar
 funcionalidade: severity
-status: rascunho
-atualizado: 2026-07-25
+status: implementado
+atualizado: 2026-07-29
 ---
 
 # Severidade (SQL, sem IA)
+
+> ✅ **Implementado (2026-07-29)** — migration
+> `20260729000000_event_radar_severity.sql`. Anexado dentro do próprio
+> `run_event_detection()` (mais um `CREATE OR REPLACE`, não uma função/
+> pg_cron separado) pela mesma razão que 1.2 foi: dois jobs agendados pro
+> mesmo horário de `pg_cron` não têm ordem garantida entre si, o que
+> deixaria a severidade até 15min desatualizada em relação à
+> detecção/fechamento mais recente — evitável sem custo real, já que 1.3
+> só precisa rodar depois de 1.1/1.2 gravarem na mesma transação.
+>
+> ⚠️ Nenhuma fórmula exata é dada abaixo pra cada fator (só os pesos) —
+> cada fator tem sua própria inferência de MVP documentada na migration
+> (`event_radar_volume_severity`/`_sentiment_severity`/`_velocity_severity`/
+> `_reach_engagement_severity`/`_author_influence_severity`/
+> `_related_narrative_risk`), reaproveitando o máximo possível do que 1.1
+> já calcula (z-scores de `event_radar_hourly_zscore`, janelas de
+> `event_radar_hourly_symmetric`/`event_radar_daily_range`) em vez de
+> inventar uma segunda fonte. Fator ausente pro escopo (ex: `platform` não
+> tem breakdown de autores nem "narrativa relacionada", `platform` só tem
+> `negative_share` via fallback nenhum) retorna `null` — `coalesce(fator,
+> 50)` no cálculo final, 50 = neutro, mesma convenção de `norm_growth`
+> (`aggregated-metrics/sql-aggregation.md`). Mapeamento score→categoria
+> reaproveita as 4 faixas exatas de `risk_score` (0-33 low, 34-59 medium,
+> 60-84 high, 85-100 critical) — "não criar uma segunda escala de risco em
+> paralelo", como pedido abaixo em "Regras de negócio".
 
 ## Objetivo
 
