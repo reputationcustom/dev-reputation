@@ -162,6 +162,65 @@ deve ser conferido contra esta lista antes de ser considerado pronto.
      uso interno com acesso multi-tenant seguro — `bi_reader` continua
      `bypassrls` por design (Princípio técnico 6 acima), então nunca deve
      ser exposto a um cliente final sem essa extensão ser feita primeiro.
+7. **Higiene de migrations** — adicionado 2026-08-02 depois de uma sequência
+   real de erros de deploy, todos rastreados até um pequeno conjunto de
+   padrões recorrentes. Conferir esta lista antes de escrever qualquer
+   migration que altere uma function/constraint já existente:
+   - **Mudar a aridade (nº de parâmetros) de uma function exige `drop
+     function` explícito da assinatura ANTIGA antes do `create or
+     replace` da nova.** Sem isso, Postgres não substitui a function —
+     **cria um segundo overload coexistindo** com o antigo, já que
+     `create or replace` só substitui uma function de assinatura
+     idêntica. Isso já causou: (a) `comment on function` falhando com
+     "function name is not unique" (2026-07-21); (b) dois
+     `get_narratives_table` conflitantes (6 e 7 parâmetros) fazendo o
+     PostgREST falhar silenciosamente ao escolher qual chamar — causa
+     raiz real de `/narratives` retornando vazio por vários dias
+     (2026-07-14/2026-07-26). Sempre que uma migration mudar a
+     quantidade de parâmetros de uma function existente, o próprio
+     arquivo deve dropar a assinatura antiga por extenso (tipos exatos,
+     ex: `drop function if exists foo(uuid, date, date, jsonb);`) —
+     nunca assumir que uma migration anterior "já cuidou disso" sem
+     conferir a assinatura de fato aplicada no banco.
+   - **Nunca `select alias.*` dentro de uma CTE/join quando outra fonte
+     na mesma CTE também pode ter uma coluna de nome genérico repetido**
+     (`id` é o caso clássico). Um `left join lateral get_x(...) gnt`
+     seguido de `select w.id, gnt.*` produz duas colunas `id` na mesma
+     CTE — válido dentro dela, mas vira `ERROR: column reference "id" is
+     ambiguous` assim que a CTE é referenciada de fora (achado real em
+     `get_communication_impact`, 2026-07-26). Sempre listar as colunas
+     de `alias` explicitamente por nome.
+   - **Uma coluna nullable que faz parte de uma chave de unicidade
+     precisa de uma coluna gerada não-nula pra a constraint funcionar de
+     verdade** — SQL trata `NULL <> NULL`, então duas linhas "iguais"
+     exceto por essa coluna nula nunca colidem e a dedupe silenciosamente
+     falha. Padrão: `col_key bigint generated always as (coalesce(col, 0))
+     stored`, e a `unique` constraint usa `col_key`, não `col` (achado
+     real em `bw_query_metrics_{daily,weekly,monthly}`, 2026-07-07).
+   - **Divisão guardada por comparação de denominador sempre via `CASE
+     WHEN denom > 0 THEN a / denom END`, nunca via `AND denom > 0` numa
+     cláusula `WHERE`/condição composta** — Postgres não garante ordem de
+     avaliação dos operandos de `AND`, então a divisão pode em tese ser
+     avaliada antes do guard e estourar divisão por zero (achado real em
+     `event-radar`, 2026-07-27, corrigido extraindo uma function
+     `..._delta_pct()` com `CASE` interno).
+   - **Nunca escrever `coluna = any((select ...))`** esperando
+     desempacotar um array retornado por subquery escalar — Postgres
+     sempre interpreta `ANY (` seguido de `SELECT` entre parênteses como
+     a forma "linha a linha" (compara contra cada LINHA que a subquery
+     retorna), nunca como "= ANY(array)", mesmo quando a subquery de fato
+     devolve uma única linha de um array. Sempre `cross join` a fonte
+     pra dentro do escopo da query e referenciar uma coluna simples:
+     `= any(fonte.coluna)` (achado real em `aggregated-metrics`,
+     migration `20260714000000`).
+   - **CI/CD**: o workflow de deploy (`.github/workflows/deploy.yaml`)
+     precisa de `concurrency` (serializar deploys por branch) — sem
+     isso, dois pushes próximos disparam `supabase db push` em paralelo,
+     e ambos correm pra aplicar a mesma migration mais antiga pendente;
+     quem perde a corrida trava com "duplicate key... schema_migrations_pkey"
+     na mesma versão, indefinidamente, bloqueando toda migration nova
+     atrás dela na fila (incidente real, 2026-08-02 — ver
+     `CLAUDE.md`, "`.github/workflows/deploy.yaml`").
 
 ## Módulos
 

@@ -99,6 +99,19 @@ Mesmo público das demais páginas deste módulo.
   Posts/Impressions). Ver `platform-analysis.md` (seção histórica) e
   `aggregated-metrics/sql-aggregation.md` (`get_x_insights`) para a origem
   completa do dado — nada mudou na function/dado, só a página que o exibe.
+  ✅ **Links clicáveis (2026-08-02)**, pedido do usuário: "tudo que for
+  possível colocar link clicável em X Themes... hashtags, perfis, url de
+  posts, stories, etc." `XInsightItem.name` já é literalmente "a hashtag,
+  emoji, URL ou @handle citado" (`foundation/data-model.md`,
+  `bw_query_x_insights`) — nenhum dado novo, só um `href` construído a
+  partir do que já existe: **Hashtags** → `x.com/hashtag/<tag sem #>`,
+  **Most Mentioned X Posters** → `x.com/<handle sem @>`, **Top Stories**
+  (`insight_type = 'url'`, já a URL completa) → linka direto, só validando
+  que a string parece uma URL de verdade antes (nunca produz um `href`
+  quebrado a partir de um dado inesperado). **Top Emojis fica sem link**
+  de propósito — um emoji sozinho não é um recurso navegável, não existe
+  URL real pra apontar (diferente dos outros 3 tipos, que sempre são).
+  Todos os links abrem em nova aba (`target="_blank" rel="noopener noreferrer"`).
 
 ## Redesenho interativo (2026-08-01)
 

@@ -1,6 +1,6 @@
 ---
 tipo: architecture-map
-atualizado: 2026-08-01
+atualizado: 2026-08-02
 ---
 
 # Mapa de Arquitetura — Digital Intelligent Communication
@@ -136,9 +136,12 @@ fallback), mas fica mais completo com ela.
 > `schema-integration.md` (a única funcionalidade que continua `rascunho`) — não por falta de
 > schema (os dois itens do arquivo, escrita em `feed_events` e `feed_event_feedback`, têm código/
 > migration desde 2026-08-01), mas porque nenhuma UI existe pra renderizar um card de
-> `feed_events` nem pra dar feedback nele (depende do bloco `highlights`/`get_active_highlights`
-> de `aggregated-metrics`, não implementado). Ver `CLAUDE.md`, "Módulo `event-radar`", pro
-> detalhe completo de cada etapa.
+> `feed_events` nem pra dar feedback nele. ✅ **Atualizado 2026-08-02**: a "Fase B" de
+> `fluxo-aggregated-metrics.md` (A1 `get_active_highlights`/A2 boost de `risk_score`/A3
+> `ai-synthesis` Camada 1) foi implementada — o bloco `highlights` deixou de ser o bloqueio;
+> o que falta pra `schema-integration.md` fechar é só a UI dedicada, especificada em
+> `frontend-highlights-feed.md` (`rascunho`, sem código ainda). Ver `CLAUDE.md`, "Módulo
+> `event-radar`", pro detalhe completo de cada etapa.
 
 `threshold-engine` e `intelligent-feed` (módulos que existiam na tabela original de `_index.md`,
 Sprint 3) não aparecem como nós próprios — foram **absorvidos por `event-radar`** antes de
@@ -173,11 +176,12 @@ de `intelligence-center`, ver `_index.md`, "Módulo `command-center` removido".
 > module (Sprint 2)" e "edge-functions-per-page.md + the 5
 > intelligence-center pages". `intelligence-center` fica com a ressalva
 > "`cases` ainda não" (schema mínimo de ações/decisões, sem migration —
-> gap #20 de `_pending.md`); `aggregated-metrics` com "`get_active_highlights`/
-> região/síntese de página pendentes" (gaps #8/#9/#7 de `_pending.md`) —
-> nenhum dos dois bloqueia o restante do módulo, por isso verde e não
-> amarelo (mesmo critério já usado para `auth` acima, que também tem gaps
-> menores documentados sem ficar amarelo por causa deles).
+> gap #20 de `_pending.md`). ✅ **`aggregated-metrics` está 100% completo
+> desde 2026-08-02** (gaps #7/#8/#9/#10 todos resolvidos — `get_active_highlights`,
+> `page_narrative_synthesis`/Camada 1, `get_region_breakdown`, trends de
+> plataforma/pauta) — as 10 functions SQL da spec e as 3 camadas de
+> `ai-synthesis.md` (Camada 2 é exceção-só-com-justificativa por desenho,
+> não um gap) estão todas implementadas.
 
 ## 3. Módulos (resumo)
 
@@ -187,9 +191,9 @@ de `intelligence-center`, ver `_index.md`, "Módulo `command-center` removido".
 | `auth` | Login/recuperação de senha (Supabase Auth) + administração de usuários (admin-only) + `/perfil` (fuso horário) | implementado | [auth/overview.md](auth/overview.md) |
 | `entities` | Cadastro Nacional de Entidades (partido/espectro/cargo) + vínculo aditivo com o ranking de Autores e Influenciadores | pronto — não implementado | [entities/overview.md](entities/overview.md) |
 | `intelligence-center` | As 5 páginas do frontend (Executive Overview, Narrativas, Sentimento, Plataformas, Pautas Eleitorais) + `cases` (ações/decisões, ex-`command-center`) | implementado — `cases` (schema) ainda não | [intelligence-center/overview.md](intelligence-center/overview.md) |
-| `aggregated-metrics` | Envelope JSON único + SQL de agregação + Edge Functions por página, consumido pelo frontend e pela IA | implementado — `get_active_highlights`/região/`page_narrative_synthesis` pendentes; `page_cache` **desabilitado** (2026-07-14, investigação em aberto de `/narratives` vazio), ver `_pending.md` gap #34 | [aggregated-metrics/overview.md](aggregated-metrics/overview.md) |
+| `aggregated-metrics` | Envelope JSON único + SQL de agregação + Edge Functions por página, consumido pelo frontend e pela IA | implementado — 10/10 functions SQL, `ai-synthesis.md` Camadas 0/1 completas (2026-08-02); `page_cache` **desabilitado** (2026-07-14, decisão do usuário de retomar depois), ver `_pending.md` gap #34 | [aggregated-metrics/overview.md](aggregated-metrics/overview.md) |
 | `communications` | Registro de Comunicações/Decisões por Narrativa + acompanhamento de impacto (sentimento/menções/risco/momentum antes vs. depois) — Sprint 2.1 | implementado | [communications/overview.md](communications/overview.md) |
-| `event-radar` | Detecção estatística de picos/quedas/mudanças + 1 card de IA por evento — absorve `threshold-engine`/`intelligent-feed` | rascunho — 1.1/1.2/1.3/1.6/1.4 implementados (2026-07-27 a 2026-07-31, 1.6 antes de 1.4, ver `overview.md`); só falta 1.5 item 2 (`feed_event_feedback`, `feed_events` já existe e está sendo populada) | [event-radar/overview.md](event-radar/overview.md) |
+| `event-radar` | Detecção estatística de picos/quedas/mudanças + 1 card de IA por evento — absorve `threshold-engine`/`intelligent-feed` | rascunho — 1.1-1.4/1.6 implementados (2026-07-27 a 2026-07-31) + Fase B de `fluxo-aggregated-metrics.md` (2026-08-02); só falta `schema-integration.md` (UI pra `feed_events`/`feed_event_feedback`, spec em `frontend-highlights-feed.md`, sem código ainda) | [event-radar/overview.md](event-radar/overview.md) |
 | `propagation-graph` | Grafo de propagação com rollup materializado completo (versão simplificada já em `intelligence-center/narratives-exploration.md`) | rascunho | — |
 | `decision-center` | AI Advisors — perguntas livres/interativas do analista sobre mentions/narrativas | rascunho | — |
 | `executive-reports` | Relatórios periódicos (diário/semanal/mensal/executivo/crise) | rascunho | — |

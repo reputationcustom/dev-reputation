@@ -3,7 +3,7 @@ tipo: feature-spec
 módulo: event-radar
 funcionalidade: schema-integration
 status: rascunho
-atualizado: 2026-08-01
+atualizado: 2026-08-02
 ---
 
 # Integração com o Schema Existente
@@ -23,14 +23,15 @@ atualizado: 2026-08-01
 > **deliberadamente sem Edge Function** — INSERT direto do cliente,
 > validado por RLS + CHECK constraint, exatamente como `data-model.md` já
 > especificava), mas **nenhuma UI existe pra usá-lo** — nem pra dar
-> feedback, nem pra ver os cards de `feed_events` em primeiro lugar. O
-> bloco `highlights` do envelope (`get_active_highlights`,
-> `aggregated-metrics`) ainda não foi implementado — sem ele, não há
-> nenhuma página do frontend renderizando um card de `feed_events` pra
-> pendurar um botão de feedback. Status deste arquivo continua `rascunho`
-> por causa disso — schema pronto para os dois itens, UI pendente para os
-> dois. Ver `data-model.md` pro schema real de `feed_events`/
-> `feed_event_feedback` já em produção.
+> feedback, nem pra ver os cards de `feed_events` em primeiro lugar. ✅
+> **Atualizado 2026-08-02**: o bloco `highlights` do envelope
+> (`get_active_highlights`, migration `20260802010000`) **já foi
+> implementado** — deixou de ser o bloqueio. O que falta agora pra este
+> arquivo sair de `rascunho` é só a UI dedicada (o widget "Radar de
+> Eventos", especificado em `frontend-highlights-feed.md`, também
+> `rascunho`, sem código) — não mais uma dependência de backend. Ver
+> `data-model.md` pro schema real de `feed_events`/`feed_event_feedback`
+> já em produção.
 
 ## Objetivo
 

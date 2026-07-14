@@ -2,7 +2,7 @@
 tipo: module-overview
 módulo: event-radar
 status: rascunho
-atualizado: 2026-08-01
+atualizado: 2026-08-02
 ---
 
 # Módulo: Radar de Eventos
@@ -27,11 +27,14 @@ atualizado: 2026-08-01
 > foi implementado como parte do próprio código de 1.4, e seu item 2
 > (`feed_event_feedback`) ganhou schema/RLS em 2026-08-01 (migration
 > `20260801000000`, sem Edge Function — INSERT direto do cliente validado
-> por RLS/CHECK). **Nenhuma UI existe pra nenhum dos dois ainda** — sem o
-> bloco `highlights` (`get_active_highlights`, `aggregated-metrics`) não há
-> página nenhuma renderizando um card de `feed_events` pra pendurar um
-> botão de feedback. `aggregated-metrics`'s `get_active_highlights` (bloco `highlights`) já
-> pode ser ligada — `feed_events` existe e está sendo populada.
+> por RLS/CHECK). ✅ **Atualizado 2026-08-02**: `aggregated-metrics`'s
+> `get_active_highlights` (bloco `highlights`) foi implementada
+> (`fluxo-aggregated-metrics.md`, "Fase B", migration `20260802010000`) —
+> mas **nenhuma UI existe ainda** consumindo esse bloco pra renderizar um
+> card de `feed_events`/pendurar um botão de feedback (o widget dedicado,
+> `frontend-highlights-feed.md`, segue `rascunho`, sem código). O que
+> mantém este módulo em `rascunho` hoje é só essa UI faltante, não mais
+> nenhuma dependência de backend.
 
 > ✅ **Absorve `threshold-engine`/`intelligent-feed`** (Sprint 3 em `_index.md`, nunca tiveram
 > spec própria) — é a especificação concreta do mesmo motor de risco + feed de eventos que esses

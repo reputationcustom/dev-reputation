@@ -1,16 +1,19 @@
-// Edge Function: get-page-sentiment
-// Fonte: .dev/specs/aggregated-metrics/edge-functions-per-page.md
+// Fonte: .dev/specs/aggregated-metrics/service-layer-aggregation.md
 //
-// Página "Análise de Sentimento" (`/sentiment`,
-// intelligence-center/sentiment-analysis.md).
+// ⚠️ Este arquivo NUNCA é deployado standalone — fica FORA de
+// supabase/functions/ de propósito (por isso também está excluído do
+// tsconfig.json da raiz, junto de supabase/functions/, já que é código Deno
+// com `Deno`/`npm:` que o typecheck do Next.js não entende). `supabase
+// functions deploy` só escaneia supabase/functions/, então esta pasta nunca
+// é tratada como função.
 //
-// ⚠️ Este arquivo é uma CÓPIA de supabase/functions-shared-source/
-// aggregated-metrics-service.ts (código-fonte canônico da camada de
-// agregação) + um handler de requisição no final. Mudou a lógica de
-// agregação (assemblePageResponse/fetchX/PAGE_BLOCKS)? Atualize o arquivo
-// canônico primeiro, depois recopie para as 6 Edge Functions get-page-*/
-// get-narrative-detail — Princípio técnico 5 (CLAUDE.md) proíbe importar
-// daqui via caminho relativo, cada Edge Function é autossuficiente.
+// É o código-fonte canônico/mestre da camada de agregação — cada Edge
+// Function `get-page-*` (ver edge-functions-per-page.md, ainda não
+// implementada) deve COPIAR o conteúdo deste arquivo para dentro do seu
+// próprio supabase/functions/get-page-*/index.ts, nunca importar daqui via
+// caminho relativo (Princípio técnico 5, CLAUDE.md: Edge Functions são
+// autossuficientes, sem `_shared/` compartilhado em produção). Mesma
+// disciplina já usada por bw-sync/admin-*/update-my-timezone.
 //
 // Os tipos abaixo (PageEnvelope e blocos) são uma cópia intencional de
 // packages/shared-types/src/envelope.ts (@reputation/shared-types) — não um
@@ -28,6 +31,12 @@
 // Atualize os dois arquivos juntos.
 
 import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2'
+// Só usado pela Camada 1 de ai-synthesis.md (composeLayer1NarrativeText,
+// abaixo) — mesmo pacote/import já usado por
+// event-radar-agent-orchestrator/index.ts, sem pin de versão pelo mesmo
+// motivo (Deno resolve pra latest em build, revisar se quebrar por
+// breaking change do SDK).
+import Anthropic from 'npm:@anthropic-ai/sdk'
 
 // =========================================================================
 // Tipos do envelope (duplicados de packages/shared-types/src/envelope.ts —
@@ -116,7 +125,7 @@ export interface Trend {
 export interface NarrativeRow {
   id: string
   title: string
-  // Nome da Category-pai (Pauta/tema da Subcategory) - get_narratives_table
+  // Nome da Category-pai (Pauta/tema da Subcategory) — get_narratives_table
   // (20260725050000), usado pro frontend agrupar os cards por categoria.
   category_label: string
   sov_pct: number | null
@@ -744,17 +753,50 @@ async function fetchAuthors(page: PageKey, supabase: SupabaseClient, ctx: PageCo
   }
 }
 
-// ⚠️ Deferido: get_active_highlights (bloco `highlights`) depende de
-// feed_events, que só existe quando `event-radar` (Sprint 3, rascunho) for
-// implementado — ver sql-aggregation.md e _pending.md. Até lá, todo bloco
-// `highlights` de toda página fica vazio (não é erro, é o estado esperado
-// hoje). ✅ narrative_text (fetchNarrativeText, ver abaixo) já tem a
-// Camada 0 de ai-synthesis.md implementada (2026-07-25) — não depende de
-// highlights reais, só do template determinístico de volume. Camada 1
-// (page_narrative_synthesis, 2+ highlights) continua não implementada,
-// mesma dependência de event-radar — ver _pending.md #7.
-async function fetchHighlights(_supabase: SupabaseClient, _ctx: PageContext): Promise<Highlight[]> {
-  return []
+interface ActiveHighlightRow {
+  event_type: string
+  severity: RiskLevel
+  severity_score: number | null
+  title: string
+  summary: string
+  explanation: string
+  recommendation: string | null
+  confidence: number | null
+  tags: string[] | null
+  related_narrative_id: string | null
+  related_entity_id: string | null
+}
+
+// ✅ Implementado (2026-08-02, event-radar/fluxo-aggregated-metrics.md
+// "Fase B", A1) — get_active_highlights (migration 20260802010000), leitura
+// pura de feed_events (event-radar), nunca recalcula severidade/detecção
+// aqui (ver sql-aggregation.md, "Regras de negócio").
+async function fetchHighlights(supabase: SupabaseClient, ctx: PageContext): Promise<Highlight[]> {
+  try {
+    const { data, error } = await supabase.rpc('get_active_highlights', {
+      p_organization_id: ctx.organizationId,
+      p_period_start: ctx.period.start,
+      p_period_end: ctx.period.end,
+      p_filters: effectiveFilters(ctx),
+    })
+    if (error) throw error
+    return ((data ?? []) as ActiveHighlightRow[]).map((row) => ({
+      event_type: row.event_type,
+      severity: row.severity,
+      severity_score: row.severity_score ?? 0,
+      title: row.title,
+      summary: row.summary,
+      explanation: row.explanation,
+      recommendation: row.recommendation,
+      confidence: row.confidence ?? 0,
+      tags: row.tags ?? [],
+      related_narrative_id: row.related_narrative_id,
+      related_entity_id: row.related_entity_id,
+    }))
+  } catch (err) {
+    console.error('[aggregated-metrics] fetchHighlights failed', err)
+    return []
+  }
 }
 
 async function fetchTermSignals(supabase: SupabaseClient, ctx: PageContext): Promise<TermSignal[]> {
@@ -815,18 +857,12 @@ const NARRATIVE_TEXT_TREND_WORDS: Record<TrendDirection, string> = {
   stable: 'permaneceu estável',
 }
 
-// ai-synthesis.md "Camada 0" — template determinístico, sem IA, achado
-// nesta revisão (2026-07-25) como não implementado (_pending.md #27,
-// diferente do gap #7/Camada 1, que de fato depende de event-radar). Só
-// os casos de 0 e 1 highlight estão especificados pra esta camada; como
-// get_active_highlights (Camada 1/feed_events) ainda não existe, highlights
-// é sempre [] hoje — na prática só o ramo "0 highlights" roda. O ramo "2+"
-// (Camada 1, page_narrative_synthesis) também não está implementado — se
-// algum dia get_active_highlights passar a devolver 2+ itens antes de
-// Camada 1 existir, cai no mesmo template desta função como fallback
-// seguro (mesma regra de "Fluxos alternativos" do spec: nunca null sem
-// explicação).
-async function fetchNarrativeText(
+// ai-synthesis.md "Camada 0" — template determinístico, sem IA. Cobre 0
+// highlights (template de volume) e 1 highlight (usa o highlight direto).
+// Também usada como fallback imediato da Camada 1 (2+ highlights) enquanto
+// a composição assíncrona não termina, ou se ela falhar — nunca `null` sem
+// explicação (mesma regra de "Fluxos alternativos" do spec).
+async function fetchLayer0NarrativeText(
   supabase: SupabaseClient,
   ctx: PageContext,
   highlights: Highlight[],
@@ -854,8 +890,165 @@ async function fetchNarrativeText(
         : `Volume ${NARRATIVE_TEXT_TREND_WORDS[row.trend]} de ${Math.abs(row.delta_pct)}% em relação ao período anterior.`
     return `Sem eventos relevantes detectados no período. ${trendSentence}`
   } catch (err) {
-    console.error('[aggregated-metrics] fetchNarrativeText failed', err)
+    console.error('[aggregated-metrics] fetchLayer0NarrativeText failed', err)
     return null
+  }
+}
+
+// Dispara uma Promise em segundo plano sem bloquear a resposta HTTP já
+// enviada — usa EdgeRuntime.waitUntil (runtime do Supabase Edge Functions)
+// quando disponível; sem TS ambient declaration pra evitar risco de
+// duplicar um global já tipado pelo runtime Deno. Sem EdgeRuntime (ex:
+// execução local via `supabase functions serve`), dispara sem aguardar —
+// best-effort, mesmo tratamento de erro (nunca derruba a resposta da
+// página por causa disto).
+function scheduleBackground(task: Promise<unknown>): void {
+  const runtime = (globalThis as unknown as { EdgeRuntime?: { waitUntil?: (p: Promise<unknown>) => void } })
+    .EdgeRuntime
+  if (runtime?.waitUntil) {
+    runtime.waitUntil(task)
+  } else {
+    task.catch((err) => console.error('[aggregated-metrics] scheduleBackground fallback failure', err))
+  }
+}
+
+function todaySaoPaulo(): string {
+  // 'en-CA' devolve YYYY-MM-DD — mesmo formato de period_end (date), então
+  // a comparação de "período fechado" (period_end < hoje) pode ser feita
+  // por comparação de string ISO, sem parsing de Date.
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date())
+}
+
+function isPeriodClosed(periodEnd: string): boolean {
+  return periodEnd < todaySaoPaulo()
+}
+
+interface PageNarrativeSynthesisRow {
+  narrative_text: string
+  is_final: boolean
+}
+
+// ai-synthesis.md, "Dependências técnicas" — a skill `humanizer-pt-br`
+// referenciada pela spec não existe neste projeto (.claude/skills/ só tem
+// brandwatch-api/frontend-design/spec-driven-dev/
+// supabase-postgres-best-practices/web-app-structure, confirmado
+// 2026-08-02). Tom da composição vem de instrução direta neste prompt,
+// mesmo padrão já usado por event-radar-agent-orchestrator/index.ts.
+const NARRATIVE_SYNTHESIS_MODEL = Deno.env.get('AI_SYNTHESIS_MODEL') ?? 'claude-haiku-4-5'
+
+const NARRATIVE_SYNTHESIS_SYSTEM_PROMPT = `Você é um redator de comunicação para uma campanha política/monitoramento de reputação, escrevendo em português do Brasil. Você recebe uma lista de eventos (destaques) já analisados e resumidos por outro sistema — cada um já tem um resumo e uma explicação prontos — e sua única tarefa é conectá-los num único parágrafo coeso para a equipe de comunicação.
+
+Regras obrigatórias:
+- NUNCA invente números, causas ou correlações que não estejam nos resumos/explicações recebidos. Você não tem acesso aos dados brutos — só reescreve e conecta texto que já existe.
+- Tom: direto, objetivo, profissional — frases curtas, sem jargão técnico, sem floreio. Escreva como um briefing executivo, não como um relatório acadêmico.
+- Priorize os eventos de maior severidade primeiro no parágrafo.
+- Máximo de 500 caracteres no total.
+- Responda apenas com o parágrafo final, sem títulos, sem marcadores, sem aspas envolvendo o texto.`
+
+// ai-synthesis.md "Camada 1" — composição em lote via IA, só reescreve/
+// conecta summary/explanation já existentes dos highlights (nunca recebe
+// dado bruto/ui_meta, "Regras de negócio" da spec). Modelo Haiku 4.5
+// (mesma decisão de custo já tomada pra event-radar-agent-orchestrator,
+// tarefa ainda mais simples aqui — "não analisa dados, só reescreve").
+async function composeLayer1NarrativeText(highlights: Highlight[]): Promise<string | null> {
+  const apiKey = Deno.env.get('ANTHROPIC_API_KEY')
+  if (!apiKey) {
+    console.error('[aggregated-metrics] composeLayer1NarrativeText: ANTHROPIC_API_KEY não configurada')
+    return null
+  }
+  try {
+    const anthropic = new Anthropic({ apiKey })
+    const payload = highlights
+      .slice()
+      .sort((a, b) => b.severity_score - a.severity_score)
+      .map((h) => ({ title: h.title, summary: h.summary, explanation: h.explanation, severity: h.severity }))
+    const response = await anthropic.messages.create({
+      model: NARRATIVE_SYNTHESIS_MODEL,
+      max_tokens: 400,
+      system: NARRATIVE_SYNTHESIS_SYSTEM_PROMPT,
+      messages: [
+        {
+          role: 'user',
+          content: `Componha um único parágrafo conectando os eventos a seguir:\n\n${JSON.stringify(payload)}`,
+        },
+      ],
+    })
+    const textBlock = response.content.find((block) => block.type === 'text')
+    if (!textBlock || textBlock.type !== 'text') return null
+    const text = textBlock.text.trim()
+    return text ? text.slice(0, 500) : null
+  } catch (err) {
+    console.error('[aggregated-metrics] composeLayer1NarrativeText failed', err)
+    return null
+  }
+}
+
+// Roda em background (scheduleBackground) — nunca bloqueia a resposta da
+// página. Só grava em page_narrative_synthesis em caso de sucesso ("Fluxos
+// alternativos e erros" da spec: falha na composição não grava nada, texto
+// da página fica com o fallback da Camada 0).
+async function composeAndPersistLayer1(
+  supabase: SupabaseClient,
+  ctx: PageContext,
+  page: PageKey,
+  filtersHashValue: string,
+  highlights: Highlight[],
+): Promise<void> {
+  const text = await composeLayer1NarrativeText(highlights)
+  if (!text) return
+  const { error } = await supabase.from('page_narrative_synthesis').upsert(
+    {
+      organization_id: ctx.organizationId,
+      page,
+      period_start: ctx.period.start,
+      period_end: ctx.period.end,
+      filters_hash: filtersHashValue,
+      narrative_text: text,
+      layer: 'layer_1',
+      is_final: isPeriodClosed(ctx.period.end),
+      generated_at: new Date().toISOString(),
+    },
+    { onConflict: 'organization_id,page,period_start,period_end,filters_hash' },
+  )
+  if (error) console.error('[aggregated-metrics] composeAndPersistLayer1 upsert failed', error)
+}
+
+// ai-synthesis.md "Fluxo principal" — 0/1 highlight: Camada 0 direto. 2+:
+// busca page_narrative_synthesis pela chave exata; existe → devolve como
+// está (nunca chama IA de novo — recomposição de período aberto só
+// dispararia por um gatilho de invalidação que este produto ainda não tem,
+// ver _pending.md #21, então uma linha existente é sempre a resposta
+// final por enquanto); não existe → fallback imediato é a Camada 0,
+// composição real roda em background via scheduleBackground.
+async function fetchNarrativeText(
+  supabase: SupabaseClient,
+  ctx: PageContext,
+  page: PageKey,
+  highlights: Highlight[],
+): Promise<string | null> {
+  if (highlights.length <= 1) {
+    return fetchLayer0NarrativeText(supabase, ctx, highlights)
+  }
+  try {
+    const hash = await cacheFingerprint(ctx)
+    const { data, error } = await supabase
+      .from('page_narrative_synthesis')
+      .select('narrative_text, is_final')
+      .eq('organization_id', ctx.organizationId)
+      .eq('page', page)
+      .eq('period_start', ctx.period.start)
+      .eq('period_end', ctx.period.end)
+      .eq('filters_hash', hash)
+      .maybeSingle()
+    if (error) throw error
+    const row = data as PageNarrativeSynthesisRow | null
+    if (row) return row.narrative_text
+    const fallback = await fetchLayer0NarrativeText(supabase, ctx, highlights)
+    scheduleBackground(composeAndPersistLayer1(supabase, ctx, page, hash, highlights))
+    return fallback
+  } catch (err) {
+    console.error('[aggregated-metrics] fetchNarrativeText (Camada 1) failed', err)
+    return fetchLayer0NarrativeText(supabase, ctx, highlights)
   }
 }
 
@@ -900,10 +1093,10 @@ export async function assemblePageResponse(
     blocks.has('x_insights') ? fetchXInsights(supabase, context) : Promise.resolve<XInsightItem[]>([]),
   ])
 
-  // ✅ Camada 0 de ai-synthesis.md implementada 2026-07-25 (ver
-  // fetchNarrativeText acima) — antes gravava null incondicionalmente.
+  // ✅ Camada 0 (2026-07-25) e Camada 1 (2026-08-02, event-radar Fase B) de
+  // ai-synthesis.md implementadas — ver fetchNarrativeText acima.
   const narrativeText = blocks.has('narrative_text')
-    ? await fetchNarrativeText(supabase, context, highlights)
+    ? await fetchNarrativeText(supabase, context, page, highlights)
     : null
 
   return {

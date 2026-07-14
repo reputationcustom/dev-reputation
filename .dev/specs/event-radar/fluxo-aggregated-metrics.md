@@ -34,9 +34,20 @@ atualizado: 2026-08-02
 > `run_event_detection()` (mesmo padrão já usado pra `closed_at`,
 > migration `20260731020000`), rodando logo depois de 1.3, na mesma
 > transação. Ver `CLAUDE.md`, "Módulo `event-radar`", pro detalhe
-> completo. Nenhuma das etapas A1/A2/A3 (Fase B) foi implementada nesta
-> sessão — só a correção que as etapas de `event-radar` (R1-R6)
-> precisavam ter antes de Fase B poder ler dado confiável.
+> completo.
+>
+> ✅ **A1/A2/A3 implementados (2026-08-02, mesma sessão, "Sim, vamos
+> prosseguir com a fase b")** — migrations `20260802010000`
+> (`get_active_highlights` + boost de `risk_score`) e `20260802020000`
+> (`page_narrative_synthesis`), mais a lógica de composição/background em
+> `aggregated-metrics-service.ts` (Camada 1 de `ai-synthesis.md`),
+> propagada às 7 Edge Functions `get-page-*`/`get-narrative-detail`. A1 não
+> implementou o `JOIN radar_staging_events` para escopo por plataforma
+> mencionado na tabela abaixo — nenhuma página hoje passa um filtro de
+> plataforma pro bloco `highlights` (só `filters.narratives` é de fato
+> usado em todo o módulo `aggregated-metrics`), então esse join foi
+> deliberadamente adiado até existir um consumidor real — ver a própria
+> linha de A1 na tabela, atualizada para refletir isso.
 
 Este documento existe para deixar visual o que está espalhado em texto nos dois módulos: como o
 Radar de Eventos e as Métricas Agregadas se conectam, **em que ordem cada peça deve ser
@@ -67,11 +78,11 @@ flowchart TD
         R1 --> R2 --> R3 --> R4 --> R5 --> R6
     end
 
-    subgraph AGG["aggregated-metrics — Fase B (gate satisfeito — R6 já publica eventos reais, ainda não implementada)"]
+    subgraph AGG["aggregated-metrics — Fase B (implementada 2026-08-02)"]
         direction TB
-        A1["get_active_highlights<br/>SELECT filtrado em feed_events"]
-        A2["risk_score = greatest(risk_score calculado, MAX(severity_score) dos feed_events ativos da Narrativa)<br/>(get_narratives_table)"]
-        A3["ai-synthesis Camada 1<br/>2+ highlights → page_narrative_synthesis"]
+        A1["✅ get_active_highlights<br/>SELECT filtrado em feed_events"]
+        A2["✅ risk_score = greatest(risk_score calculado, MAX(severity_score) dos feed_events ativos da Narrativa)<br/>(get_narratives_table)"]
+        A3["✅ ai-synthesis Camada 1<br/>2+ highlights → page_narrative_synthesis<br/>(composição em background, Claude Haiku 4.5)"]
         A1 --> A3
         A2 -.-> A3
     end
@@ -83,15 +94,16 @@ flowchart TD
 
     style PRE fill:#eaf3ea,stroke:#2e7d32
     style RADAR fill:#c3e6cb,stroke:#2e7d32
-    style AGG fill:#eaeefb,stroke:#3355aa
+    style AGG fill:#c3e6cb,stroke:#2e7d32
 ```
 
 **O que já existe vs. o que este diagrama cobre**: `aggregated-metrics` (Fase A — `metrics`,
 `breakdowns`, `trends`, `narratives` com `sentiment`/`momentum_score`/`trend_score`/`risk_score`
 já calculados 100% a partir de `foundation`, `authors`, `graph`, `term_signals`) **já está
 implementado e não aparece aqui** — ver `CLAUDE.md`, "aggregated-metrics module (Sprint 2)". Este
-diagrama cobre só a parte que falta: o radar em si (R1–R6) e os três pontos onde, depois de
-implementado, ele passa a alimentar `aggregated-metrics` (A1–A3, "Fase B").
+diagrama cobre a parte que dependia do radar existir primeiro: o radar em si (R1–R6) e os três
+pontos onde, depois de implementado, ele passa a alimentar `aggregated-metrics` (A1–A3, "Fase B") —
+ambos os subgrafos estão implementados desde 2026-08-02.
 
 **Tabelas por etapa** (ver [data-model.md](data-model.md) para o schema completo):
 
@@ -103,9 +115,9 @@ implementado, ele passa a alimentar `aggregated-metrics` (A1–A3, "Fase B").
 | 1.6 volume-limits | `radar_staging_events` (candidatos com severidade), contagem do dia em `feed_events` | nenhuma (só filtra o que segue para 1.4) |
 | 1.4 agent-orchestrator | `radar_staging_events` (já filtrado pelo cap) | via 1.5 |
 | 1.5 schema-integration | saída estruturada do agent | `feed_events` (INSERT, qualquer severidade — já implementado, dentro do próprio código de 1.4), `feed_event_feedback` (INSERT direto do cliente, assíncrono, vindo do analista — schema pronto, sem UI ainda) |
-| A1 `get_active_highlights` | `feed_events` — ⚠️ escopo por plataforma (quando aplicável) exige `JOIN radar_staging_events` via `feed_events.radar_staging_event_id` pra recuperar `scope_type`/`scope_id` (`feed_events` não duplica essas colunas) | nenhuma (leitura pura) |
-| A2 `risk_score` boost | `feed_events` **apenas** (nunca `radar_staging_events` direto — só evento **publicado** conta) — `MAX(severity_score)` entre os `feed_events` com `related_narrative_id = narrativa` e `closed_at IS NULL` | nenhuma (calculado sob demanda em `get_narratives_table`) |
-| A3 `ai-synthesis` Camada 1 | `feed_events.summary`/`explanation` (2+ highlights) | `page_narrative_synthesis` |
+| A1 `get_active_highlights` | ✅ **Implementada (migration `20260802010000`)** — `feed_events`, filtrado por `organization_id`/`created_at` (período)/`filters.narratives`. ⚠️ Escopo por plataforma **não** implementado — exigiria `JOIN radar_staging_events` via `feed_events.radar_staging_event_id` pra recuperar `scope_type`/`scope_id` (`feed_events` não duplica essas colunas); adiado porque nenhuma página hoje passa um filtro de plataforma pro bloco `highlights` (só `filters.narratives` é wired em `aggregated-metrics`) | nenhuma (leitura pura) |
+| A2 `risk_score` boost | ✅ **Implementada (migration `20260802010000`)** — `feed_events` **apenas** (nunca `radar_staging_events` direto — só evento **publicado** conta) — `MAX(severity_score)` entre os `feed_events` com `related_narrative_id = narrativa` e `closed_at IS NULL` | nenhuma (calculado sob demanda em `get_narratives_table`, `create or replace` sem mudar a assinatura) |
+| A3 `ai-synthesis` Camada 1 | ✅ **Implementada (migration `20260802020000` + `aggregated-metrics-service.ts`)** — `feed_events.summary`/`explanation` (2+ highlights), composição via Claude Haiku 4.5 disparada em background (`scheduleBackground`/`EdgeRuntime.waitUntil`), nunca bloqueia a resposta da página | `page_narrative_synthesis` |
 
 ## 2. Sincronismo — quando cada parte roda
 
@@ -163,10 +175,19 @@ sequenceDiagram
   `feed_events` pelo frontend, não uma terceira chamada de IA em lote.
 - O radar roda **independente** de qualquer usuário estar olhando a tela — ele é um cron
   contínuo. As páginas só leem o que já está pronto em `feed_events`.
-- ✅ **`page_cache` já existe** (migration `20260725040000`, ver `CLAUDE.md`) — o TTL de 5min é
-  real hoje; a invalidação antecipada (sync concluiu um ciclo / usuário clicou "Atualizar dados")
-  ainda não está implementada (`_pending.md` gap #21) — evento novo do radar aparece na página só
-  quando o TTL de 5min expirar naturalmente, não instantaneamente.
+- ⚠️ **Correção (2026-08-02)**: o diagrama acima ("alt cache válido") descreve o desenho original
+  de `page_cache`, mas essa tabela está **desabilitada** desde 2026-07-14 (`getPageEnvelopeWithCache`
+  chama `assemblePageResponse` direto, sem ler/gravar `page_cache` — ver `CLAUDE.md`, "aggregated-metrics
+  module (Sprint 2)"). Na prática hoje o branch "cache expirado ou invalidado" roda em **toda**
+  requisição — um evento novo do radar aparece na página imediatamente na próxima requisição, não
+  só quando um TTL expira. Consequência real pra A3: sem `page_cache` de-duplicando requisições,
+  duas requisições quase simultâneas pra uma chave `(organization_id, page, period_start,
+  period_end, filters_hash)` que ainda não tem linha em `page_narrative_synthesis` podem ambas
+  disparar `composeAndPersistLayer1` em background antes da primeira terminar e gravar — no máximo
+  2-3 chamadas de IA duplicadas nesse curto intervalo (não um loop, a segunda escrita só faz
+  `upsert` sobre a mesma linha), aceito como trade-off de MVP dado o volume de tráfego atual; não
+  implementado um lock distribuído pra isso. Reavaliar se `page_cache` for reativado (`_pending.md`
+  gap #21) ou se o volume de requisições simultâneas crescer.
 - A composição de `narrative_text` (quando há 2+ highlights) roda assíncrona e é cacheada em
   `page_narrative_synthesis` — nunca é recalculada a cada usuário que abre a página (ver
   [../aggregated-metrics/ai-synthesis.md](../aggregated-metrics/ai-synthesis.md)).

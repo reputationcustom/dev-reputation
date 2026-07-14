@@ -2,8 +2,8 @@
 tipo: feature-spec
 módulo: aggregated-metrics
 funcionalidade: ai-synthesis
-status: pronto
-atualizado: 2026-07-25
+status: implementado
+atualizado: 2026-08-02
 ---
 
 # Síntese Narrativa da Página (`narrative_text`)
@@ -21,24 +21,42 @@ atualizado: 2026-07-25
 > determinístico" quando na verdade `narrative_text` era gravado `null`
 > incondicionalmente — corrigido junto com a implementação real desta vez.
 >
-> ⚠️ **Nota revisada (2026-08-02)** — esta blockquote (originalmente escrita
-> 2026-07-25) ainda dizia "Camada 1 continua sem migration — depende de
-> `event-radar` publicar 2+ highlights por página pra fazer sentido, gap #7
-> de `_pending.md` continua aberto", frase que ficou desatualizada assim
-> que `event-radar` foi implementado (1.1-1.4/1.6, migrations
-> `20260727000000`–`20260731020000`, `feed_events` populada desde
-> 2026-07-31) — corrigida aqui. Estado real hoje: o pré-requisito de
-> `event-radar` está satisfeito (mesma constatação já registrada em
-> `sql-aggregation.md`, topo do arquivo, e em `_pending.md` gap #8) — o que
-> falta não é mais uma dependência externa, é só a implementação em si: a
-> function `get_active_highlights` (bloco `highlights`, ainda não escrita —
-> `fetchHighlights` continua retornando `[]` incondicionalmente) e a tabela
-> `page_narrative_synthesis` (Camada 1, nunca teve migration). Até essas
-> duas existirem, `highlights` é sempre `[]` e a Camada 0 (0 highlights) é
-> o único ramo desta spec que roda de fato — a Camada 1 abaixo descreve o
-> desenho, não o estado atual. `_pending.md` gap #7 tinha o mesmo texto
-> desatualizado ("depende só de `event-radar` publicar") — corrigido na
-> mesma sessão, ver nota cruzada para o gap #8.
+> ✅ **Camada 1 implementada (2026-08-02, event-radar/fluxo-aggregated-metrics.md
+> "Fase B", A3, migrations `20260802010000`/`20260802020000`)** —
+> `get_active_highlights` existe (bloco `highlights` já real, não mais
+> sempre `[]`, ver `sql-aggregation.md`) e a tabela `page_narrative_synthesis`
+> foi criada exatamente com o schema descrito em "Dados envolvidos" abaixo.
+> `fetchNarrativeText()` foi dividida em `fetchLayer0NarrativeText()` (0/1
+> highlight, lógica inalterada) e uma nova `fetchNarrativeText()` externa
+> que implementa o "Fluxo principal" abaixo: 2+ highlights → busca
+> `page_narrative_synthesis` pela chave exata; linha existente → devolve
+> direto, nunca chama IA de novo; sem linha → fallback imediato é
+> `fetchLayer0NarrativeText`, e a composição real (`composeLayer1NarrativeText`
+> + `composeAndPersistLayer1`) roda em **background**, sem bloquear a
+> resposta HTTP já enviada, via `scheduleBackground()` — um wrapper sobre
+> `EdgeRuntime.waitUntil` (feature do runtime do Supabase Edge Functions)
+> com fallback "dispara sem aguardar" quando esse global não está
+> disponível (ex: execução local), escrito sem `declare const EdgeRuntime`
+> pra não arriscar colidir com uma tipagem ambiente já fornecida pelo
+> runtime Deno. Modelo: **Claude Haiku 4.5** (`claude-haiku-4-5`,
+> configurável via secret `AI_SYNTHESIS_MODEL`) — mesma decisão de custo já
+> tomada pra `event-radar-agent-orchestrator` (2026-07-31), reaplicada sem
+> perguntar de novo ao usuário por ser a mesma pergunta/mesmo raciocínio já
+> resolvido uma vez neste projeto: a tarefa da Camada 1 é ainda mais barata
+> que a do orquestrador do radar ("não analisa dados, só reescreve/conecta
+> texto que já existe"), então o mesmo modelo mais econômico se aplica com
+> ainda mais razão. Tom da composição: instrução direta no prompt de
+> sistema (ver "Dependências técnicas" abaixo — a skill `humanizer-pt-br`
+> que esta spec citava não existe). `is_final` calculado via
+> `period_end < hoje` em `America/Sao_Paulo`
+> (`Intl.DateTimeFormat('en-CA', ...)`, formato `YYYY-MM-DD`, comparável
+> como string com `period_end`). **Não implementado nesta rodada** (fora
+> do que a "Fase B" pedia): os dois gatilhos de invalidação de um período
+> **aberto** já com linha em `page_narrative_synthesis` (sync concluído/
+> "Atualizar dados") — nenhum dos dois existe no produto ainda
+> (`_pending.md` gap #21), então uma linha existente é sempre devolvida
+> como está, nunca recomposta, mesmo num período aberto; documentado como
+> comportamento atual, não um bug.
 
 ## Objetivo
 
@@ -153,6 +171,18 @@ deve registrar no spec da página por que a Camada 0 ou 1 não foram suficientes
 
 ### Tabela `page_narrative_synthesis` (nova, deste módulo)
 
+> ✅ **Implementada (2026-08-02, migration `20260802020000`)** — schema
+> idêntico ao descrito abaixo, `filters_hash` reaproveita a mesma função de
+> hash já usada por `cacheFingerprint()` (`page_cache`, desabilitado — ver
+> "Dependências técnicas" acima, são mecanismos independentes que só
+> compartilham a lógica de canonicalização). RLS ganhou policy de
+> INSERT/UPDATE pra `authenticated` além de SELECT (`organization_id in
+> auth_organization_ids()`) — diferente de `feed_events`/
+> `radar_staging_events` (só `SUPABASE_SECRET_KEY` escreve), porque
+> `get-page-*` grava aqui usando o client autenticado com o JWT do usuário,
+> não a chave secreta (mesmo padrão de "Autenticação do client Supabase"
+> já usado por todo o resto deste módulo).
+
 | Campo             | Tipo           | Obrigatório | Descrição |
 |--------------------|----------------|-------------|-----------|
 | `id`               | `uuid`         | sim | PK |
@@ -169,28 +199,32 @@ deve registrar no spec da página por que a Camada 0 ou 1 não foram suficientes
 
 **Índices**: unique `(organization_id, page, period_start, period_end, filters_hash)`.
 
-**Políticas RLS**: `org_isolation_page_narrative_synthesis` — mesmo padrão de `organization_id in (select auth_organization_ids())` já usado em `foundation`. Mesma ressalva de "Autenticação do client Supabase" em `edge-functions-per-page.md` — a Edge Function que lê/escreve esta tabela usa o JWT do usuário, não a chave secreta.
+**Políticas RLS**: ✅ 3 policies (`page_narrative_synthesis_select_org`/`_insert_org`/`_update_org`,
+migration `20260802020000`) — todas `organization_id in (select auth_organization_ids())`, mesmo
+padrão já usado em `foundation`. Mesma ressalva de "Autenticação do client Supabase" em
+`edge-functions-per-page.md` — a Edge Function que lê/escreve esta tabela usa o JWT do usuário,
+não a chave secreta, por isso precisa de INSERT/UPDATE explícitos (diferente de `feed_events`,
+só-leitura pra `authenticated`).
 
 ## Dependências técnicas
 
 - Módulo `event-radar` publicando em `feed_events` (pré-requisito — sem ele, todas as páginas
   caem permanentemente no template de "sem eventos" da Camada 0). ✅ **Satisfeito desde
   2026-07-31** — `event-radar` 1.1-1.4/1.6 implementados, `feed_events` populada por
-  `event-radar-agent-orchestrator`. Não implementado ainda por causa disso: a function
-  `get_active_highlights` em si (ver `sql-aggregation.md`) e a tabela `page_narrative_synthesis`
-  abaixo — o gate externo caiu, o trabalho interno continua pendente.
+  `event-radar-agent-orchestrator`.
 - Tabela própria `page_narrative_synthesis` (ver "Dados envolvidos" acima) — **não** é o mesmo
   mecanismo de cache do envelope (`edge-functions-per-page.md`, TTL 5min); são independentes de
-  propósito (um é persistência de texto por período, o outro é cache de resposta HTTP).
+  propósito (um é persistência de texto por período, o outro é cache de resposta HTTP). ✅
+  **Implementada (2026-08-02, migration `20260802020000`)**.
 - ⚠️ **Skill `humanizer-pt-br` não existe** neste projeto (`.claude/skills/` só tem
   `brandwatch-api`, `frontend-design`, `spec-driven-dev`,
-  `supabase-postgres-best-practices`, `web-app-structure` — confirmado 2026-08-02, ao revisar
-  esta spec antes de implementar a Fase B de `event-radar/fluxo-aggregated-metrics.md`). Nunca
-  existiu no repositório — este texto descrevia uma dependência aspiracional desde que a spec foi
-  escrita, nunca verificada contra o diretório real de skills. Quando a Camada 1 for implementada,
-  o tom da composição deve vir de instrução direta no prompt de sistema da chamada de IA (mesmo
-  padrão já usado por `event-radar/agent-orchestrator.md`'s `SYSTEM_PROMPT`), não de uma skill —
-  atualizar esta linha se uma skill `humanizer-pt-br` real vier a existir depois.
+  `supabase-postgres-best-practices`, `web-app-structure` — confirmado 2026-08-02). Nunca existiu
+  no repositório — este texto descrevia uma dependência aspiracional desde que a spec foi escrita,
+  nunca verificada contra o diretório real de skills. ✅ **Substituído (2026-08-02)**: o tom da
+  composição (Camada 1) vem de instrução direta em `NARRATIVE_SYNTHESIS_SYSTEM_PROMPT`
+  (`aggregated-metrics-service.ts`), mesmo padrão já usado por
+  `event-radar/agent-orchestrator.md`'s `SYSTEM_PROMPT` — atualizar esta linha se uma skill
+  `humanizer-pt-br` real vier a existir depois.
 
 ## Referências relacionadas
 

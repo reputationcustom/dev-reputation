@@ -16,7 +16,7 @@ implementing anything. Do not implement a feature whose spec is still
 markers inside specs mark open product decisions, not implementation details
 to invent silently.
 
-- `.dev/specs/_index.md` — stack, the 6 mandatory technical principles (see
+- `.dev/specs/_index.md` — stack, the 7 mandatory technical principles (see
   below), module map, sprint scope.
 - `.dev/specs/_glossary.md` — domain terms (Project, Query, Query Group,
   Category/Narrativa, Mention) and the Portuguese↔English naming mapping.
@@ -107,6 +107,48 @@ and `supabase/functions/` to the real remote Supabase project on push to
 machine unless the user explicitly provides remote credentials for that
 session.
 
+### `.github/workflows/deploy.yaml` — concurrency guard + self-healing migration push (2026-08-02)
+
+Real production incident, found via the pipeline's own CI logs: every
+deploy was failing with `ERROR: duplicate key value violates unique
+constraint "schema_migrations_pkey" ... Key (version)=(20260731050000)
+already exists.` — always the same migration version, across several
+separate runs, with the list of pending migrations only growing each
+time (more commits kept landing on `develop` while deploys kept failing
+at the same spot). Root cause: `deploy.yaml` had **no `concurrency`
+guard**, so every push to `develop` started a brand-new job even if the
+previous one was still running (or had just run) `supabase db push`.
+Two overlapping `supabase db push` invocations compute the same "pending
+migrations" list at nearly the same instant and both race to apply the
+oldest one first — whichever wins inserts the bookkeeping row into
+`supabase_migrations.schema_migrations` successfully (the migration's
+actual SQL, e.g. `create or replace function`, is idempotent and safe to
+re-run — only the bookkeeping `INSERT` collides), and every other
+concurrent/subsequent run then fails on that exact same version forever,
+blocking every genuinely new migration queued behind it too.
+
+Fixed with two independent layers:
+1. **`concurrency: { group: supabase-deploy-${{ github.ref }},
+   cancel-in-progress: false }`** at the workflow level — a new push no
+   longer starts a parallel run; it queues behind whatever deploy is
+   already in flight for the same branch. `cancel-in-progress: false` is
+   deliberate: cancelling a `db push` mid-migration could leave the
+   schema half-migrated, worse than just waiting.
+2. **Self-healing "Push database migrations" step** — even with the race
+   eliminated going forward, a stuck version needed a way to recover
+   without a human manually running `supabase migration repair` in their
+   own terminal each time (which is what was needed to unblock the
+   pipeline in this incident). The step now loops (up to 5 attempts):
+   runs `supabase db push`; on failure, checks whether the error matches
+   `schema_migrations_pkey` specifically, and if so extracts the version
+   number from the error text (`Key (version)=(NNNN) already exists.`,
+   via `sed`) and runs `supabase migration repair "$version" --status
+   applied --yes` (marks the bookkeeping as applied without re-running
+   any SQL) before retrying the push. Any other kind of failure still
+   fails the step immediately, unrepaired — this only auto-recovers from
+   this one specific, well-understood bookkeeping-desync symptom, not
+   from arbitrary migration errors.
+
 ## Non-negotiable technical principles
 
 These apply project-wide, to every sprint (from `.dev/specs/_index.md`):
@@ -134,6 +176,63 @@ These apply project-wide, to every sprint (from `.dev/specs/_index.md`):
    (single cross-org role for internal BI use), which is why the frontend
    never queries `reporting.*` directly — see the `public.narratives_overview`
    split below.
+7. **Migration hygiene** — added 2026-08-02 after a real string of deploy
+   errors, all traced back to a small set of recurring patterns. Check
+   this list before writing any migration that alters an existing
+   function/constraint:
+   - **Changing a function's arity (parameter count) requires an
+     explicit `drop function` of the OLD signature before `create or
+     replace` of the new one.** Without it, Postgres doesn't replace the
+     function — it **creates a second, coexisting overload**, since
+     `create or replace` only replaces a function of the exact same
+     signature. This has already caused: (a) `comment on function`
+     failing with "function name is not unique" (2026-07-21); (b) two
+     conflicting `get_narratives_table` overloads (6 and 7 params) making
+     PostgREST silently fail to resolve which one to call — the real
+     root cause of `/narratives` returning empty for days (2026-07-14/
+     2026-07-26, see above). Any migration that changes a function's
+     parameter count must drop the old signature by its exact types
+     (e.g. `drop function if exists foo(uuid, date, date, jsonb);`) —
+     never assume an earlier migration "already handled this" without
+     checking the signature actually live in the database.
+   - **Never `select alias.*` inside a CTE/join when another source in
+     the same CTE might also have a same-named generic column** (`id` is
+     the classic case). `left join lateral get_x(...) gnt` followed by
+     `select w.id, gnt.*` produces two `id` columns in the same CTE —
+     valid inside it, but becomes `ERROR: column reference "id" is
+     ambiguous` the moment the CTE is referenced from outside (real find
+     in `get_communication_impact`, 2026-07-26). Always list `alias`'s
+     columns explicitly by name.
+   - **A nullable column that's part of a uniqueness constraint needs a
+     generated non-null surrogate column for the constraint to actually
+     work** — SQL treats `NULL <> NULL`, so two rows "equal" except for
+     that null column never collide and dedup silently fails. Pattern:
+     `col_key bigint generated always as (coalesce(col, 0)) stored`, and
+     the `unique` constraint uses `col_key`, not `col` (real find in
+     `bw_query_metrics_{daily,weekly,monthly}`, 2026-07-07).
+   - **A division guarded by a denominator check must always use `CASE
+     WHEN denom > 0 THEN a / denom END`, never `AND denom > 0` inside a
+     `WHERE`/compound condition** — Postgres doesn't guarantee `AND`
+     operand evaluation order, so the division could in principle be
+     evaluated before the guard and divide by zero (real find in
+     `event-radar`, 2026-07-27, fixed by extracting a `..._delta_pct()`
+     helper with an internal `CASE`).
+   - **Never write `column = any((select ...))`** expecting to unwrap an
+     array returned by a scalar subquery — Postgres always parses `ANY (`
+     immediately followed by a parenthesized `SELECT` as the row-wise
+     form (compares against each ROW the subquery returns), never as
+     `= ANY(array)`, even when the subquery genuinely returns one row of
+     one array. Always `cross join` the source into scope and reference
+     a plain column: `= any(source.column)` (real find in
+     `aggregated-metrics`, migration `20260714000000`).
+   - **CI/CD**: the deploy workflow (`.github/workflows/deploy.yaml`)
+     needs `concurrency` (serialize deploys per branch) — without it,
+     two close-together pushes trigger parallel `supabase db push` runs
+     that both race to apply the same oldest pending migration; whichever
+     loses gets stuck on "duplicate key... schema_migrations_pkey" for
+     that same version, indefinitely, blocking every new migration queued
+     behind it (real incident, 2026-08-02 — see
+     "`.github/workflows/deploy.yaml`" above).
 
 ## Deploy (Hostinger) — global rules
 
@@ -4236,6 +4335,140 @@ ainda nesta sessão como parte de Fase B em si.
   executada contra um banco de verdade. Sem componente TypeScript/
   frontend (SQL puro).
 
+### Fase B implementada — A1 `get_active_highlights`, A2 boost de `risk_score`, A3 `ai-synthesis` Camada 1 (2026-08-02)
+
+Continuação direta da sessão anterior (bug de `feed_events.severity_score`
+desatualizado, acima) — usuário confirmou "Sim, vamos prosseguir com a
+fase b" depois de ver a correção de pré-condição. As 3 etapas do subgrafo
+`AGG` de `event-radar/fluxo-aggregated-metrics.md` foram implementadas
+nesta sessão, junto com uma auditoria de coerência da documentação de
+`ai-synthesis.md` pedida no meio da sessão ("verifique se a documentação
+de ai-synthesis está coerente e concisa com o restante que foi
+desenvolvido").
+
+- **Auditoria de documentação, feita antes do código**: `ai-synthesis.md`
+  tinha 2 problemas reais de coerência, ambos corrigidos. (1) Seu próprio
+  blockquote de topo (escrito 2026-07-25) ainda dizia "Camada 1 depende de
+  `event-radar` publicar 2+ highlights... gap #7 continua aberto" — frase
+  que já estava desatualizada desde 2026-07-31 (quando `event-radar`
+  publicou de fato), e `_pending.md` gap #7 tinha o mesmo texto obsoleto,
+  divergente do gap #8 (que já tinha sido corrigido). (2) "Dependências
+  técnicas" citava uma skill `humanizer-pt-br` que **nunca existiu** neste
+  repositório (`.claude/skills/` só tem `brandwatch-api`/`frontend-design`/
+  `spec-driven-dev`/`supabase-postgres-best-practices`/`web-app-structure`)
+  — uma dependência aspiracional nunca verificada contra o diretório real.
+  Ambos corrigidos na spec antes de escrever qualquer migration.
+- **A1 `get_active_highlights`** (migration `20260802010000`) — leitura
+  pura de `feed_events`: filtra por `organization_id`, `feed_events.created_at`
+  dentro do período pedido, e por `filters.narratives` quando presente
+  (único filtro de `EnvelopeFilters` de fato aplicado em todo o módulo
+  `aggregated-metrics`, mesmo padrão de toda outra function). Ordena por
+  `severity_score` desc, `limit 30` (o cap diário de 15 eventos/organização
+  de `event-radar` 1.6 já limita o volume por dia; este limite é só
+  salvaguarda pra períodos multi-dia). Deliberadamente **sem** filtro de
+  `closed_at` — um evento fechado dentro do período pedido ainda é um
+  insight relevante pra quem está olhando aquele período; "ativo" só
+  importa pro boost de A2. `fetchHighlights` (`aggregated-metrics-service.ts`)
+  parou de retornar `[]` incondicionalmente.
+- **A2 boost de `risk_score`** (mesma migration) — `get_narratives_table`
+  ganhou uma CTE `radar_boost` (`MAX(feed_events.severity_score)` entre
+  `related_narrative_id = narrativa` e `closed_at IS NULL`, nunca soma —
+  uma Narrativa pode ter mais de um evento ativo simultâneo) e o `risk_score`
+  final virou `greatest(fórmula composta de sempre, coalesce(boost, 0))` —
+  um evento detectado só pode **elevar** o risco mostrado, nunca derrubá-lo.
+  `create or replace` foi suficiente (sem `drop function`) porque nem a
+  assinatura nem a lista de colunas de saída mudaram, só o cálculo interno.
+- **A3 `ai-synthesis` Camada 1** (migration `20260802020000` +
+  `aggregated-metrics-service.ts`) — tabela `page_narrative_synthesis`
+  criada exatamente com o schema já especificado na spec desde 2026-07-13
+  (chave única `organization_id, page, period_start, period_end,
+  filters_hash`), com policy de SELECT **e** INSERT/UPDATE pra
+  `authenticated` escopada por organização (diferente de `feed_events`, só
+  leitura — aqui é a Edge Function com o JWT do usuário que grava, nunca a
+  chave secreta). `fetchNarrativeText` foi dividida em
+  `fetchLayer0NarrativeText` (0/1 highlight, lógica antiga inalterada) e uma
+  nova `fetchNarrativeText` externa que implementa o "Fluxo principal" da
+  spec: 2+ highlights → busca a linha pela chave exata; existe → devolve
+  direto, nunca chama IA de novo (os 2 gatilhos de invalidação de período
+  aberto — sync concluído/"Atualizar dados" — não existem no produto ainda,
+  `_pending.md` gap #21, então uma linha existente é sempre a resposta
+  final por enquanto); não existe → fallback imediato é a Camada 0, e a
+  composição real roda em **background** via `scheduleBackground()`, sem
+  bloquear a resposta HTTP já enviada.
+  - `scheduleBackground()` é um wrapper sobre `EdgeRuntime.waitUntil`
+    (feature do runtime das Supabase Edge Functions) escrito **sem**
+    `declare const EdgeRuntime` — acessa o global via
+    `globalThis as unknown as {...}` pra não arriscar colidir com uma
+    tipagem ambiente que o runtime Deno já forneça; sem esse global
+    (execução local), dispara a Promise sem aguardar, best-effort.
+  - Modelo: **Claude Haiku 4.5** (`claude-haiku-4-5`, secret
+    `AI_SYNTHESIS_MODEL`) — mesma decisão de custo já tomada pra
+    `event-radar-agent-orchestrator` (2026-07-31), reaplicada sem
+    perguntar de novo ao usuário: a tarefa da Camada 1 é ainda mais barata
+    ("não analisa dados, só reescreve/conecta texto que já existe"), então
+    o mesmo raciocínio de custo se aplica com ainda mais razão.
+  - Tom da composição: instrução direta em
+    `NARRATIVE_SYNTHESIS_SYSTEM_PROMPT`, já que a skill `humanizer-pt-br`
+    citada pela spec não existe (ver auditoria acima) — mesmo padrão já
+    usado pelo `SYSTEM_PROMPT` de `event-radar-agent-orchestrator`.
+  - `is_final` = `period_end < hoje` em `America/Sao_Paulo`, via
+    `Intl.DateTimeFormat('en-CA', ...)` (formato `YYYY-MM-DD`, comparável
+    como string com `period_end`).
+  - **Achado real, documentado, não corrigido nesta sessão**: `page_cache`
+    está desabilitado desde 2026-07-14 (`getPageEnvelopeWithCache` chama
+    `assemblePageResponse` direto) — sem essa camada de-duplicando
+    requisições, 2 requisições quase simultâneas pra uma chave ainda sem
+    linha em `page_narrative_synthesis` podem ambas disparar a composição
+    em background antes da primeira terminar (no máximo 2-3 chamadas de IA
+    duplicadas nesse curto intervalo — a segunda escrita só faz `upsert`
+    sobre a mesma linha, nunca duplica a linha em si). Aceito como
+    trade-off de MVP dado o volume de tráfego atual; sem lock distribuído.
+    Documentado em `fluxo-aggregated-metrics.md`, "Pontos de atenção no
+    sincronismo".
+- **Propagação (Princípio técnico 5)**: as mudanças em
+  `aggregated-metrics-service.ts` (import do SDK da Anthropic,
+  `fetchHighlights` real, `fetchLayer0NarrativeText`/`fetchNarrativeText`/
+  `scheduleBackground`/`composeLayer1NarrativeText`/`composeAndPersistLayer1`/
+  `todaySaoPaulo`/`isPeriodClosed`) foram copiadas nas 7 Edge Functions
+  deployadas (`get-page-{overview,narratives,sentiment,platforms,themes,authors}`,
+  `get-narrative-detail`) via um script Node de uso único (não commitado —
+  ferramenta de sessão, não parte do produto), que localiza o fim do bloco
+  canônico (fecho de `getPageEnvelopeWithCache`) e substitui só essa parte,
+  preservando o handler HTTP específico de cada função (e, em
+  `get-narrative-detail`, o `fetchNarrativeSummary` bespoke entre os dois).
+  - **Bug real introduzido pela própria cópia mecânica, encontrado e
+    corrigido antes de prosseguir**: o arquivo canônico só importa
+    `import type { SupabaseClient } from 'npm:@supabase/supabase-js@2'`
+    (nunca chama `createClient`, já que o canônico não tem handler) — mas
+    cada uma das 7 funções deployadas tinha, na prática, um import
+    combinado (`import { createClient, type SupabaseClient } from ...`)
+    porque o próprio handler de cada uma usa `createClient`. A cópia
+    mecânica trocou esse import combinado pelo type-only do canônico em
+    todas as 7, quebrando `createClient` (usado mais abaixo, no handler) —
+    um `diff` linha a linha contra o canônico antes de seguir em frente
+    pegou isso; corrigido restaurando o import combinado nas 7 cópias via
+    `sed`. Confirmado depois: `diff` das 1170 linhas do bloco canônico
+    contra `get-page-overview/index.ts` mostra **só** essa linha de import
+    como diferença — o resto da propagação está byte-a-byte idêntico ao
+    canônico, como deveria.
+- **Verificação**: `npx tsc --noEmit` e `npm run build` passam limpos (19
+  rotas — nenhuma rota nova, só lógica de backend). Contagem de parênteses/
+  chaves balanceada nas 2 migrations novas e nos 7 arquivos deployados
+  (mesmo proxy de verificação usado em toda sessão sem acesso a Supabase
+  real). Sem ambiente Deno/Supabase real disponível nesta sessão — as 2
+  migrations e a chamada real à API da Anthropic (Camada 1) não foram
+  executadas contra infraestrutura de verdade, mesma limitação recorrente
+  de toda sessão deste projeto sem credenciais de deploy.
+- **Fechamento de documentação**: `sql-aggregation.md` (10/10 functions,
+  "Risco" e a linha de `get_active_highlights` na tabela principal),
+  `ai-synthesis.md` (status `implementado`, blockquote de topo reescrito,
+  "Dados envolvidos"/"Dependências técnicas" atualizados),
+  `fluxo-aggregated-metrics.md` (subgrafo `AGG` verde, tabela "Tabelas por
+  etapa" com as 3 linhas ✅, correção do achado sobre `page_cache`
+  desabilitado), `_pending.md` (gaps #7/#8 resolvidos in-place, #33
+  atualizado). `_architecture.md` ainda não tocado nesta sessão — próximo
+  item.
+
 ### Módulo `entities` — spec completa + `data-model.md` implementado + seed real de partidos/parlamentares (2026-07-13)
 
 Duas sessões na mesma data. **Primeira**: usuário pediu a spec do módulo de
@@ -4650,6 +4883,26 @@ implementar de verdade.
   executado contra um banco real** — sem credenciais/deploy neste
   ambiente, mesma limitação recorrente de toda sessão sem acesso ao
   Supabase Dashboard já registrada em várias entradas deste arquivo.
+
+### X Themes — links clicáveis (2026-08-02)
+
+Pedido do usuário: "tudo que for possível colocar link clicável em X
+Themes (Hashtags, Posters, Stories, Emojis) coloque. Exemplo: hashtags,
+perfis, url de posts, stories, etc." `components/intelligence-center/
+x-insights-panel.tsx` ganhou `insightHref(type, name)` — sem dado novo,
+`XInsightItem.name` já é literalmente "a hashtag, emoji, URL ou @handle
+citado" (`foundation/data-model.md`, `bw_query_x_insights`), só faltava
+construir o link a partir disso: **Top Hashtags** → busca por hashtag no
+X (`x.com/hashtag/<tag>`, prefixo `#` removido se vier no dado); **Most
+Mentioned X Posters** → perfil do autor (`x.com/<handle>`, prefixo `@`
+removido); **Top Stories** (`insight_type = 'url'`) → `name` já é a URL
+completa, linka direto (só valida `/^https?:\/\//` antes, pra nunca
+produzir um `href` quebrado a partir de um dado inesperado). **Top Emojis
+fica deliberadamente sem link** — um emoji sozinho não é um recurso
+navegável, diferente dos outros 3 tipos (sempre têm uma URL real por
+trás). Todos abrem em nova aba. Spec atualizada em
+`intelligence-center/authors-and-influencers.md`. `npx tsc --noEmit`
+limpo.
 
 ## Directory structure
 

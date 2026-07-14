@@ -6,6 +6,22 @@ on:
       - develop
   workflow_dispatch:
 
+# Sem isso, cada push pra `develop` dispara um run novo em paralelo a
+# qualquer run anterior ainda em andamento — dois `supabase db push`
+# simultâneos calculam a mesma lista de migrations pendentes ao mesmo
+# tempo e correm pra aplicar a mais antiga primeiro; quem perde a corrida
+# recebe "duplicate key value violates unique constraint
+# schema_migrations_pkey" pra essa mesma migration, sempre a mesma,
+# sempre que houver um push novo antes do deploy anterior terminar —
+# exatamente o sintoma real observado (mesma versão falhando em runs
+# sucessivos, com a lista de migrations pendentes só crescendo a cada
+# tentativa). `cancel-in-progress: false` enfileira o run novo em vez de
+# cancelar um `db push` no meio — cancelar podia deixar uma migration
+# aplicada pela metade.
+concurrency:
+  group: supabase-deploy-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -35,8 +51,44 @@ jobs:
 
       # Aplica as migrations pendentes de supabase/migrations/ — é o que estava faltando
       # rodar manualmente (ex: buckets do Storage, tabelas novas) a cada deploy.
+      #
+      # Auto-repara "duplicate key value violates unique constraint
+      # schema_migrations_pkey" (SQLSTATE 23505) — sintoma real observado
+      # em produção (2026-08-02): runs concorrentes (antes do
+      # `concurrency` acima existir) corriam pra aplicar a mesma migration
+      # mais antiga pendente; quem perdia a corrida encontrava a versão já
+      # gravada em `supabase_migrations.schema_migrations` (o DDL da
+      # migration em si já tinha rodado com sucesso — a única coisa que
+      # falha é o INSERT de bookkeeping) e travava o deploy inteiro,
+      # inclusive as migrations genuinamente novas atrás dela na fila. O
+      # loop abaixo identifica a versão apontada pela mensagem de erro,
+      # roda `supabase migration repair --status applied <versão>` (marca
+      # o bookkeeping como aplicado sem reexecutar SQL nenhum) e tenta o
+      # push de novo — até 5 vezes, cobrindo o caso de várias versões
+      # travadas em sequência. Qualquer outro tipo de erro (não esse
+      # padrão específico) ainda falha o step normalmente.
       - name: Push database migrations
-        run: supabase db push
+        run: |
+          for attempt in 1 2 3 4 5; do
+            if output=$(supabase db push 2>&1); then
+              echo "$output"
+              exit 0
+            fi
+            echo "$output"
+            version=""
+            if echo "$output" | grep -q "schema_migrations_pkey"; then
+              version=$(echo "$output" | sed -nE 's/.*\(version\)=\(([0-9]+)\).*/\1/p' | head -1)
+            fi
+            if [ -n "$version" ]; then
+              echo "::warning::Migration $version já estava aplicada remotamente (bookkeeping dessincronizado) — rodando 'migration repair --status applied' e tentando de novo (tentativa $attempt)."
+              supabase migration repair "$version" --status applied --yes
+            else
+              echo "::error::Falha no push não reconhecida como bookkeeping dessincronizado — abortando."
+              exit 1
+            fi
+          done
+          echo "::error::Excedeu tentativas de auto-reparo do db push."
+          exit 1
 
       # Deploy de todas as Edge Functions (verify_jwt já vem de supabase/config.toml por função —
       # não precisa mais do flag --no-verify-jwt aqui, ele duplicava/sobrescrevia essa config).

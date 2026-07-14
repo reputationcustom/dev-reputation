@@ -8,17 +8,13 @@ atualizado: 2026-08-02
 
 # Camada SQL de Agregação
 
-> ✅ **Implementado (migration `20260714000000`, evoluído em várias sessões
-> desde então — última alteração de schema `20260722010000`)**: 9 das 10
-> functions da tabela abaixo estão em produção. Só `get_active_highlights`
-> continua deferida — ⚠️ **atualizado 2026-08-02**: o motivo original
-> ("depende de `feed_events`/`event-radar`, ainda `rascunho`") não é mais
-> verdade — `event-radar` está implementado (1.1-1.4/1.6, `feed_events`
-> populada desde 2026-07-31) e o gate real (`fluxo-aggregated-metrics.md`,
-> "Fase B") já está satisfeito. A function em si só ainda não foi escrita
-> nesta sessão (`_pending.md` gap #8, reaberto sem bloqueio real). Este
-> arquivo reflete o estado atual do schema; qualquer nota `⚠️`/`✅` abaixo
-> já foi aplicada ao banco (quando citar uma migration).
+> ✅ **10 de 10 functions implementadas (2026-08-02, migration
+> `20260802010000`)** — `get_active_highlights` (A1 de
+> `event-radar/fluxo-aggregated-metrics.md`, "Fase B") foi a última a
+> faltar; implementada na mesma migration que o boost de `risk_score` (A2,
+> ver "Risco" abaixo). Nenhuma function deste módulo continua deferida.
+> Este arquivo reflete o estado atual do schema; qualquer nota `⚠️`/`✅`
+> abaixo já foi aplicada ao banco (quando citar uma migration).
 
 ## Objetivo
 
@@ -80,7 +76,7 @@ observado — **sem `query_id`** (revertido 2026-07-13, ver nota abaixo).
 | `get_dissemination_graph(narrative_id)` | `graph`              | `mentions` (`reply_to`/`retweet_of`/`insights_mentioned`), restrito às mentions retornadas por `narrative_matched_mentions(narrative_id)` — reusa a função canônica já definida em `foundation/data-model.md`, mesma abordagem já decidida em `intelligence-center/narratives-exploration.md` ("grafo de disseminação simplificado"), não uma tabela `grafo_arestas` nova |
 | `get_term_signals(...)`                 | `term_signals`       | `bw_query_topics` (`label`, `sentiment_positive/neutral/negative`, `trending`) — já carrega tema/sentimento/tendência, não precisa extrair termo de `mentions` |
 | `get_x_insights(...)`                   | `x_insights` (só `platforms`) | ✅ **Adicionado 2026-07-18** — `bw_query_x_insights` (`insight_type`: `hashtag`/`emoticon`/`url`/`mentioned_author`), até 10 itens por tipo, ordenados por `volume` desc, da semana mais recente sincronizada por tipo. Fecha um gap real: o dado já era capturado desde `foundation` (2026-07-11), mas nenhuma function/bloco o expunha — era só uma "oportunidade futura" registrada em `intelligence-center/platform-analysis.md` (2026-07-13), nunca implementada até esta auditoria. É o dado por trás de "Top Hashtags"/"Most Mentioned X Posters"/"Top Stories"/"Top Emojis" (dashboard nativo "X Themes" da Brandwatch) |
-| `get_active_highlights(...)`            | `highlights`         | `feed_events` (populada pelo módulo `event-radar`, tipo/tag `"radar"`) — **leitura pura, sem cálculo**: filtra por `organization_id`, `period`, escopo da página (narrativa/pauta/plataforma quando aplicável) e ordena por `severity_score` desc, respeitando o cap diário já aplicado na inserção pelo radar |
+| `get_active_highlights(...)`            | `highlights`         | ✅ **Implementado (2026-08-02, migration `20260802010000`)** — `feed_events` (populada pelo módulo `event-radar`). **Leitura pura, sem cálculo**: filtra por `organization_id`, `period` (`feed_events.created_at`, não a janela de detecção do evento) e por `filters.narratives` (único filtro de `EnvelopeFilters` de fato aplicado, mesmo padrão de toda outra function do módulo); ordena por `severity_score` desc, `limit 30` (salvaguarda de payload — o cap diário de 15 eventos/organização já limita o volume por dia via `event-radar` 1.6, este limite é só pra períodos multi-dia). ⚠️ Sem filtro de `closed_at` de propósito — um evento fechado dentro do período pedido ainda é um insight relevante pra quem está olhando aquele período; "ativo" (`closed_at is null`) só importa pro boost de `risk_score` (A2, ver "Risco" abaixo), não pra este bloco de listagem |
 
 > ✅ **Card de KPI "Sentimento geral" usa `get_sentiment_breakdown`, não o
 > `net_sentiment` de `get_metrics_cards` (2026-07-13)** —
@@ -531,24 +527,24 @@ Pedido do usuário: "Implementar termo de interação agora".
   desde 2026-07-13 — ver também
   [../event-radar/severity.md](../event-radar/severity.md), "Relação com
   `risk_score`".
-  ⚠️ **Precisão adicionada (2026-08-02)**, ao revisar `fluxo-aggregated-metrics.md`
-  antes de liberar esta etapa (Fase B): "evento ativo publicado pelo radar"
-  significa **`feed_events`**, nunca `radar_staging_events` diretamente —
-  um evento com `should_publish: false` (1.4) nunca chegou a ser
-  publicado, então não deve contar pro boost de risco, mesmo tendo
-  `severity_score` calculado em `radar_staging_events`. Fonte exata:
-  `MAX(feed_events.severity_score)` entre as linhas com
-  `related_narrative_id = narrativa` e `closed_at IS NULL` (uma Narrativa
-  pode ter mais de um evento ativo simultâneo — ex: um de volume e um de
-  sentimento — daí o `MAX`, nunca a soma). `feed_events.severity_score` é
-  mantido sincronizado com o `radar_staging_events` de origem enquanto o
-  evento segue ativo (migration `20260802000000`, ver
-  `fluxo-aggregated-metrics.md`) — sem essa sincronização, o boost leria um
-  valor congelado no momento da publicação, não o score real e atual.
-  **Ainda não implementado** (esta function `get_narratives_table` em si
-  não tem o termo `greatest(...)` ainda) — a fórmula de `risk_score` acima
-  reflete o estado atual, sem esse termo; ele entra na mesma migration que
-  ligar `get_active_highlights` (A1/A2 da Fase B, `fluxo-aggregated-metrics.md`).
+  ✅ **Implementado (2026-08-02, migration `20260802010000`, A2 da Fase
+  B)** — "evento ativo publicado pelo radar" significa **`feed_events`**,
+  nunca `radar_staging_events` diretamente — um evento com
+  `should_publish: false` (1.4) nunca chegou a ser publicado, então não
+  conta pro boost de risco, mesmo tendo `severity_score` calculado em
+  `radar_staging_events`. Fonte exata: `MAX(feed_events.severity_score)`
+  entre as linhas com `related_narrative_id = narrativa` e `closed_at IS
+  NULL` (uma Narrativa pode ter mais de um evento ativo simultâneo — ex:
+  um de volume e um de sentimento — daí o `MAX`, nunca a soma), via uma
+  CTE `radar_boost` com `left join` sobre `risk_inputs` — uma Narrativa sem
+  evento ativo (`rb.severity_score is null`) usa `coalesce(..., 0)`, sem
+  efeito no `greatest(...)`. `feed_events.severity_score` é mantido
+  sincronizado com o `radar_staging_events` de origem enquanto o evento
+  segue ativo (migration `20260802000000`) — sem essa sincronização, o
+  boost leria um valor congelado no momento da publicação, não o score
+  real e atual. `create or replace` foi suficiente (sem `drop function`)
+  porque nem a assinatura nem a lista de colunas de saída mudaram — só o
+  cálculo interno de `risk_score`.
 
 ### Campos do card de Narrativa (2026-07-21, migration `20260721010000`)
 
