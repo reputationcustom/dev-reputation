@@ -3242,6 +3242,38 @@ async function refreshNarrativeMetricsForToday(supabase: SupabaseClient, now: Da
 // inteira + netSentiment via dimensão `categories` (todas as Narrativas
 // numa chamada só, mesmo padrão de syncCategoryDailyAggregate) +
 // netSentiment da Query inteira.
+//
+// ⚠️ **Bug real de produção encontrado e corrigido (2026-08-09)** — usuário
+// reportou que "SOV por pauta ao longo do tempo" continuava vazio no modo
+// "Diário", mesmo depois do grão `hour` ser adicionado a `get_theme_sov_trend`
+// (migration `20260809000000`) e do denominador de SOV ser corrigido
+// (`20260809010000`). Causa raiz, na captura de dado, não no SQL: das 3
+// chamadas fixas acima, só `syncHourlySentimentMetrics` grava
+// `total_mentions` — e sempre com `category_id: null` (linha só da Query
+// inteira). `syncHourlyNetSentiment("categories", ...)` grava uma linha
+// POR NARRATIVA (incluindo cada Pauta), mas só escreve `net_sentiment` —
+// nunca `total_mentions`, que fica preso no default da coluna (`not null
+// default 0`, migration `20260713040000`) pra sempre, pra qualquer
+// Narrativa. Ou seja: **nenhuma linha de `bw_query_metrics_hourly` com
+// `category_id` preenchido jamais teve `total_mentions` de verdade** —
+// `get_theme_sov_trend`'s `pauta_hourly` (que faz `join bw_query_metrics_hourly
+// h on h.category_id = p.bw_category_id`) sempre casava com linhas cujo
+// `total_mentions` é 0, produzindo uma série sempre vazia/zerada no modo
+// "Diário" — o SQL estava certo, o dado que ele lê nunca existiu. Mesmo
+// gap afetaria qualquer outra página com `filters.narratives` ativo em
+// modo "Diário" (`get_volume_trend`'s grão `hour` filtrado por Narrativa —
+// ex: `/narratives/[id]` no modo "Diário"), não só Pautas — por isso o fix
+// é genérico (todo `categoryTarget`), não uma gambiarra só pra `themes`.
+// Fix: `syncHourlySentimentMetrics` ganhou um parâmetro `categoryId`
+// (mesmo padrão de `syncSentimentMetrics`, usado pelas fases diária/
+// semanal/mensal desde sempre — `category=<id>` como filtro genérico já
+// confirmado válido, `available-filters.md`) — grava `total_mentions`
+// POR CATEGORIA de verdade. `runHourlyMetricsStep` ganhou um loop
+// throttled sobre `categoryTargets` (mesmo padrão de round-robin por
+// staleness de `daily_metrics`, ver `MAX_SENTIMENT_TARGETS_PER_INVOCATION`/
+// "⚠️ 2026-08-09" acima) — capado, com `stayOnStep: true` se sobrar
+// trabalho, pra não estourar o teto de 30 chamadas/10min da Brandwatch
+// numa organização com muitas Narrativas.
 // =========================================================================
 
 const HOURLY_METRICS_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
@@ -3278,11 +3310,18 @@ function pivotHourlySentimentChart(
   return Array.from(byHour.values());
 }
 
+// ✅ Ganhou `categoryId` opcional (2026-08-09) — mesmo padrão de
+// `syncSentimentMetrics` (grãos dia/semana/mês): quando presente, filtra
+// por `category=<id>` e grava a linha com esse `category_id`, em vez de
+// sempre `null` (Query inteira). Ver "⚠️ Bug real..." acima pro porquê
+// disso ser necessário — sem isso, nenhuma Narrativa/Pauta tinha
+// `total_mentions` de verdade no grão horário.
 async function syncHourlySentimentMetrics(
   supabase: SupabaseClient,
   token: string,
   projectId: number,
   queryId: number,
+  categoryId: number | null,
   startDate: Date,
   endDate: Date,
 ): Promise<void> {
@@ -3292,19 +3331,20 @@ async function syncHourlySentimentMetrics(
     endDate: formatBrandwatchDate(endDate),
     timezone: TIMEZONE,
   });
+  if (categoryId) params.set("category", String(categoryId));
 
   const json = await callBrandwatch(`/projects/${projectId}/data/volume/sentiment/hours?${params.toString()}`, token);
   const points = pivotHourlySentimentChart(json);
 
   if (points.length === 0) {
-    log("syncHourlySentimentMetrics:empty", { projectId, queryId });
+    log("syncHourlySentimentMetrics:empty", { projectId, queryId, categoryId });
     return;
   }
 
   const rows = points.map((p) => ({
     project_id: projectId,
     query_id: queryId,
-    category_id: null,
+    category_id: categoryId,
     metric_hour: p.hour,
     total_mentions: p.total,
     sentiment_positive: p.positive,
@@ -3317,7 +3357,7 @@ async function syncHourlySentimentMetrics(
     .from("bw_query_metrics_hourly")
     .upsert(rows, { onConflict: "project_id,query_id,category_id_key,metric_hour" });
   if (error) throw new Error(`Erro upsertando bw_query_metrics_hourly: ${error.message}`);
-  log("syncHourlySentimentMetrics:done", { projectId, queryId, rows: rows.length });
+  log("syncHourlySentimentMetrics:done", { projectId, queryId, categoryId, rows: rows.length });
 }
 
 // Mesma validação de FK contra bw_categories já usada em
@@ -3397,17 +3437,75 @@ async function syncHourlyNetSentiment(
   log("syncHourlyNetSentiment:done", { projectId, queryId, dimension, rows: rows.length });
 }
 
+// Mesmo padrão de round-robin por staleness de `fetchDailySentimentFreshness`
+// (2026-08-09, "⚠️ 2026-08-09" acima) — agregado no Postgres via RPC
+// (`bw_query_metrics_hourly_category_freshness`, migration `20260809020000`),
+// nunca uma select bruta sem ORDER/LIMIT (mesma classe de bug já corrigida
+// em 2026-08-06 pra `bw_query_metrics_daily`).
+const MAX_HOURLY_VOLUME_TARGETS_PER_INVOCATION = 8;
+
+async function fetchHourlyVolumeFreshness(
+  supabase: SupabaseClient,
+  projectId: number,
+  queryId: number,
+  categoryIds: number[],
+): Promise<Map<number, number>> {
+  const ageMsByCategory = new Map<number, number>(categoryIds.map((id) => [id, Number.POSITIVE_INFINITY]));
+  if (categoryIds.length === 0) return ageMsByCategory;
+  const { data, error } = await supabase.rpc("bw_query_metrics_hourly_category_freshness", {
+    p_project_id: projectId,
+    p_query_id: queryId,
+    p_category_ids: categoryIds,
+  });
+  if (error) throw new Error(`Erro checando frescor de bw_query_metrics_hourly (volume por categoria): ${error.message}`);
+
+  const nowMs = Date.now();
+  for (const row of (data ?? []) as { category_id: number; latest_synced_at: string | null }[]) {
+    if (!row.latest_synced_at) continue;
+    ageMsByCategory.set(row.category_id, nowMs - new Date(row.latest_synced_at).getTime());
+  }
+  return ageMsByCategory;
+}
+
 async function runHourlyMetricsStep(
   supabase: SupabaseClient,
   token: string,
   projectId: number,
   queryId: number,
+  categoryTargets: (number | null)[],
   now: Date,
 ): Promise<StepResult> {
   const windowStart = new Date(now.getTime() - HOURLY_METRICS_WINDOW_MS);
-  await syncHourlySentimentMetrics(supabase, token, projectId, queryId, windowStart, now);
+  // 3 chamadas fixas de sempre — Query inteira (volume/sentimento +
+  // netSentiment) + netSentiment por Narrativa via dimensão `categories`
+  // (não escalam com o número de Narrativas, sempre rodam, sem throttle).
+  await syncHourlySentimentMetrics(supabase, token, projectId, queryId, null, windowStart, now);
   await syncHourlyNetSentiment(supabase, token, projectId, queryId, "categories", windowStart, now);
   await syncHourlyNetSentiment(supabase, token, projectId, queryId, "queries", windowStart, now);
+
+  // ✅ Volume horário POR NARRATIVA (2026-08-09) — ver "⚠️ Bug real..."
+  // acima. Escala com o número de Narrativas, então precisa do mesmo
+  // throttle de round-robin por staleness já usado em `daily_metrics`
+  // (capado + `stayOnStep` se sobrar trabalho, nunca um burst só).
+  const narrativeCategoryIds = categoryTargets.filter((c): c is number => c !== null);
+  const ageMsByCategory = await fetchHourlyVolumeFreshness(supabase, projectId, queryId, narrativeCategoryIds);
+  const staleWindowMs = getSyncStalenessWindowMs();
+  const dueCategoryIds = narrativeCategoryIds
+    .filter((id) => (ageMsByCategory.get(id) ?? Number.POSITIVE_INFINITY) >= staleWindowMs)
+    .sort((a, b) => (ageMsByCategory.get(b) ?? Number.POSITIVE_INFINITY) - (ageMsByCategory.get(a) ?? Number.POSITIVE_INFINITY));
+
+  let volumeCallsMade = 0;
+  let allNarrativeVolumeDone = true;
+  for (const categoryId of dueCategoryIds) {
+    if (!hasBrandwatchCallBudget() || volumeCallsMade >= MAX_HOURLY_VOLUME_TARGETS_PER_INVOCATION) {
+      allNarrativeVolumeDone = false;
+      break;
+    }
+    await syncHourlySentimentMetrics(supabase, token, projectId, queryId, categoryId, windowStart, now);
+    volumeCallsMade++;
+  }
+  if (!allNarrativeVolumeDone) return { didWork: true, stayOnStep: true };
+
   return { didWork: true };
 }
 
@@ -4067,7 +4165,7 @@ async function runSyncInvocation(supabase: SupabaseClient, invocationStartedAt: 
           if (result.didWork) await refreshNarrativeMetricsForToday(supabase, now);
           break;
         case "hourly_metrics":
-          result = await runHourlyMetricsStep(supabase, token, projectId, queryId, now);
+          result = await runHourlyMetricsStep(supabase, token, projectId, queryId, categoryTargets, now);
           break;
         case "weekly_monthly":
           result = await runWeeklyMonthlyStep(supabase, token, projectId, queryId, categoryTargets, metricsStartDate, now);

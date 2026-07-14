@@ -7394,6 +7394,91 @@ acompanhar é o SOV de cada Pauta (tabela e gráfico) bater com os
 percentuais já mostrados em "Share of Voice e sentimento por pauta" pro
 mesmo período.
 
+### Dot de Pauta recolorido + "Diário" de "SOV por pauta" ainda vazio — causa raiz real era em `bw-sync`, não no SQL (2026-08-09)
+
+User follow-up, mesma sessão dos 2 fixes de SOV/Insights de Pautas acima,
+2 itens:
+
+1. **Dot recolorido pra bater com a linha do gráfico** — pedido do
+   usuário: "pinte a bolinha que existe ao lado das pautas com a cor do
+   gráfico de linhas para facilitar a leitura." `colorForGroup()` (a
+   function que já colore cada série de `TrendLineChart` por hash
+   determinístico do nome do grupo) foi extraída de
+   `components/intelligence-center/charts/trend-line-chart.tsx` pra
+   `lib/chart-colors.ts` — sem essa extração, `pauta-cards.tsx` não tinha
+   como chamar a mesma lógica sem duplicá-la (os dois arquivos vivem em
+   pastas irmãs dentro de `intelligence-center/`, sem um lugar comum óbvio
+   pra esse utilitário até agora). `PautaCardGrid`'s dot
+   (`components/intelligence-center/pauta-cards.tsx`) trocou de
+   `NetSentimentDot` (cor por sentimento) pra
+   `colorForGroup(item.label)` — mesmo `item.label`/título de Pauta que
+   `get_theme_sov_trend` usa como `series_by_group.group`, então a cor do
+   dot sempre bate com a cor da linha correspondente no gráfico logo
+   abaixo. Trade-off aceito, pedido explícito: o card deixa de mostrar
+   sentimento visualmente (só a tabela "Narrativas" e o widget "Sentimento
+   por pauta" continuam mostrando).
+2. **"SOV por pauta ao longo do tempo" continuava vazio no modo "Diário"**
+   mesmo depois dos 2 fixes anteriores (grão `hour` + denominador
+   escopado a Pautas). Investigação encontrou a causa raiz de verdade, na
+   **captura de dado**, não no SQL: das 3 chamadas fixas de
+   `runHourlyMetricsStep` (`bw-sync/index.ts`), só
+   `syncHourlySentimentMetrics` grava `total_mentions` em
+   `bw_query_metrics_hourly` — e sempre com `category_id: null`
+   (hardcoded, linha só da Query inteira). `syncHourlyNetSentiment
+   ("categories", ...)` grava uma linha **por Narrativa** (incluindo cada
+   Pauta), mas só escreve `net_sentiment` — nunca `total_mentions`, que
+   fica preso no default da coluna (`not null default 0`, migration
+   `20260713040000`) pra sempre, pra **qualquer** Narrativa. Ou seja:
+   desde que essa tabela existe, **nenhuma linha com `category_id`
+   preenchido jamais teve `total_mentions` real** — `get_theme_sov_trend`'s
+   `pauta_hourly` (que faz `join bw_query_metrics_hourly h on h.category_id
+   = p.bw_category_id`) sempre casava com linhas cujo `total_mentions` é
+   0, produzindo uma série sempre vazia/zerada no modo "Diário". O SQL da
+   sessão anterior estava certo — o dado que ele lê nunca existiu. Mesmo
+   gap afetaria `get_volume_trend`'s grão `hour` sempre que
+   `filters.narratives` estiver ativo (ex: `/narratives/[id]` no modo
+   "Diário"), não só Pautas — por isso o fix é genérico (todo
+   `categoryTarget`), não uma gambiarra só pra `themes`.
+   **Fix** (`bw-sync/index.ts` + migration `20260809020000`):
+   `syncHourlySentimentMetrics` ganhou um parâmetro `categoryId` opcional
+   (mesmo padrão de `syncSentimentMetrics`, já usado pelos grãos dia/
+   semana/mês desde sempre — `category=<id>` como filtro genérico já
+   confirmado válido, `available-filters.md`) — quando presente, filtra a
+   chamada por `category=<id>` e grava a linha com esse `category_id` de
+   verdade. `runHourlyMetricsStep` ganhou um loop throttled sobre
+   `categoryTargets` (todas as Narrativas, não só Pautas) — mesmo padrão
+   de round-robin por staleness já usado em `daily_metrics` (2026-08-09,
+   ver entrada acima): `fetchHourlyVolumeFreshness()` (nova, chama a RPC
+   `bw_query_metrics_hourly_category_freshness`, migration `20260809020000`
+   — agregação no Postgres, nunca uma select bruta sem `ORDER
+   BY`/`LIMIT`, mesma classe de bug já corrigida em 2026-08-06 pra
+   `bw_query_metrics_daily`), capado em `MAX_HOURLY_VOLUME_TARGETS_PER_INVOCATION
+   = 8`, `stayOnStep: true` se sobrar trabalho (não estoura o teto de 30
+   chamadas/10min da Brandwatch numa organização com muitas Narrativas).
+   As 3 chamadas fixas originais continuam sem guarda de orçamento (mesmo
+   comportamento de sempre — "sempre roda, sem throttle"); só o novo loop
+   por Narrativa é gated.
+
+**Especificações atualizadas**: `foundation/data-model.md`
+(`bw_query_metrics_hourly`, novo blockquote sobre o bug de captura),
+`foundation/sync-brandwatch.md` (linha `hourly_metrics` da tabela de
+passos), `intelligence-center/electoral-themes.md` (nota corrigindo a
+causa raiz do gráfico vazio + nota do dot recolorido).
+
+**Verificação**: `npx tsc --noEmit` e `npm run build` (com `rm -rf .next`
+antes) passam limpos — 21 rotas, mesma contagem de antes (mudança
+puramente de estilo/dado, nenhuma rota nova). Balanço de parênteses do
+arquivo `bw-sync/index.ts` conferido antes/depois da mudança (mesma
+profundidade final em ambas as versões — `+1`, já presente antes desta
+sessão, artefato de comentário em prosa, não um erro de sintaxe
+introduzido agora). Migration `20260809020000` revisada manualmente, não
+executada contra um banco real nesta sessão — mesma limitação recorrente
+de toda sessão sem credenciais de deploy; `git push` para `develop` é o
+próximo passo, e o sinal a acompanhar é `bw_query_metrics_hourly` ganhando
+linhas com `category_id` preenchido e `total_mentions > 0` nos logs
+`[bw-sync] syncHourlySentimentMetrics:done`, seguido do gráfico "SOV por
+pauta ao longo do tempo" mostrando uma série real no modo "Diário".
+
 ## Directory structure
 
 ```

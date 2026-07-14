@@ -5,15 +5,7 @@ import type { Trend, TrendPoint } from "@reputation/shared-types";
 import { EmptyState } from "@/components/ui/empty-state";
 import { formatDateOnly, formatHourOnly } from "@/lib/date/format";
 import { useUserProfile } from "@/hooks/use-user-profile";
-
-const GROUP_COLORS: Record<string, string> = {
-  total: "#2f6fed",
-  positive: "#1a9d5c",
-  neutral: "#8a8f98",
-  negative: "#e0483e",
-  narrativa: "#2f6fed",
-  geral: "#9aa0ab",
-};
+import { colorForGroup } from "@/lib/chart-colors";
 
 const GROUP_LABELS: Record<string, string> = {
   total: "Total",
@@ -23,23 +15,6 @@ const GROUP_LABELS: Record<string, string> = {
   narrativa: "Narrativa",
   geral: "Volume geral",
 };
-
-// Paleta de fallback pra grupos fora do mapa fixo acima — usada por séries
-// dinâmicas (ex: um group por page_type em "Volume por plataforma" ou por
-// título de Pauta em "SOV por pauta ao longo do tempo", ambas 2026-07-25),
-// cujos nomes não são conhecidos de antemão. Hash determinístico simples
-// (mesma string sempre cai na mesma cor, estável entre re-renders).
-const FALLBACK_PALETTE = ["#2f6fed", "#1a9d5c", "#e0483e", "#f5a623", "#9b59b6", "#17a2b8", "#8a8f98", "#d4478e"];
-
-function hashGroupKey(key: string): number {
-  let hash = 0;
-  for (let i = 0; i < key.length; i++) hash = (hash * 31 + key.charCodeAt(i)) >>> 0;
-  return hash;
-}
-
-function colorForGroup(group: string): string {
-  return GROUP_COLORS[group] ?? FALLBACK_PALETTE[hashGroupKey(group) % FALLBACK_PALETTE.length];
-}
 
 // Largura usada só até o primeiro layout medir o container de verdade (ver
 // useLayoutEffect abaixo) — depois disso, `width` sempre reflete o

@@ -214,6 +214,29 @@ Mesmo público das demais páginas deste módulo.
   já criada sem esse grão). Ver `sql-aggregation.md` pro detalhamento —
   sem mudança de frontend, `TrendLineChart` já distingue hora/dia
   genericamente pelo formato do `bucket_date`.
+  ⚠️ **Continuava vazio mesmo depois desse fix — causa raiz real era em
+  `bw-sync`, não no SQL (2026-08-09, mesma sessão)**: `bw_query_metrics_hourly`
+  nunca gravou `total_mentions` de verdade pra nenhuma Narrativa/Pauta
+  (`category_id` não-nulo) — só a linha da Query inteira (`category_id is
+  null`) recebia esse campo; a função que grava por Narrativa
+  (`syncHourlyNetSentiment`) só escrevia `net_sentiment`. O SQL do gráfico
+  estava certo, o dado que ele lê nunca existiu. Corrigido em `bw-sync/index.ts`
+  (`syncHourlySentimentMetrics` ganhou um parâmetro `categoryId`,
+  `runHourlyMetricsStep` ganhou um loop throttled por Narrativa) — ver
+  `foundation/data-model.md`, `bw_query_metrics_hourly`, e `CLAUDE.md` pro
+  detalhamento completo.
+- **Dot de cor no card de Pauta** ("Share of Voice e sentimento por
+  pauta"): ✅ **Recolorido pra bater com a linha do gráfico (2026-08-09)**
+  — pedido do usuário: "pinte a bolinha que existe ao lado das pautas com
+  a cor do gráfico de linhas para facilitar a leitura." Antes o dot usava
+  `NetSentimentDot` (cor por sentimento); agora usa `colorForGroup(item.label)`
+  (`lib/chart-colors.ts`, extraída de `trend-line-chart.tsx` pra ser
+  reusada aqui) — a mesma função que colore cada série de "SOV por pauta
+  ao longo do tempo", então a cor do card sempre bate com a linha
+  correspondente no gráfico logo abaixo. Sentimento deixa de ter
+  representação visual neste card específico (só na tabela "Narrativas" e
+  no widget "Sentimento por pauta") — trade-off aceito, pedido explícito e
+  literal do usuário.
 - **Sentimento por pauta**: idêntico a "Sentimento por Narrativa" de
   `sentiment-analysis.md` — sem gap adicional, mesmo escopo de pautas.
 - **Risco por pauta** (matriz volume × negatividade × momentum × alcance ×

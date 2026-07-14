@@ -640,6 +640,30 @@ ver `ensureBootstrapSeed`/`isGrainStale` em `bw-sync/index.ts`.
 
 ### `bw_query_metrics_hourly`
 
+> ⚠️ **Bug real de captura corrigido (2026-08-09)** — desde que esta tabela
+> foi criada, `total_mentions` só era gravado pra `category_id is null`
+> (linha da Query inteira, via `syncHourlySentimentMetrics`); a única
+> function que gravava linhas com `category_id` preenchido
+> (`syncHourlyNetSentiment("categories", ...)`) só escrevia `net_sentiment`
+> — nunca `total_mentions`, que ficava preso no default `0` da coluna pra
+> sempre. Ou seja: **nenhuma linha desta tabela com `category_id` não-nulo
+> jamais teve um `total_mentions` real**, apesar da tabela/documentação
+> sempre terem descrito `category_id` como "mesmo padrão de
+> `bw_query_metrics_daily`" (que sim é populado por Narrativa). Achado ao
+> investigar por que "SOV por pauta ao longo do tempo"
+> (`intelligence-center/electoral-themes.md`) continuava vazio no modo
+> "Diário" mesmo depois do grão `hour` ser implementado em
+> `get_theme_sov_trend` — o SQL estava correto, o dado que ele lê nunca
+> existiu. `syncHourlySentimentMetrics` ganhou um parâmetro `categoryId`
+> opcional (mesmo padrão de `syncSentimentMetrics`, usado pelos grãos dia/
+> semana/mês desde sempre) e `runHourlyMetricsStep` (`bw-sync/index.ts`)
+> ganhou um loop throttled por Narrativa (round-robin por staleness, mesmo
+> padrão de `daily_metrics`, migration `20260809020000` pro helper SQL de
+> frescor) — ver `CLAUDE.md` pro detalhamento completo. Afeta qualquer
+> consumidor de `category_id` não-nulo nesta tabela, não só Pautas — ex:
+> `get_volume_trend`'s grão `hour` filtrado por Narrativa
+> (`/narratives/[id]` no modo "Diário").
+
 > ✅ **Adicionada 2026-07-13** — resolve a ⚠️ DECISÃO PENDENTE registrada em
 > `event-radar/detection-engine.md` ("as janelas de 'hora atual'/'últimas
 > 3h' exigem grão horário, mais fino que o diário oficial... não existe
