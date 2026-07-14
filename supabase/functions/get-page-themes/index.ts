@@ -283,7 +283,11 @@ type BlockKey =
 export const PAGE_BLOCKS: Record<PageKey, BlockKey[]> = {
   overview: ['metrics', 'breakdowns', 'trends', 'narratives', 'highlights', 'narrative_text'],
   narratives: ['narratives'],
-  narrative_detail: ['breakdowns', 'trends', 'authors', 'graph', 'narrative_text'],
+  // ✅ 'term_signals' adicionado 2026-07-14 (pedido do usuário: "termos/
+  // phrases mais citados" por Narrativa) — get_term_signals já suportava
+  // escopo por Narrativa via filters.narratives, só faltava o wiring aqui.
+  // Ver narratives-exploration.md, "Termos e frases mais citados".
+  narrative_detail: ['breakdowns', 'trends', 'authors', 'term_signals', 'graph', 'narrative_text'],
   sentiment: ['breakdowns', 'trends', 'highlights', 'term_signals', 'narrative_text'],
   platforms: ['breakdowns', 'trends', 'narrative_text'],
   themes: ['breakdowns', 'trends', 'narratives', 'authors', 'highlights', 'term_signals', 'narrative_text'],

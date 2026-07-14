@@ -10,7 +10,9 @@ import { WidgetCard } from "@/components/intelligence-center/widget-card";
 import { BreakdownPanel } from "@/components/intelligence-center/charts/breakdown-panel";
 import { TrendLineChart } from "@/components/intelligence-center/charts/trend-line-chart";
 import { AuthorsList } from "@/components/intelligence-center/authors-list";
+import { DisseminationStanceLists } from "@/components/intelligence-center/dissemination-stance-lists";
 import { DisseminationGraphPanel } from "@/components/intelligence-center/dissemination-graph";
+import { TermSignalsList } from "@/components/intelligence-center/term-signals-list";
 import { SentimentBadge, RiskBadge, TrendIndicator, MomentumLabel } from "@/components/intelligence-center/score-badges";
 import { KPI_TOOLTIPS } from "@/components/intelligence-center/metric-card";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -235,13 +237,23 @@ export function NarrativeDetailContent({
           simplificado". */}
       <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
         <WidgetCard title="Formação e propagação — principais disseminadores" status={status} onRetry={retry}>
-          <AuthorsList authors={envelope?.authors ?? []} />
+          <div className="flex flex-col gap-4">
+            <AuthorsList authors={envelope?.authors ?? []} />
+            {(envelope?.authors ?? []).length > 0 && <DisseminationStanceLists authors={envelope?.authors ?? []} />}
+          </div>
         </WidgetCard>
 
         <WidgetCard title="Grafo de disseminação simplificado" status={status} onRetry={retry}>
           <DisseminationGraphPanel graph={envelope?.graph ?? null} />
         </WidgetCard>
       </div>
+
+      <WidgetCard title="Termos e frases mais citados" status={status} onRetry={retry}>
+        <TermSignalsList
+          signals={envelope?.term_signals ?? []}
+          emptyMessage="Nenhum termo/frase em destaque para esta Narrativa neste período."
+        />
+      </WidgetCard>
 
       <WidgetCard title="Menções relevantes" status={status} onRetry={retry}>
         <EmptyState message="Lista de menções relevantes ainda não implementada — sem bloco correspondente no envelope atual." />

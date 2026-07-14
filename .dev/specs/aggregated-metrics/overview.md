@@ -2,7 +2,7 @@
 tipo: module-overview
 módulo: aggregated-metrics
 status: implementado
-atualizado: 2026-07-25
+atualizado: 2026-08-03
 ---
 
 > ✅ **Corrigido nesta revisão (2026-07-25)**: este arquivo e as 6 specs
@@ -14,10 +14,23 @@ atualizado: 2026-07-25
 > pendente foram fechados: termo de interação em `risk_score` (decisão
 > #3), breakdown de região, trend de plataforma/pauta ao longo do tempo,
 > cache de página (TTL) e a Camada 0 de `ai-synthesis` — ver `_pending.md`
-> pros detalhes de cada um. **Únicos gaps reais que continuam pendentes**:
-> `get_active_highlights` (bloco `highlights`, depende de `event-radar`,
-> Sprint 3 ainda `rascunho`) e `page_narrative_synthesis` (Camada 1 de
-> `ai-synthesis`, mesma dependência).
+> pros detalhes de cada um.
+>
+> ✅ **Atualizado (2026-08-03)** — o parágrafo acima ("Únicos gaps reais
+> que continuam pendentes: `get_active_highlights`... e
+> `page_narrative_synthesis`...") ficou desatualizado e foi removido: os
+> dois foram implementados em 2026-08-02 (`event-radar/
+> fluxo-aggregated-metrics.md`, "Fase B") — `get_active_highlights` é a
+> function real por trás do bloco `highlights`, e `page_narrative_synthesis`
+> é a tabela da Camada 1 de `ai-synthesis`. As 10/10 functions SQL do
+> módulo estão completas; `ai-synthesis` tem Camadas 0 e 1 implementadas
+> (Camada 2 continua não implementada por desenho — exceção que precisa de
+> justificativa por página, não um gap, ver `ai-synthesis.md`). Achado de
+> passagem, corrigido na mesma revisão: a linha de `edge-functions-per-page`
+> na tabela abaixo ainda dizia "cache de página com TTL" — `page_cache`
+> está **desabilitado** desde a investigação de `/narratives` retornando
+> vazio (ver `CLAUDE.md`, "`page_cache` desabilitado"), não só "sem
+> invalidação manual".
 
 # Módulo: Métricas Agregadas (camada de síntese para frontend + IA)
 
@@ -52,10 +65,10 @@ prompt da IA. É um único contrato (`envelope`), reaproveitado nos dois consumo
 | Funcionalidade              | Descrição resumida                                              | Status   | Spec                                                              |
 |------------------------------|--------------------------------------------------------------------|----------|--------------------------------------------------------------------|
 | `standard-json-envelope`     | Contrato único de resposta usado por todas as páginas            | implementado | [standard-json-envelope.md](standard-json-envelope.md)                |
-| `sql-aggregation`            | Views/functions Postgres que calculam cada bloco atomicamente    | implementado — só `get_active_highlights` pendente (depende de `event-radar`) | [sql-aggregation.md](sql-aggregation.md)                               |
+| `sql-aggregation`            | Views/functions Postgres que calculam cada bloco atomicamente    | implementado — 10/10 functions, incl. `get_active_highlights` (2026-08-02) | [sql-aggregation.md](sql-aggregation.md)                               |
 | `service-layer-aggregation`  | Camada TS que monta o envelope a partir dos blocos SQL           | implementado | [service-layer-aggregation.md](service-layer-aggregation.md)           |
-| `edge-functions-per-page`    | Uma Edge Function fina por página, só orquestra os blocos        | implementado — cache de página com TTL (sem invalidação por sync/refresh manual) | [edge-functions-per-page.md](edge-functions-per-page.md)       |
-| `ai-synthesis`               | Envio do envelope para a IA gerar o texto explicativo da página  | implementado — só a Camada 0 (Camada 1/`page_narrative_synthesis` depende de `event-radar`) | [ai-synthesis.md](ai-synthesis.md)                                     |
+| `edge-functions-per-page`    | Uma Edge Function fina por página, só orquestra os blocos        | implementado — `page_cache` (TTL) desabilitado desde a investigação de `/narratives` vazio, ver `CLAUDE.md` | [edge-functions-per-page.md](edge-functions-per-page.md)       |
+| `ai-synthesis`               | Envio do envelope para a IA gerar o texto explicativo da página  | implementado — Camadas 0 e 1 (Camada 2 não implementada por desenho, exceção por página) | [ai-synthesis.md](ai-synthesis.md)                                     |
 
 ## Dependências
 

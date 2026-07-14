@@ -3786,6 +3786,79 @@ sempre listar as colunas por nome, nunca `alias.*`, quando outra fonte na
 mesma CTE também tiver uma coluna `id` (ou qualquer nome genérico
 repetido).
 
+### Detalhe de Narrativa — detratores/impulsionadores positivos + termos/frases mais citados (2026-07-14)
+
+User request: "Para cada narrativa é necessário identificar Formação e
+propagação — principais disseminadores. Os detratores e os impulsionadores
+positivos, se houver. Além de identificar as phases/terms mais citados em
+cada narrativa. Confira se na documentação está OK, se na edge functions
+bw-sync está trazendo os dados corretamente e estrutura essas informações
+nos detalhes da narrativa."
+
+**Auditoria feita antes de qualquer código**: "principais disseminadores"
+já existia (reusa `get_authors_ranking`/`AuthorsList`, escopado à
+Narrativa via `filters.narratives`) — nenhum bug. **"Detratores"/
+"impulsionadores positivos" não existiam em lugar nenhum do projeto**
+(zero ocorrências em specs ou código, grep confirmado) — nenhuma
+⚠️ DECISÃO PENDENTE registrada, porque o conceito nunca tinha sido
+especificado, não porque foi adiado. **Termos/frases mais citados**:
+`get_term_signals` já existia e já suportava escopo por Narrativa
+(`filter_category_ids`), mas nunca era chamada nesta página —
+`PAGE_BLOCKS.narrative_detail` nunca incluía `'term_signals'` (gap de
+wiring puro, não de dado).
+
+**bw-sync conferido, sem bug encontrado** nos dois pipelines relevantes:
+`syncTopicsData()`/`syncTopAuthors()` já iteram por `categoryTargets`
+(`[null, ...narrativeCategoryIds]`, `runTopicsStep`/`runTopAuthorsStep`)
+— ou seja, `bw_query_topics`/`bw_query_top_authors` já são sincronizados
+**por Narrativa**, não só pra Query inteira, confirmando que
+`get_term_signals`/`get_authors_ranking` escopados por
+`filters.narratives` recebem dado real. **Limitação real confirmada, não
+um bug**: `runAuthorEnrichmentStep()` (fonte de
+`AuthorRow.sentiment_positive/neutral/negative`, via
+`bw_query_author_topics`) só enriquece os top 10 autores por volume da
+**Query inteira** (`category_id is null`), nunca por Narrativa
+especificamente — então "Detratores"/"Impulsionadores positivos" só
+conseguem classificar autores que estão simultaneamente nesse top 10
+global e no ranking da Narrativa aberta. Documentado explicitamente na
+spec e na UI, não escondido — alinhado com o próprio pedido do usuário
+("se houver").
+
+**Implementação, 100% presentation-layer + 1 linha de wiring por Edge
+Function** (nenhuma migration, nenhum SQL novo — ambos os dados já
+existiam, só faltava pedir/derivar):
+- `PAGE_BLOCKS.narrative_detail` ganhou `'term_signals'` (canônico +
+  todas as 7 Edge Functions deployadas, Princípio técnico 5 — verificado
+  que as 8 cópias ficaram idênticas nessa linha).
+- Novo `components/intelligence-center/dissemination-stance-lists.tsx`
+  (`DisseminationStanceLists`) — deriva Detratores/Impulsionadores
+  positivos no client, **sem chamada de rede adicional**, a partir do
+  mesmo bloco `authors` já buscado pra "principais disseminadores":
+  filtra por `dominantSentiment()` (helper já existente em
+  `author-color.ts`, mesma lógica do badge de sentimento de
+  `AuthorsList`) === `'negative'`/`'positive'`, ordena por alcance, top 5
+  cada. Só renderiza quando há pelo menos 1 autor no ranking da
+  Narrativa (evita duplicar o `<EmptyState/>` que `AuthorsList` já mostra
+  quando o ranking inteiro está vazio).
+- "Termos e frases mais citados": novo `WidgetCard` em
+  `narrative-detail-content.tsx` reusando `TermSignalsList` (mesma nuvem
+  de palavras de "Termos emergentes" em `/themes`) sobre
+  `envelope.term_signals` — mistura `words`/`phrases`/`hashtags`/etc.
+  (mesma nota já registrada em `_pending.md` gap #24 pras outras páginas
+  que usam este bloco, não filtra só `topic_type = 'phrases'`).
+- Specs atualizadas: `narratives-exploration.md` ("Formação e
+  propagação" reescrita pra descrever o `get_authors_ranking` real —
+  antes citava incorretamente `bw_query_top_authors` direto — + as 2
+  novas subseções; nova seção "Termos e frases mais citados"),
+  `block-mapping-per-page.md` (célula `term_signals`×`narrative_detail`).
+
+**Verificação**: `npx tsc --noEmit` e `npm run build` passam limpos (20
+rotas, mesmo route table de antes — nenhuma rota nova). Sem migration
+nesta sessão, então sem a limitação recorrente de "não executado contra
+um banco real" que se aplica às demais entradas deste arquivo — todo o
+dado usado (authors/term_signals) já vinha de functions SQL existentes e
+já testadas em produção por outras páginas.
+
 ### 7 pedidos pontuais de UI/dado — Narrativas, Sentimento, Autores e Influenciadores (2026-07-25)
 
 User request, 7 items in one message: (1) rename "Top 3 Narrativas" →

@@ -3,7 +3,7 @@ tipo: feature-spec
 módulo: aggregated-metrics
 funcionalidade: ai-synthesis
 status: implementado
-atualizado: 2026-08-02
+atualizado: 2026-08-03
 ---
 
 # Síntese Narrativa da Página (`narrative_text`)
@@ -58,6 +58,39 @@ atualizado: 2026-08-02
 > como está, nunca recomposta, mesmo num período aberto; documentado como
 > comportamento atual, não um bug.
 
+> ✅ **Revisão de coerência (2026-08-03)** — pedido do usuário: "verifique
+> se a documentação de ai-synthesis está coerente e concisa com o restante
+> que foi desenvolvido." Achados reais, corrigidos nesta revisão: (1) a
+> seção "Camada 1" e o "Fluxo principal" abaixo ainda descreviam uma
+> branch condicional em `is_final` (linha `is_final = false` dispararia
+> recomposição assíncrona) que **nunca foi implementada** — o bloco acima
+> (2026-08-02) já corrigia essa mesma afirmação, mas o corpo do spec não
+> tinha sido atualizado em conjunto e continuava contradizendo o próprio
+> blockquote; reescrito pra descrever só o comportamento real (linha
+> existente é sempre devolvida como está, sem exceção). (2) `overview.md`
+> (módulo pai) ainda listava `get_active_highlights`/Camada 1 como gaps
+> pendentes — ambos implementados em 2026-08-02, corrigido junto. Achados
+> menores, documentados inline nas seções correspondentes: o limite de 500
+> caracteres da composição nunca estava escrito nesta spec (só existia no
+> código); as páginas `narrative_detail`/`Plataformas` têm `narrative_text`
+> sem `highlights` no próprio `PAGE_BLOCKS`, então nunca alcançam a Camada
+> 1 (sempre Camada 0, sub-caso "0 highlights") — não documentado antes;
+> `/reports` está entre as páginas cujo `PAGE_BLOCKS` habilita a Camada 1,
+> mas `get-page-reports` ainda não existe (`/reports` é um `ComingSoonPage`
+> sem backend) — na prática só 3 páginas alcançam a Camada 1 hoje
+> (`Visão Geral`/`Sentimento`/`Pautas Eleitorais`), não 4.
+>
+> **Nada de código foi alterado** — a implementação já batia com o
+> blockquote de 2026-08-02 acima; a incoerência era só entre partes
+> diferentes do texto deste mesmo arquivo. Os dois gaps reais que
+> permanecem (os 2 gatilhos de invalidação de período aberto, Camada 2)
+> continuam deliberadamente não implementados: o primeiro é uma decisão já
+> registrada e adiada em `_pending.md` #21 ("revisitar se isso passar a
+> incomodar na prática"), e o segundo é opt-in por desenho (exige
+> justificativa por página antes de ser construído, "As três camadas"
+> abaixo) — nenhuma página registrou essa justificativa ainda, então não
+> há nada a construir por enquanto.
+
 ## Objetivo
 
 Preencher `narrative_text` do envelope com o texto explicativo que aparece nas páginas (ex: "O
@@ -86,14 +119,27 @@ por template determinístico, sem chamar IA. Exemplo de template:
 
 ### Camada 1 — Composição em lote, armazenada em banco (páginas com múltiplos highlights)
 
-Quando a página tem 2+ highlights relevantes no escopo (`Visão Geral`, `Sentimento`,
-`Pautas Eleitorais` e `Relatórios` — as 4 páginas cujo `PAGE_BLOCKS` inclui `highlights` **e**
-`narrative_text` juntos; `Alertas` também tem `highlights` mas não `narrative_text`, então nunca
-aciona esta camada), o sistema faz **uma única chamada de composição** que recebe os
-`summary`/`explanation` já existentes desses highlights (não os dados brutos de novo) e devolve
-um parágrafo coeso amarrando os eventos. Esta chamada:
+Quando a página tem 2+ highlights relevantes no escopo, o sistema faz **uma única chamada de
+composição** que recebe os `summary`/`explanation` já existentes desses highlights (não os dados
+brutos de novo) e devolve um parágrafo coeso amarrando os eventos. Hoje isso só é alcançável em
+`Visão Geral`, `Sentimento` e `Pautas Eleitorais` — as páginas cujo `PAGE_BLOCKS` inclui
+`highlights` **e** `narrative_text` juntos **e** já têm uma Edge Function `get-page-*` deployada.
+`PAGE_BLOCKS.reports` também combina os dois blocos, mas `get-page-reports` ainda não existe
+(`/reports` é hoje um `ComingSoonPage` sem backend, Sprint 4/`executive-reports`) — a Camada 1
+está pronta pra essa página, só inalcançável até o backend existir. `Alertas` tem `highlights` mas
+não `narrative_text`, então nunca aciona esta camada mesmo quando `/alerts` ganhar backend.
+⚠️ **`narrative_detail` e `Plataformas`** têm `narrative_text` **sem** `highlights` no próprio
+`PAGE_BLOCKS` — `highlights` nem é buscado pra elas, então nessas duas páginas `narrative_text` é
+sempre resolvido pela Camada 0, sub-caso "0 highlights" (nunca "1 highlight", que depende da
+página ter buscado a lista de destaques em primeiro lugar) — nunca chegam à Camada 1.
+
+Esta chamada:
 
 - NÃO analisa dados — só reescreve/conecta textos que já existem.
+- ✅ **Limite de 500 caracteres no texto final** — instruído no próprio prompt de sistema
+  (`NARRATIVE_SYNTHESIS_SYSTEM_PROMPT`) e reforçado no código com `.slice(0, 500)` como garantia
+  adicional (diferente de `event-radar-agent-orchestrator`, que usa saída forçada via JSON
+  Schema — aqui é texto livre, então o corte no código é o que garante o limite de fato).
 - ✅ **Resolvido (2026-07-13)**: roda **sempre de forma assíncrona** (não mais uma
   recomendação, é a decisão final) — a página carrega com `narrative_text: null` ou com o texto
   da Camada 0 como fallback imediato, e atualiza quando a composição terminar.
@@ -105,12 +151,18 @@ um parágrafo coeso amarrando os eventos. Esta chamada:
   `(organization_id, page, period_start, period_end, filters_hash)`:
   - Período **fechado** (`period_end < hoje`, em `America/Sao_Paulo`): uma vez gerado, o texto é
     **permanente** — nunca mais chama IA pra essa combinação exata, mesmo que o cache do
-    envelope (TTL 5min) expire e recarregue os blocos numéricos. Isso é o que evita "pesquisar
-    de novo usando IA" pra um período que já passou.
-  - Período **aberto** (`period_end >= hoje`, ex: "últimos 7 dias" ainda em andamento): pode ser
-    regenerado, mas só pelos mesmos gatilhos que já invalidam o cache do envelope (sync da
-    Brandwatch concluiu um ciclo, ou usuário clicou "Atualizar dados") — nunca por carregamento
-    de página nem por expiração de TTL sozinha.
+    envelope (TTL 5min, hoje desabilitado — ver `edge-functions-per-page.md`) expire e recarregue
+    os blocos numéricos. Isso é o que evita "pesquisar de novo usando IA" pra um período que já
+    passou.
+  - Período **aberto** (`period_end >= hoje`, ex: "últimos 7 dias" ainda em andamento): a
+    intenção original era permitir regeneração pelos mesmos gatilhos que invalidariam o cache do
+    envelope (sync da Brandwatch concluiu um ciclo, ou usuário clicou "Atualizar dados"). ⚠️ **Na
+    implementação real, isso ainda não roda**: nenhum dos dois gatilhos existe no produto hoje
+    (mesmo gap que já bloqueia a invalidação do `page_cache`, `_pending.md` #21) — então, na
+    prática, uma linha já existente em `page_narrative_synthesis` é **sempre devolvida como
+    está**, período aberto ou fechado, nunca recomposta (ver "Fluxo principal" abaixo). `is_final`
+    continua sendo gravado corretamente (`period_end < hoje` no momento da geração); só não tem
+    nenhum consumidor lendo essa diferença ainda.
 
 ### Camada 2 — Nova análise via IA (exceção, precisa de justificativa)
 
@@ -129,12 +181,14 @@ deve registrar no spec da página por que a Camada 0 ou 1 não foram suficientes
      determinístico, custa nada recalcular a cada vez).
    - 2+ → Camada 1: busca `page_narrative_synthesis` pela chave exata
      `(organization_id, page, period_start, period_end, filters_hash)`.
-     - Linha existe e `is_final = true` → retorna o texto armazenado direto, **sem chamar IA**.
-     - Linha existe e `is_final = false` → usa como fallback imediato; dispara recomposição
-       assíncrona só se algum gatilho de invalidação disparou desde `generated_at` (sync
-       concluído ou "Atualizar dados").
-     - Linha não existe → dispara a composição assíncrona (fallback imediato é a Camada 0
-       enquanto isso), grava o resultado ao terminar.
+     - Linha existe → retorna o texto armazenado direto, **sempre, sem chamar IA** — mesmo se
+       `is_final = false` (período ainda aberto). ⚠️ Não existe hoje nenhum gatilho que force uma
+       recomposição de uma linha já existente (ver "Camada 1" acima e `_pending.md` #21) — essa
+       branch é aspiracional, documentada porque a tabela/coluna `is_final` já está pronta pra
+       ela, mas nenhum código a lê ainda.
+     - Linha não existe → fallback imediato é a Camada 0 (enquanto a composição não termina),
+       dispara a composição assíncrona em background (`scheduleBackground`), grava o resultado
+       ao terminar (só em caso de sucesso — ver "Fluxos alternativos e erros").
 3. Ao gravar, `is_final` é calculado como `period_end < current_date` (timezone
    `America/Sao_Paulo`, mesmo padrão do resto do produto) — período fechado vira permanente.
 4. `narrative_text` é copiado para o envelope cacheado (mesmo TTL de sempre) a partir do que
@@ -146,7 +200,7 @@ deve registrar no spec da página por que a Camada 0 ou 1 não foram suficientes
 | Situação                                          | Comportamento esperado                                         |
 |-----------------------------------------------------|--------------------------------------------------------------------|
 | Chamada de composição (Camada 1) falha              | `narrative_text` permanece com o fallback da Camada 0, nunca `null` sem explicação; nada é gravado em `page_narrative_synthesis` (só grava em caso de sucesso) |
-| Highlights mudam pra um período **aberto** já com linha em `page_narrative_synthesis` | Regenera só quando um gatilho de invalidação disparar (sync concluído/"Atualizar dados") — `UPDATE` na mesma linha, `generated_at` atualizado |
+| Highlights mudam pra um período **aberto** já com linha em `page_narrative_synthesis` | ⚠️ **Hoje não regenera** — o texto já gravado é devolvido como está, mesma limitação do "Fluxo principal" acima. A intenção original (regenerar via `UPDATE` quando sync concluir/usuário clicar "Atualizar dados") depende dos gatilhos de `_pending.md` #21, que não existem no produto ainda. Comportamento atual, não um bug — revisitar se isso passar a incomodar na prática |
 | Highlights mudam pra um período **fechado** já com `is_final = true` | Nunca regenera — período fechado é permanente por definição, mesmo que dado novo chegasse atrasado (caso raro, mesma aceitação de lag já usada em outras partes do produto) |
 | Página sem highlights e sem dado suficiente (ex: organização nova) | Template da Camada 0 deve indicar claramente ausência de dados, nunca inventar tendência |
 

@@ -195,10 +195,38 @@ já aceito para `filtrosOpen` no header.
   inteira) — ambos agregados oficiais, sem cálculo local.
 - **Formação e propagação**: texto (ver "Resumo executivo" acima — mesmo
   tratamento: campo reservado no frontend, lógica de preenchimento é
-  backend futuro) + lista de "principais disseminadores", de
-  `bw_query_top_authors` filtrado por `category_id = <narrativa>` (colunas
-  `author`, `reach_estimate`, `account_type`/`platform_stats` para o "tipo"
-  exibido — ex: "Página de notícias", "Veículo").
+  backend futuro) + lista de "principais disseminadores". ✅ **Implementado
+  (2026-07-14)**: não lê `bw_query_top_authors` direto — reusa
+  `get_authors_ranking` (o mesmo ranking de autores de `/platforms`/
+  `/themes`/`/authors`), escopado à Narrativa via `filters.narratives`
+  (`effectiveFilters`, `service-layer-aggregation.md`), renderizado pelo
+  componente `AuthorsList` compartilhado (`entity_cargo`/`account_type`
+  como "tipo", `reach`/`engagement`/`mentions`, badge "Influente"). Não é
+  um ranking próprio de "quem propagou a Narrativa" — é o ranking geral de
+  autores já filtrado a essa Narrativa, ordenado por padrão por alcance.
+  - **Detratores / Impulsionadores positivos**: ✅ **Implementado
+    (2026-07-14)**. Derivado no frontend, sem chamada de rede adicional,
+    a partir do mesmo bloco `authors` já buscado acima: entre os autores
+    listados como disseminadores da Narrativa, "Detratores" = sentimento
+    dominante negativo, "Impulsionadores positivos" = sentimento dominante
+    positivo (`AuthorRow.sentiment_positive/neutral/negative`,
+    `dominantSentiment()` em `author-color.ts` — mesma lógica já usada
+    pelo badge de sentimento da coluna "Sentimento" de `AuthorsList`), cada
+    lista ordenada por alcance, top 5. ⚠️ **Limitação real de cobertura,
+    documentada explicitamente na UI**: `sentiment_positive/neutral/negative`
+    só é populado pelo `bw-sync` para os top 10 autores por volume **da
+    Query inteira** (`runAuthorEnrichmentStep`/`bw_query_author_topics`,
+    ver `foundation/data-model.md` §5) — não há enriquecimento de
+    sentimento por autor específico por Narrativa. Na prática, isso
+    significa que só autores que estão simultaneamente (a) entre os top 10
+    globais por volume e (b) presentes no ranking desta Narrativa recebem
+    uma classificação — para muitas Narrativas, uma ou ambas as listas
+    podem vir vazias (`<EmptyState/>` textual, nunca um valor inventado).
+    Alinhado com o pedido original ("detratores e impulsionadores
+    positivos, **se houver**") — a possibilidade de lista vazia é esperada,
+    não um bug. Widen para enriquecimento por Narrativa é um gap real de
+    engenharia (custo em orçamento de chamadas Brandwatch), não decidido
+    aqui — ver `_pending.md`.
 - **Grafo de disseminação simplificado**: ✅ **Decidido (2026-07-12)**:
   construir uma versão simplificada já na Sprint 2, sem esperar o módulo
   `propagation-graph` (Sprint 3, rollup materializado completo). Fonte de
@@ -219,6 +247,20 @@ já aceito para `filtrosOpen` no header.
   Migrar para o rollup do `propagation-graph` quando esse módulo existir,
   sem mudar a semântica pro usuário (mesma rotulagem de "amostra" até lá se
   o rollup completo não cobrir 100% do histórico ainda).
+- **Termos e frases mais citados**: ✅ **Implementado (2026-07-14)**. Bloco
+  `term_signals` (`get_term_signals`, já existente e usado por
+  `/sentiment`/`/themes`) adicionado a `PAGE_BLOCKS.narrative_detail` —
+  antes disponível como dado (`bw_query_topics` já é sincronizado por
+  `categoryTarget`, incluindo cada Narrativa, ver `sync-brandwatch.md`)
+  mas nunca pedido por esta página. Escopado à Narrativa automaticamente
+  via `filters.narratives` (mesmo mecanismo de "principais
+  disseminadores" acima — `get_term_signals` já suporta
+  `filter_category_ids`, não precisou de mudança em SQL). Renderizado
+  como nuvem de palavras (`TermSignalsList`, mesmo componente de
+  "Termos emergentes" em `/themes`) — mistura `words`/`phrases`/
+  `hashtags`/etc. sem filtrar só `topic_type = 'phrases'` (mesma nota já
+  registrada em `_pending.md` gap #24 para as demais páginas que usam
+  este bloco).
 - **Menções relevantes**: lista via `narrative_matched_mentions(narrative_id)`
   (função já definida em `foundation/data-model.md`) ordenada por
   `reach_estimate`/`impact` — uso de dado por mention individual (não
