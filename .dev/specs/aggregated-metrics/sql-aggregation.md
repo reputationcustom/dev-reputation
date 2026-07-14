@@ -228,7 +228,9 @@ observado — **sem `query_id`** (revertido 2026-07-13, ver nota abaixo).
 > números. `risk_score`'s `sentiment_risk` herda a correção automaticamente
 > (lê `sentiment_labeled.net_sentiment`, sem mudança própria).
 >
-> ✅ **Correção #3 (2026-07-14, migration `20260731050000`)**: a promessa
+> ✅ **Correção #3 (2026-07-14, migration `20260802030000` — renomeada de
+> `20260731050000` em 2026-08-02 após colidir com outro arquivo de
+> migration não relacionado do mesmo timestamp, ver `CLAUDE.md`)**: a promessa
 > de "por construção nunca mais discorda da barra" da Correção #2 ainda
 > tinha um buraco real, achado via screenshot novo (cards "Direita"/
 > "Esquerda": `neu` era o balde MAIOR — 44,2%/47,7% — mas o rótulo mostrava

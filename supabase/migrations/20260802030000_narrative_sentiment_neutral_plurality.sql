@@ -146,7 +146,7 @@ as $$
       and metric_date between (select prev_start from prev_range) and p_period_end
     group by narrative_id
   ),
-  -- ✅ 20260731050000: carrega os 3 baldes crus junto com o skew, pra
+  -- ✅ 20260802030000: carrega os 3 baldes crus junto com o skew, pra
   -- `sentiment_labeled` decidir se Neutro é o balde predominante antes de
   -- aplicar o skew positivo/negativo.
   sentiment_final as (
@@ -162,7 +162,7 @@ as $$
       end as net_sentiment_skew
     from period_agg
   ),
-  -- ✅ 20260731050000: quando Neutro é o balde predominante (>= positivo E
+  -- ✅ 20260802030000: quando Neutro é o balde predominante (>= positivo E
   -- >= negativo, com alguma menção neutra de fato), o rótulo é sempre
   -- 'neutral' e o score reportado é 0 — nunca deixa uma pequena diferença
   -- entre positivo/negativo (as duas minorias) decidir o rótulo quando a
@@ -349,4 +349,4 @@ as $$
 $$;
 
 comment on function get_narratives_table(uuid, date, date, jsonb, uuid, text, timestamptz) is
-  'Bloco `narratives` do envelope. ÚNICO overload desta function (20260731040000 consolidou dois overloads conflitantes que causavam narratives:[] via PostgREST). p_scope: null = sem filtro extra, ''roots'' = só Category de topo, ''leaves'' = só Subcategory de qualquer Category, ''pautas'' = só Subcategory cuja Category-pai é a Category raiz "Pautas". p_reference_at (default now()): ancora o cálculo de Tendência (regressão de 14 dias) numa data específica — usado por get_communication_impact. risk_score tem um termo de interação: a contribuição conjunta de momentum_score+trend_score é amortecida (piso 50%) quando sentiment_risk é baixo. net_sentiment/sentiment_label (correção 20260731050000): quando o balde Neutro é predominante (>= positivo e >= negativo), o rótulo é sempre ''neutral'' e o score reportado é 0 — nunca deixa uma diferença pequena entre as MINORIAS positivo/negativo decidir o rótulo quando a maioria das menções não tem sinal algum; só quando Neutro não é predominante o skew (positivo-negativo)/(positivo+negativo) decide o rótulo nas 7 faixas de sempre. category_label = nome da Category-pai de bw_categories; para uma linha de escopo ''roots'' (sem pai), cai no próprio nome da Category.';
+  'Bloco `narratives` do envelope. ÚNICO overload desta function (20260731040000 consolidou dois overloads conflitantes que causavam narratives:[] via PostgREST). p_scope: null = sem filtro extra, ''roots'' = só Category de topo, ''leaves'' = só Subcategory de qualquer Category, ''pautas'' = só Subcategory cuja Category-pai é a Category raiz "Pautas". p_reference_at (default now()): ancora o cálculo de Tendência (regressão de 14 dias) numa data específica — usado por get_communication_impact. risk_score tem um termo de interação: a contribuição conjunta de momentum_score+trend_score é amortecida (piso 50%) quando sentiment_risk é baixo. net_sentiment/sentiment_label (correção 20260802030000): quando o balde Neutro é predominante (>= positivo e >= negativo), o rótulo é sempre ''neutral'' e o score reportado é 0 — nunca deixa uma diferença pequena entre as MINORIAS positivo/negativo decidir o rótulo quando a maioria das menções não tem sinal algum; só quando Neutro não é predominante o skew (positivo-negativo)/(positivo+negativo) decide o rótulo nas 7 faixas de sempre. category_label = nome da Category-pai de bw_categories; para uma linha de escopo ''roots'' (sem pai), cai no próprio nome da Category.';

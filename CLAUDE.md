@@ -233,6 +233,31 @@ These apply project-wide, to every sprint (from `.dev/specs/_index.md`):
      that same version, indefinitely, blocking every new migration queued
      behind it (real incident, 2026-08-02 — see
      "`.github/workflows/deploy.yaml`" above).
+   - **Never pick a new migration's timestamp "from memory" — always
+     check the actual state of the directory right before naming the
+     file.** `supabase_migrations.schema_migrations.version` is a
+     primary key — if two different migrations (written in different
+     sessions/agents, possibly in parallel) happen to use the same
+     timestamp, whichever reaches the remote database second can never
+     be applied (collides with the first one's row), and `supabase
+     migration repair` **does not fix this** — repair only
+     confirms/updates whatever row already exists for that version, it
+     can't make room for a second, different migration under the same
+     number. Distinguishing symptom (different from a concurrent `db
+     push` race, which the `concurrency` guard above already prevents):
+     the same "duplicate key... schema_migrations_pkey" **repeats
+     identically after every repair attempt**, never resolving on its
+     own — if that happens, the first move is `ls supabase/migrations |
+     sort | tail` looking for **two files sharing the same timestamp
+     prefix**, not assuming it's just another race. Real find this
+     session (2026-08-02): `20260731050000_narrative_sentiment_neutral_
+     plurality.sql` collided with an unrelated `20260731050000_entities_
+     cargo_partido_ideologia.sql` from parallel work on the `entities`
+     module — fixed by renaming the file (`git mv`, preserves history)
+     to a free timestamp later than anything else on disk. Always run
+     `ls supabase/migrations | sort | tail` (or a fresh `git pull`)
+     immediately before naming a new file — never trust "today's date"
+     from memory.
 
 ## Deploy (Hostinger) — global rules
 
@@ -4776,8 +4801,13 @@ dos 2 bugs de sentimento já corrigidos em 2026-07-25 (janela de tempo
 divergente, depois duas fontes divergentes) — este é um terceiro
 problema, novo: a fórmula certa aplicada ao par errado de categorias.
 
-Fixed na migration `20260731050000` (mesma assinatura de
-`20260731040000`, só `sentiment_final`/`sentiment_labeled` mudam):
+Fixed na migration `20260802030000` (originalmente escrita/numerada como
+`20260731050000` — renomeada depois que um `supabase db push` real expôs
+uma colisão de timestamp com outro arquivo de migration não relacionado,
+`20260731050000_entities_cargo_partido_ideologia.sql`, escrito em paralelo
+por outro trabalho no módulo `entities`; ver "Colisão de timestamp entre
+migrations..." logo abaixo) — mesma assinatura de `20260731040000`, só
+`sentiment_final`/`sentiment_labeled` mudam:
 `sentiment_label` agora checa primeiro se Neutro é o balde predominante
 (`>=` positivo E `>=` negativo, com alguma menção neutra de verdade) — se
 for, o rótulo é sempre `'neutral'` e o `net_sentiment` reportado é `0`
@@ -4903,6 +4933,61 @@ navegável, diferente dos outros 3 tipos (sempre têm uma URL real por
 trás). Todos abrem em nova aba. Spec atualizada em
 `intelligence-center/authors-and-influencers.md`. `npx tsc --noEmit`
 limpo.
+
+### Colisão de timestamp entre migrations escritas em paralelo — `20260731050000` renomeada (2026-08-02)
+
+Real incident, found while debugging why the `concurrency`/self-healing
+fix to `deploy.yaml` (see above) kept failing identically on every retry
+instead of resolving: `supabase migration repair --status applied
+20260731050000` reported success every single time, yet the very next
+`supabase db push` still listed `20260731050000_narrative_sentiment_
+neutral_plurality.sql` as pending and failed on the exact same
+`duplicate key ... schema_migrations_pkey` error — 5 times in a row,
+looping without ever converging. That ruled out the concurrency-race
+theory this fix was built for (a real race would resolve after one
+repair): `supabase/migrations/` had **two different files sharing the
+same version prefix**, `20260731050000` — this session's
+`narrative_sentiment_neutral_plurality.sql` and an unrelated
+`entities_cargo_partido_ideologia.sql` written independently by other
+parallel work on the `entities` module in this same repo (this project
+has had multiple sessions/agents committing to it concurrently, per
+several `supabase/functions*`/spec files showing up modified by "the
+user or a linter" throughout recent sessions in this file). Whichever of
+the two reached the remote database first claimed that version number in
+`supabase_migrations.schema_migrations` (`version` is the primary key) —
+`migration repair` just re-confirms whichever row is already sitting on
+that version, it can't make room for a *second*, differently-named
+migration under the same version number. That's why every retry looped
+identically instead of ever succeeding: the file being pushed
+(`narrative_sentiment_neutral_plurality.sql`) was never the one recorded
+under that version, so `db push` kept trying to insert it and kept
+colliding with the other migration's row.
+
+**Fix**: renamed the file to a free version number,
+`20260802030000_narrative_sentiment_neutral_plurality.sql` (`git mv`,
+preserves history) — same content, only the timestamp changed, since a
+brand-new, never-before-used version number can't collide with anything.
+Updated its own internal self-reference comments and the `comment on
+function` string, plus every doc citing the old version
+(`_pending.md` gap #35, `sql-aggregation.md`'s "Correção #3", the
+paragraph just above this one) to point at `20260802030000` instead.
+`20260731050000_entities_cargo_partido_ideologia.sql` (the other,
+unrelated file occupying that same original number) was left completely
+untouched — not this session's migration, not this session's to rename.
+
+**✅ Recommendation added to prevent recurrence** — see `.dev/specs/
+_index.md`, Principle 7 ("Migration hygiene"), new bullet: **always check
+`ls supabase/migrations/ | sort | tail` (or `git status`/`git pull`
+right before writing a new migration) for the exact timestamp about to be
+used, and never assume a timestamp is free just because it looks like
+"now."** In a repo where more than one session/agent may be adding
+migrations around the same time, two independently-chosen timestamps can
+legitimately collide (both picked "the current date + 000000" without
+seeing each other's uncommitted or just-committed work) — this is not
+hypothetical, it happened for real this session. When in doubt, pick a
+timestamp clearly past the latest one currently on disk, and always
+double check with a fresh `ls`/`git pull` immediately before naming the
+file, not from memory of what was there earlier in the session.
 
 ## Directory structure
 

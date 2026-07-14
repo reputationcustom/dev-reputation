@@ -221,6 +221,31 @@ deve ser conferido contra esta lista antes de ser considerado pronto.
      na mesma versão, indefinidamente, bloqueando toda migration nova
      atrás dela na fila (incidente real, 2026-08-02 — ver
      `CLAUDE.md`, "`.github/workflows/deploy.yaml`").
+   - **Nunca escolher o timestamp de uma migration nova "de memória" —
+     sempre conferir contra o estado real do diretório na hora de
+     nomear o arquivo.** `supabase_migrations.schema_migrations.version`
+     é chave primária — se duas migrations diferentes (escritas em
+     sessões/agentes diferentes, possivelmente em paralelo) usarem o
+     mesmo timestamp por coincidência, a segunda a chegar no banco remoto
+     nunca consegue ser aplicada (colide com a linha da primeira) e
+     `supabase migration repair` **não resolve isso** — repair só
+     confirma/atualiza a linha que já existe pra aquela versão, não abre
+     espaço pra uma segunda migration diferente sob o mesmo número.
+     Sintoma característico (diferente de uma corrida de `db push`
+     concorrente, que o `concurrency` do item acima já previne): o mesmo
+     "duplicate key... schema_migrations_pkey" **se repete
+     identicamente após cada tentativa de reparo**, nunca resolve sozinho
+     — se isso acontecer, o primeiro passo é `ls supabase/migrations |
+     sort | tail` e procurar por **dois arquivos com o mesmo prefixo de
+     timestamp**, não assumir que é só mais uma corrida. Achado real
+     nesta sessão (2026-08-02): `20260731050000_narrative_sentiment_
+     neutral_plurality.sql` colidiu com um `20260731050000_entities_
+     cargo_partido_ideologia.sql` de outro trabalho paralelo no módulo
+     `entities` — resolvido renomeando o arquivo (`git mv`, preserva
+     histórico) pra um timestamp livre, mais recente que qualquer outro
+     já em disco. Sempre rodar `ls supabase/migrations | sort | tail`
+     (ou um `git pull` recente) imediatamente antes de nomear um arquivo
+     novo, nunca confiar em "a data de agora" de memória.
 
 ## Módulos
 
