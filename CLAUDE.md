@@ -7879,6 +7879,73 @@ consecutivos nos logs caindo de ~15min pra ~1min, com o tempo até o
 próximo trabalho real depois de um `rate_limit_near_ceiling_skip` caindo
 de dezenas de minutos pra poucos minutos.
 
+### `[get-page-*] unhandled error ReferenceError: createClient is not defined` em produção — a técnica de propagação "wholesale prefix replace" reintroduziu o próprio bug que ela deveria evitar (2026-07-14)
+
+Incidente real, reportado pelo usuário direto do log de produção: todas as
+8 Edge Functions que copiam `aggregated-metrics-service.ts` (`get-page-{overview,
+narratives,sentiment,platforms,themes,authors}`, `get-narrative-detail`,
+`compose-narrative-synthesis`) começaram a devolver `503`/`unhandled
+error` com `ReferenceError: createClient is not defined`, todas na mesma
+linha do próprio handler (`const supabase = createClient(...)`).
+
+**Causa raiz**: a sessão anterior (mesmo dia, "ai-synthesis Camada 2")
+introduziu uma técnica de propagação nova, deliberadamente escolhida por
+ser "mais segura" que a de sessões anteriores pra uma mudança grande — em
+vez de N substituições de string pequenas (risco de erro por arquivo), um
+script localizava o fim do corpo compartilhado (`getPageEnvelopeWithCache`,
+sempre a última function do arquivo canônico) em cada arquivo deployado e
+substituía **tudo antes dele** pelo prefixo canônico inteiro. Isso incluía,
+sem que a sessão percebesse, a **primeira linha de import** do arquivo:
+`import type { SupabaseClient } from 'npm:@supabase/supabase-js@2'` —
+correta no arquivo canônico (que não tem handler, nunca chama
+`createClient`), mas cada um dos 8 arquivos deployados tem, no fim das
+contas, um import **combinado**
+(`import { createClient, type SupabaseClient } from ...`), porque o
+próprio handler HTTP de cada um chama `createClient(...)` pra montar o
+client com o JWT do usuário. A substituição "prefixo inteiro" trocou esse
+import combinado pelo type-only do canônico nos 8 arquivos de uma vez —
+exatamente a mesma classe de bug já documentada duas vezes antes neste
+arquivo ("Fase B implementada", 2026-08-02, e "`compose-narrative-synthesis`
+503 em produção", 2026-08-07), só que desta vez a própria técnica
+"melhorada" (pensada pra evitar erros de propagação) foi o que a
+reintroduziu, de uma vez em todos os 8 arquivos ao mesmo tempo — pior que
+as duas vezes anteriores, que cada uma afetou só 1 arquivo.
+
+Verificado por `diff`/`grep` antes de aplicar o fix: os outros arquivos
+`(` `{` continuavam balanceados (a substituição de string em si era
+sintaticamente válida) — o erro só aparece em runtime, no primeiro request
+que tenta montar o client Supabase, exatamente o tipo de bug que só um
+teste real contra produção pega, não `tsc --noEmit` (Deno não é
+type-checado pelo `tsconfig.json` do Next.js) nem uma checagem de balanço
+de parênteses.
+
+**Fix**: substituição de string única, aplicada aos 8 arquivos (script Node
+verificado por contagem de ocorrências) — restaura o import combinado
+`import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2'`
+nos 8, sem tocar no canônico (que continua correto como type-only).
+Confirmado por uma varredura em **todo** `supabase/functions/` (não só os
+8) por qualquer outro arquivo que chame `createClient(...)` mas ainda
+tenha o import type-only — nenhum encontrado, os 8 eram os únicos afetados.
+
+**Lição pra qualquer propagação futura em bloco (wholesale prefix/suffix
+replace) neste arquivo**: a linha de import do topo do arquivo canônico
+**nunca** deve fazer parte do prefixo copiado cegamente pros arquivos
+deployados — ela é uma das poucas linhas que é *deliberadamente diferente*
+entre o canônico (sem handler, só tipos) e cada cópia deployada (com
+handler, precisa do valor `createClient` de verdade). Uma propagação em
+bloco futura deve excluir explicitamente a(s) linha(s) de `import` do
+range substituído, ou verificar depois — via `grep` em todo
+`supabase/functions/`, como feito aqui — que nenhum arquivo com
+`createClient(` ficou com um import só-de-tipo.
+
+**Verificação**: `npx tsc --noEmit` limpo (mudança é Deno-only, fora do
+`tsconfig.json` do Next.js). Balanço de parênteses/chaves conferido nos 8
+arquivos. Sem ambiente Deno/Supabase real nesta sessão — não testado
+contra produção, mesma limitação recorrente de toda sessão sem
+credenciais de deploy; `git push` para `develop` é o próximo passo, e o
+sinal de que funcionou é o `ReferenceError: createClient is not defined`
+parar de aparecer nos logs de qualquer uma das 8 funções.
+
 ## Directory structure
 
 ```
