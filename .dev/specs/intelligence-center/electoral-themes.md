@@ -8,6 +8,33 @@ atualizado: 2026-07-22
 
 # Pautas Eleitorais
 
+> ✅ **4 ajustes (2026-08-09)**, pedido do usuário:
+> 1. "Share of Voice e sentimento por pauta" (`PautaCardGrid`) ordenado por
+>    SOV decrescente — antes vinha na ordem crua de `get_theme_breakdown`
+>    (sem `order by` no frontend nem na function). Ordenação só de
+>    apresentação (Princípio técnico 2).
+> 2-3. Metade inferior da página reorganizada numa grade de 2 colunas:
+>    esquerda (`lg:col-span-2`) — tabela interativa "Narrativas" + "Autores
+>    e comunidades por pauta"; direita — 3 frames empilhados, nesta ordem:
+>    "Comparação entre períodos", "Termos emergentes" (frame reduzido, com
+>    scroll interno, `max-h-48 overflow-y-auto`) e "Tópicos positivos e
+>    negativos por pauta".
+> 4. **Bug real de escopo encontrado e corrigido**: "Insights" (`narrative_text`/
+>    `highlights`) nunca foi filtrado às Pautas — `get_active_highlights`/
+>    `get_volume_delta` só sabem escopar por `filters.narratives`, e
+>    `/themes` nunca setava esse filtro (só `get-narrative-detail` o faz,
+>    via `narrativeId`). Na prática, "Insights" desta página sempre mostrou
+>    eventos/resumo da **organização inteira**, idêntico a qualquer outra
+>    página — nunca restrito ao conteúdo de Pautas Eleitorais, apesar do
+>    nome da página. Corrigido em `assemblePageResponse`
+>    (`aggregated-metrics-service.ts`): busca as Narrativas-Pauta primeiro
+>    (mesma `get_narratives_table(p_scope='pautas')` que já alimenta o
+>    bloco `narratives`) e usa os IDs pra escopar `filters.narratives` só
+>    nas chamadas de `highlights`/`narrative_text` desta página. Ver
+>    `CLAUDE.md` e `aggregated-metrics/sql-aggregation.md`/`ai-synthesis.md`
+>    para o detalhamento completo — nenhuma mudança de schema/envelope, só
+>    o filtro passado às 2 functions que já suportavam `filters.narratives`.
+
 > Cobre "Página 5 — Pautas Eleitorais" / itens "11. Estrutura das pautas" e
 > "12. Visualizações recomendadas" do documento de estrutura do protótipo.
 > Sem protótipo interativo correspondente.
@@ -134,7 +161,9 @@ Mesmo público das demais páginas deste módulo.
 
 - **SOV por pauta**: idêntico ao SOV por Narrativa já especificado
   (`narrative_metrics`/`reporting.narratives_overview`), filtrado às
-  Subcategories da Category "Pautas".
+  Subcategories da Category "Pautas". ✅ **Ordenado decrescente (2026-08-09)**
+  — `PautaCardGrid` (`components/intelligence-center/pauta-cards.tsx`)
+  agora ordena os itens por `pct` (SOV) decrescente antes de renderizar.
 - **Evolução temporal por pauta**: idem "Evolução" de
   `narratives-exploration.md`.
 - **Sentimento por pauta**: idêntico a "Sentimento por Narrativa" de
@@ -177,6 +206,15 @@ Mesmo público das demais páginas deste módulo.
   negativos por pauta" (`TopicSentimentList`), pills coloridas por
   sentimento (verde/vermelho/neutro) na mesma lista.
 - **Comparação entre períodos**: ver "Fluxo principal" item 5.
+- **Insights** (`narrative_text`/`highlights`): ✅ **Escopo corrigido
+  (2026-08-09)** — antes lia a organização inteira (bug real, ver
+  blockquote de topo); agora `assemblePageResponse` escopa
+  `filters.narratives` aos IDs das Narrativas-Pauta antes de chamar
+  `get_active_highlights`/`get_volume_delta`, então o resumo/lista de
+  eventos desta página passa a cobrir só eventos com `related_narrative_id`
+  numa Pauta. Sem gap se a organização não tiver nenhuma Subcategory sob
+  "Pautas" configurada — nesse caso cai de volta pro escopo antigo
+  (limitação aceita, ver comentário em `assemblePageResponse`).
 
 ## Regras de negócio
 

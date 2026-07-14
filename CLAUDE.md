@@ -6808,6 +6808,157 @@ de 5 colunas numa linha e o `EmptyState` novo não foram confirmados
 visualmente num navegador real, mesma limitação já registrada em toda
 sessão anterior de `intelligence-center` neste arquivo.
 
+### X Themes nunca atualizava — gate de "volume de X" comparava contra um valor nunca confirmado (2026-08-08)
+
+User report: "a atualização de todos os valores de X Themes (Hashtags,
+Posters, Stories, Emojis) está completamente desatualizado, por mais que
+execute o bw_sync ele não atualiza esses dados no frontend. Veja se o
+problema está no frontend ou no sincronismo dos dados."
+
+**Frontend descartado por primeiro**, com evidência concreta, não só
+suposição: `usePageEnvelope` refaz a chamada a cada mudança de
+organização/período/`attempt` (sem nenhum cache client-side); `page_cache`
+(Edge Function) está **desabilitado** desde 2026-07-14 —
+`getPageEnvelopeWithCache` só chama `assemblePageResponse` direto, sem ler
+nem gravar a tabela; e `get_x_insights` (SQL) já teve seu bug real de
+agrupamento (`latest` por `insight_type` sozinho, ignorando `category_id`)
+corrigido em 2026-08-03. Nada nessas 3 camadas explicava "desatualizado
+mesmo depois de rodar o sync".
+
+**Causa raiz real, no lado do sincronismo**: `queryHasTwitterVolume()`
+(`bw-sync/index.ts`) — a "salvaguarda de orçamento" que barra as 4
+chamadas de X Insights (Hashtags/Emojis/Stories/Posters) quando a Query
+"não tem presença relevante em X", checando
+`bw_query_metrics_daily_by_platform.page_type = 'twitter'` (comparação
+exata, case-sensitive) — sempre exigiu esse valor literal como
+pré-requisito rígido antes de sequer TENTAR qualquer chamada. Só que
+`page_type` vem de `series.id` da dimensão de chart `pageTypes`
+(`syncPlatformMetrics`/`syncPlatformMultiAggregate`), e o comentário
+*original* dessa função, desde que foi escrita, já admitia: "não peguei um
+payload de exemplo específico desta combinação... ainda é inferido pelo
+padrão geral" — ou seja, o valor exato que a Brandwatch devolve pra
+X/Twitter nessa dimensão especificamente **nunca foi confirmado contra um
+payload real** neste projeto. Se o valor real vier com outra caixa
+(`'Twitter'`/`'X'`) ou já tiver sido renomeado internamente pra `'x'`
+(rebranding real da plataforma), esse gate reprova silenciosamente **pra
+sempre** — sem erro, sem log de aviso visível, só `no_twitter_volume` — e
+nenhuma reexecução manual de bw-sync jamais destrava isso, porque o
+problema não é frescor/staleness, é o gate nunca deixar a fase `x_insights`
+sequer chegar a chamar a Brandwatch. Isso bate exatamente com o relato:
+"por mais que execute" não ajuda quando a fase nunca tenta de verdade.
+
+**Fix**: `queryHasTwitterVolume()` agora aceita `twitter`/`x`
+case-insensitive (`.or("page_type.ilike.twitter,page_type.ilike.x")`) —
+mesma dualidade já aceita em `get_authors_ranking` (`use_tweeters`,
+migration `20260801010000`) pro filtro de plataforma vindo do frontend,
+então não é uma convenção nova, só estendida pra este gate que ainda não
+a usava. Ainda uma inferência, não uma confirmação definitiva — por isso
+também foi adicionado um log de diagnóstico
+(`queryHasTwitterVolume:no_match`, só no caminho de falha, sem custo de
+chamada extra à Brandwatch) que lista os `page_type` reais encontrados
+pro par — se o valor real for uma terceira variação ainda não coberta,
+aparece direto no log de produção, sem precisar de acesso ao banco pra
+descobrir. Mesma função é usada por dois consumidores
+(`runXInsightsStep`/`runDemographicsStep`) — os dois se beneficiam do
+mesmo fix.
+
+**Verificação**: mudança isolada em `bw-sync/index.ts` (sem migration,
+sem mudança de frontend/envelope — o problema nunca chegava a esse
+ponto). Sem ambiente Deno/Supabase real disponível nesta sessão — não
+executado contra produção, mesma limitação recorrente de toda sessão sem
+credenciais de deploy. `git push` para `develop` é o próximo passo; o
+sinal de que funcionou é `[bw-sync] syncXInsights:done` aparecendo nos
+logs pra este par pela primeira vez em muito tempo, e X Themes voltando a
+mostrar dado recente no frontend. Se `queryHasTwitterVolume:no_match`
+ainda aparecer nos logs depois do deploy, o `distinctPageTypes` logado
+ali é o próximo passo — usar esse valor real pra corrigir o gate de vez.
+
+### Pautas Eleitorais: SOV ordenado, reorganização de layout, e um bug real de escopo em "Insights" (2026-08-09)
+
+User request, 4 itens na mesma mensagem:
+
+1. **"Share of Voice e sentimento por pauta" ordenado decrescente** —
+   `PautaCardGrid` (`components/intelligence-center/pauta-cards.tsx`)
+   ganhou `.sort((a, b) => b.pct - a.pct)` antes de renderizar (a function
+   SQL `get_theme_breakdown` não tem `order by` explícito — ordenação só de
+   apresentação, Princípio técnico 2, mesmo padrão já usado por
+   `NarrativesTable`).
+2-3. **Layout da metade inferior de `/themes` reorganizado** — pedido do
+   usuário: diminuir "Termos emergentes" e colocar "Tópicos positivos e
+   negativos por pauta" logo abaixo dele; mover "Comparação entre
+   períodos" pra cima de "Termos emergentes"; resultado: 3 frames do lado
+   direito, tabela + "Autores e comunidades por pauta" do lado esquerdo.
+   `app/(intelligence-center)/(analytics)/themes/page.tsx` reestruturado:
+   um `grid grid-cols-1 lg:grid-cols-3` — esquerda (`lg:col-span-2`):
+   "Narrativas" (tabela interativa) + "Autores e comunidades por pauta"
+   empilhados; direita: "Comparação entre períodos" → "Termos emergentes"
+   (agora dentro de `<div className="max-h-48 overflow-y-auto">`, frame
+   visivelmente menor com scroll interno) → "Tópicos positivos e negativos
+   por pauta". "Estrutura das pautas"/"Share of Voice e sentimento por
+   pauta"/"SOV por pauta ao longo do tempo" (topo) e "Insights" (rodapé)
+   ficam fora dessa grade, inalterados.
+4. **Bug real de escopo encontrado e corrigido** — pedido do usuário:
+   "Insights dessa página deve focar apenas no conteúdo de Pautas
+   Eleitorais, reveja o envelope dessa página para saber se a IA está
+   tratando corretamente." Investigação confirmou que não era só uma
+   percepção: `get_active_highlights`/`get_volume_delta` (Camada 1/Camada
+   0 de `ai-synthesis.md`) só sabem escopar por `filters.narratives` — uma
+   lista explícita de IDs de Narrativa, sem noção nenhuma de "página" ou
+   "categoria". `effectiveFilters(ctx)` só popula `filters.narratives`
+   quando `ctx.narrativeId` está setado, e isso só acontece em
+   `get-narrative-detail` — `/themes` nunca passava por esse caminho.
+   Resultado real, confirmado lendo o código: "Insights" em `/themes`
+   sempre leu `highlights`/`narrative_text` da **organização inteira**,
+   exatamente igual a qualquer outra página — nunca restrito às Pautas,
+   apesar do nome/propósito específico da página.
+   **Fix** (`supabase/functions-shared-source/aggregated-metrics-service.ts`,
+   `assemblePageResponse`): quando `page === 'themes'`, busca as
+   Narrativas-Pauta primeiro — a mesma `get_narratives_table(p_scope=
+   'pautas')` que já alimenta o bloco `narratives` desta página,
+   reaproveitada via `narrativesPromise` (nunca uma segunda chamada) — e
+   usa os IDs resultantes pra popular `filters.narratives` num
+   `highlightsContext` só usado por `fetchHighlights`/`fetchNarrativeText`
+   nesta página. É o único `await` do arquivo fora do `Promise.all`
+   principal — inevitável (o filtro de highlights depende do resultado de
+   `narratives`), mas só serializa pra `themes`; toda outra página
+   continua 100% paralela, comportamento idêntico a antes. Limitação
+   aceita, documentada inline: se a organização não tiver nenhuma
+   Subcategory sob "Pautas" configurada, `filters.narratives` fica vazio e
+   o comportamento cai de volta pro escopo antigo (organização inteira) —
+   `get_active_highlights`/`get_volume_delta` tratam array vazio e "filtro
+   ausente" de forma idêntica (`nullif(array_agg(...), '{}')` sempre vira
+   `NULL` sobre zero linhas), então não há como distinguir "escopo vazio de
+   propósito" de "sem filtro" nessas duas functions sem uma mudança de SQL
+   — não fiz essa mudança, já que é o mesmo caso degenerado que `/themes`
+   já sinaliza em todo outro widget ("Nenhuma subcategoria da categoria
+   'Pautas' configurada").
+   **Propagação (Princípio técnico 5)**: o mesmo bloco (`assemblePageResponse`)
+   foi copiado, byte-a-byte idêntico ao canônico, nas 7 Edge Functions
+   deployadas (`get-page-{overview,narratives,sentiment,platforms,themes,
+   authors}`, `get-narrative-detail`) via um script Node de uso único (não
+   commitado) — confirmado por `diff` isolado do bloco `assemblePageResponse`
+   contra o canônico em cada uma das 7, sem divergência.
+
+**Especificações atualizadas**: `intelligence-center/electoral-themes.md`
+(novo blockquote de topo + notas em "Interface (UI)"/"Dados envolvidos"),
+`aggregated-metrics/ai-synthesis.md` (novo blockquote sobre o bug),
+`aggregated-metrics/sql-aggregation.md` (nota na linha de
+`get_active_highlights`), `aggregated-metrics/service-layer-aggregation.md`
+("Fluxo principal" item 3 — exceção de serialização pra `themes`).
+
+**Verificação**: `npx tsc --noEmit` e `npm run build` (com `rm -rf .next`
+antes) passam limpos — 21 rotas, mesma contagem de antes. Sem migration
+nesta sessão — mudança 100% TypeScript (service layer + frontend). Sem
+acesso a um Supabase/Anthropic real neste ambiente — o comportamento
+corrigido (highlights/narrative_text realmente restritos a Pautas) não foi
+confirmado contra dado de produção; o sinal a acompanhar depois do deploy
+é o widget "Insights" de `/themes` deixar de citar eventos claramente
+alheios a Pautas Eleitorais (ex: um pico de menções de um candidato/
+narrativa fora da categoria "Pautas"). Sem automação de browser disponível
+— o novo layout de 2 colunas e o frame reduzido de "Termos emergentes"
+não foram confirmados visualmente num navegador real, mesma limitação já
+registrada em toda sessão anterior de `intelligence-center` neste arquivo.
+
 ## Directory structure
 
 ```

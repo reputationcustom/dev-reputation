@@ -8,6 +8,27 @@ atualizado: 2026-07-14
 
 # Síntese Narrativa da Página (`narrative_text`)
 
+> ✅ **Bug de escopo em `themes` corrigido (2026-08-09)** — pedido do
+> usuário: "Insights [de Pautas Eleitorais] deve focar apenas no conteúdo
+> de Pautas Eleitorais, reveja o envelope dessa página para saber se a IA
+> está tratando corretamente." Achado real: `get_active_highlights`
+> (Camada 1) e `get_volume_delta` (Camada 0) só sabem escopar por
+> `filters.narratives` — nenhuma das duas tem noção de "página de Pautas".
+> `themes` nunca setava esse filtro (só `get-narrative-detail` o faz, via
+> `ctx.narrativeId`/`effectiveFilters`), então `narrative_text`/`highlights`
+> nesta página sempre refletiram a **organização inteira**, nunca
+> restritos ao conteúdo de Pautas Eleitorais — mesmo bug, nas duas
+> camadas, já que ambas recebem o mesmo `highlights`/contexto escopado (ou
+> não). Corrigido em `assemblePageResponse`: busca as Narrativas-Pauta
+> primeiro (mesma `get_narratives_table(p_scope='pautas')` que já
+> alimenta o bloco `narratives` desta página, reaproveitada — nunca uma
+> segunda chamada) e usa os IDs pra popular `filters.narratives` só nas
+> chamadas de `fetchHighlights`/`fetchNarrativeText` feitas para `themes`.
+> Nenhuma outra página é afetada — o desvio de `context` pra
+> `highlightsContext` só acontece quando `page === 'themes'`. Ver
+> `intelligence-center/electoral-themes.md` e `CLAUDE.md` para o
+> detalhamento completo.
+
 > ✅ **Camada 0 implementada (2026-07-25, gap #27 de `_pending.md`,
 > resolvido)** — `fetchNarrativeText()` (`aggregated-metrics-service.ts`):
 > usa `summary`/`explanation` do highlight quando há exatamente 1; caso

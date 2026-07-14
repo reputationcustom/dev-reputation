@@ -975,12 +975,35 @@ Posters/Emojis, exatamente este shape de dado).
 
 **Índices**: unique `(project_id, query_id, category_id_key, insight_type,
 name, metric_week)`. **Políticas RLS**: select-only via `project_id`, mesmo
-padrão de `bw_query_topics`/`bw_query_top_authors`. Throttle semanal, por
-`categoryTarget` (query inteira + cada Narrativa) — ver `sync-brandwatch.md`
-passo 6.4b. **Salvaguarda de orçamento**: só sincronizado para
+padrão de `bw_query_topics`/`bw_query_top_authors`. Throttle configurável via
+`BW_SYNC_INTERVAL_HOURS` (`getSyncStalenessWindowMs()`, default 3h — não
+mais um throttle semanal fixo, ver "Sincronismo entre fases" em
+`sync-brandwatch.md`), por `categoryTarget` (query inteira + cada
+Narrativa). **Salvaguarda de orçamento**: só sincronizado para
 `categoryTarget`s com volume relevante em `page_type = 'twitter'` (já
 disponível em `bw_query_metrics_daily_by_platform`) — não gasta as 4
 chamadas em Narrativa/Query sem presença em X.
+>
+> ⚠️ **Bug real encontrado e corrigido (2026-08-08)** — usuário relatou que
+> X Themes nunca atualizava, "por mais que execute o bw_sync". Causa raiz:
+> `queryHasTwitterVolume()` (`bw-sync/index.ts`) exigia `page_type =
+> 'twitter'` como comparação exata/case-sensitive — mas o valor real que a
+> Brandwatch devolve pra X/Twitter na dimensão de chart `pageTypes`
+> **nunca foi confirmado contra um payload real** (`syncPlatformMetrics`,
+> mesmo arquivo, já admitia isso desde a implementação original: "não
+> peguei um payload de exemplo específico desta combinação... ainda é
+> inferido pelo padrão geral"). Se o valor real vier com outra caixa
+> (`'Twitter'`/`'X'`) ou já renomeado pra `'x'`, esse gate reprovava
+> silenciosamente pra sempre — nenhuma reexecução manual destravava,
+> exatamente o sintoma relatado, e as 4 chamadas de X Insights nunca
+> chegavam a ser tentadas. Corrigido pra aceitar `twitter`/`x`
+> case-insensitive (`ilike`) — mesma dualidade já aceita em
+> `get_authors_ranking` (`use_tweeters`, migration `20260801010000`) pro
+> filtro de plataforma vindo do frontend. Ainda uma inferência, não uma
+> confirmação — um log de diagnóstico novo
+> (`queryHasTwitterVolume:no_match`) lista os `page_type` reais
+> encontrados pro par caso ainda falhe, pra confirmar o valor certo via
+> logs de produção sem precisar de acesso ao banco.
 
 > ✅ **Consumidor implementado + mapeamento reconfirmado (2026-07-18)** —
 > até esta data, esta tabela era sincronizada e nunca lida por nada:

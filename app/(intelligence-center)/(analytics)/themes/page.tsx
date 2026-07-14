@@ -26,6 +26,20 @@ import { EmptyState } from "@/components/ui/empty-state";
 // além disso. Sem drill-down "narrativas dentro da pauta": Brandwatch só
 // suporta 2 níveis (Category → Subcategory), então uma pauta (já uma
 // Subcategory) não tem filhas próprias.
+//
+// ✅ **Reorganizado (2026-08-09)**, pedido do usuário, 3 itens de layout:
+// 1. "Share of Voice e sentimento por pauta" ordenado por SOV decrescente
+//    (ver `pauta-cards.tsx`).
+// 2-3. A metade inferior da página virou uma grade de 2 colunas: à
+//    esquerda, a tabela interativa ("Narrativas") + "Autores e comunidades
+//    por pauta"; à direita, 3 frames empilhados — "Comparação entre
+//    períodos" (topo), "Termos emergentes" (frame reduzido, com scroll
+//    interno) e "Tópicos positivos e negativos por pauta". Um 4º pedido,
+//    "Insights dessa página deve focar apenas no conteúdo de Pautas
+//    Eleitorais", era na verdade um bug de escopo no backend (highlights/
+//    narrative_text liam a organização inteira, não só as Pautas) —
+//    corrigido em `aggregated-metrics-service.ts`/`assemblePageResponse`,
+//    ver CLAUDE.md; nenhuma mudança de layout do widget "Insights" em si.
 export default function ThemesPage() {
   const { status, envelope, retry } = usePageEnvelope("get-page-themes");
   const themeBreakdown = envelope?.breakdowns.find((b) => b.type === "theme");
@@ -66,42 +80,57 @@ export default function ThemesPage() {
           <TrendLineChart trend={envelope?.trends[0]} emptyMessage="Nenhum dado de SOV por pauta ainda." />
         </WidgetCard>
 
-        <WidgetCard title="Narrativas" status={status} onRetry={retry}>
-          <p className="mb-3 text-xs text-text-tertiary">
-            Todas as pautas eleitorais (subcategorias da categoria &quot;Pautas&quot;).
-          </p>
-          <NarrativesTable rows={envelope?.narratives ?? []} />
-        </WidgetCard>
+        {/* ✅ Reorganizado 2026-08-09 (pedido do usuário) — esquerda: tabela
+            interativa + Autores e comunidades por pauta; direita: 3 frames
+            empilhados (Comparação entre períodos, Termos emergentes
+            reduzido, Tópicos positivos e negativos por pauta). */}
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+          <div className="flex flex-col gap-6 lg:col-span-2">
+            <WidgetCard title="Narrativas" status={status} onRetry={retry}>
+              <p className="mb-3 text-xs text-text-tertiary">
+                Todas as pautas eleitorais (subcategorias da categoria &quot;Pautas&quot;).
+              </p>
+              <NarrativesTable rows={envelope?.narratives ?? []} />
+            </WidgetCard>
 
-        <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
-          <WidgetCard title="Autores e comunidades por pauta" status={status} onRetry={retry}>
-            <AuthorsList
-              authors={envelope?.authors ?? []}
-              emptyMessage="Nenhum autor citou uma pauta eleitoral neste período ainda."
-            />
-          </WidgetCard>
-          <WidgetCard title="Termos emergentes" status={status} onRetry={retry}>
-            <TermSignalsList signals={envelope?.term_signals ?? []} />
-          </WidgetCard>
+            <WidgetCard title="Autores e comunidades por pauta" status={status} onRetry={retry}>
+              <AuthorsList
+                authors={envelope?.authors ?? []}
+                emptyMessage="Nenhum autor citou uma pauta eleitoral neste período ainda."
+              />
+            </WidgetCard>
+          </div>
+
+          <div className="flex flex-col gap-6">
+            {/* "Comparação entre períodos" (protótipo: callout textual, ex.
+                "Segurança perdeu 4 pontos..."). Depende de síntese narrativa
+                (ai-synthesis, não implementado) — mesmo padrão do resto do
+                produto, EmptyState honesto em vez de inventar o texto. */}
+            <WidgetCard title="Comparação entre períodos" status={status} onRetry={retry}>
+              <EmptyState message="Comparação textual entre períodos ainda não implementada — depende de síntese narrativa (ai-synthesis, ver _pending.md)." />
+            </WidgetCard>
+
+            {/* ✅ Frame reduzido (2026-08-09, pedido do usuário: "diminuir o
+                frame de Termos emergentes") — mesmo `TermSignalsList` de
+                sempre, só dentro de um container com altura máxima e
+                scroll interno em vez de crescer livremente. */}
+            <WidgetCard title="Termos emergentes" status={status} onRetry={retry}>
+              <div className="max-h-48 overflow-y-auto">
+                <TermSignalsList signals={envelope?.term_signals ?? []} />
+              </div>
+            </WidgetCard>
+
+            {/* ✅ Adicionado 2026-07-14 (pedido do usuário: "em todas as
+                páginas é importante existir os principais tópicos positivos e
+                negativos") — mesmo `term_signals` de "Termos emergentes"
+                acima, só separado por polaridade. Unificado no mesmo frame na
+                mesma data (pedido seguinte: "no mesmo frente mudando apenas a
+                cor"). */}
+            <WidgetCard title="Tópicos positivos e negativos por pauta" status={status} onRetry={retry}>
+              <TopicSentimentList signals={envelope?.term_signals ?? []} />
+            </WidgetCard>
+          </div>
         </div>
-
-        {/* ✅ Adicionado 2026-07-14 (pedido do usuário: "em todas as
-            páginas é importante existir os principais tópicos positivos e
-            negativos") — mesmo `term_signals` de "Termos emergentes"
-            acima, só separado por polaridade. Unificado no mesmo frame na
-            mesma data (pedido seguinte: "no mesmo frente mudando apenas a
-            cor"). */}
-        <WidgetCard title="Tópicos positivos e negativos por pauta" status={status} onRetry={retry}>
-          <TopicSentimentList signals={envelope?.term_signals ?? []} />
-        </WidgetCard>
-
-        {/* "Comparação entre períodos" (protótipo: callout textual, ex.
-            "Segurança perdeu 4 pontos..."). Depende de síntese narrativa
-            (ai-synthesis, não implementado) — mesmo padrão do resto do
-            produto, EmptyState honesto em vez de inventar o texto. */}
-        <WidgetCard title="Comparação entre períodos" status={status} onRetry={retry}>
-          <EmptyState message="Comparação textual entre períodos ainda não implementada — depende de síntese narrativa (ai-synthesis, ver _pending.md)." />
-        </WidgetCard>
 
         <WidgetCard title="Insights" status={status} onRetry={retry}>
           <div className="flex flex-col gap-4">

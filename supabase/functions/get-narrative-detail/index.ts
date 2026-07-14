@@ -1289,6 +1289,35 @@ async function fetchGraph(supabase: SupabaseClient, ctx: PageContext): Promise<D
 // assemblePageResponse — orquestra os fetchX necessários pra uma página
 // (PAGE_BLOCKS), sempre em paralelo (Promise.all, nunca em série), e monta
 // o envelope completo com [] /null nos blocos não usados.
+//
+// ✅ Exceção pontual pra `themes` (Pautas Eleitorais), 2026-08-09 — pedido
+// do usuário: "Insights dessa página deve focar apenas no conteúdo de
+// Pautas Eleitorais, reveja o envelope... para saber se a IA está tratando
+// corretamente." Achado real: `get_active_highlights`/`get_volume_delta`
+// (Camada 1/Camada 0 de ai-synthesis.md) só sabem escopar por
+// `filters.narratives` (uma lista de IDs) — nenhuma das duas tem noção de
+// "página de Pautas". Como `themes` nunca setava esse filtro (só
+// `narrativeId` o faz, via `effectiveFilters`, e `narrativeId` só existe em
+// `get-narrative-detail`), "Insights" em `/themes` sempre leu highlights/
+// narrative_text da ORGANIZAÇÃO INTEIRA — idêntico a qualquer outra
+// página, nunca restrito às Pautas. Corrigido buscando as Narrativas-Pauta
+// primeiro (mesma `get_narratives_table(p_scope='pautas')` que já
+// alimenta o bloco `narratives` desta página — reaproveitada via
+// `narrativesPromise`, nunca uma segunda chamada) e usando os IDs pra
+// escopar `filters.narratives` só nas chamadas de highlights/narrative_text
+// desta página. Único ponto do arquivo com um `await` fora do `Promise.all`
+// — inevitável, já que o filtro de highlights depende do resultado de
+// `narratives`, mas só serializa para `themes`; toda outra página continua
+// 100% em paralelo. ⚠️ Se a organização não tiver nenhuma Subcategory sob
+// "Pautas" configurada (`pautaIds.length === 0`), `filters.narratives`
+// permanece vazio e o comportamento cai de volta pro escopo antigo
+// (organização inteira) — limitação aceita: `get_active_highlights`/
+// `get_volume_delta` tratam `filters.narratives: []` e "filtro ausente" de
+// forma idêntica (`nullif(array_agg(...), '{}')` sempre vira `NULL` num
+// `array_agg` sobre zero linhas), então não há como distinguir "escopo
+// vazio de propósito" de "sem filtro" nessas duas functions — mesmo caso
+// degenerado que `/themes` já sinaliza em todo outro widget ("Nenhuma
+// subcategoria da categoria 'Pautas' configurada").
 // =========================================================================
 
 export async function assemblePageResponse(
@@ -1298,13 +1327,26 @@ export async function assemblePageResponse(
 ): Promise<PageEnvelope> {
   const blocks = new Set(PAGE_BLOCKS[page])
 
+  let narrativesPromise: Promise<NarrativeRow[]>
+  let highlightsContext = context
+  if (page === 'themes') {
+    const pautaNarratives = blocks.has('narratives') ? await fetchNarratives(page, supabase, context) : []
+    narrativesPromise = Promise.resolve(pautaNarratives)
+    const pautaIds = pautaNarratives.map((n) => n.id)
+    if (pautaIds.length > 0) {
+      highlightsContext = { ...context, filters: { ...context.filters, narratives: pautaIds } }
+    }
+  } else {
+    narrativesPromise = blocks.has('narratives') ? fetchNarratives(page, supabase, context) : Promise.resolve<NarrativeRow[]>([])
+  }
+
   const [metrics, breakdowns, trends, narratives, authors, highlights, termSignals, graph, xInsights, topSites] = await Promise.all([
     blocks.has('metrics') ? fetchMetrics(supabase, context) : Promise.resolve<MetricCard[]>([]),
     blocks.has('breakdowns') ? fetchBreakdowns(page, supabase, context) : Promise.resolve<Breakdown[]>([]),
     blocks.has('trends') ? fetchTrends(page, supabase, context) : Promise.resolve<Trend[]>([]),
-    blocks.has('narratives') ? fetchNarratives(page, supabase, context) : Promise.resolve<NarrativeRow[]>([]),
+    narrativesPromise,
     blocks.has('authors') ? fetchAuthors(page, supabase, context) : Promise.resolve<AuthorRow[]>([]),
-    blocks.has('highlights') ? fetchHighlights(supabase, context) : Promise.resolve<Highlight[]>([]),
+    blocks.has('highlights') ? fetchHighlights(supabase, highlightsContext) : Promise.resolve<Highlight[]>([]),
     blocks.has('term_signals') ? fetchTermSignals(supabase, context) : Promise.resolve<TermSignal[]>([]),
     blocks.has('graph') ? fetchGraph(supabase, context) : Promise.resolve<DisseminationGraph | null>(null),
     blocks.has('x_insights') ? fetchXInsights(supabase, context) : Promise.resolve<XInsightItem[]>([]),
@@ -1313,8 +1355,11 @@ export async function assemblePageResponse(
 
   // ✅ Camada 0 (2026-07-25) e Camada 1 (2026-08-02, event-radar Fase B) de
   // ai-synthesis.md implementadas — ver fetchNarrativeText acima.
+  // `highlightsContext` (não `context`) pra manter narrative_text escopado
+  // exatamente igual a `highlights` acima — ver nota da exceção `themes` no
+  // topo desta function.
   const narrativeText = blocks.has('narrative_text')
-    ? await fetchNarrativeText(supabase, context, page, highlights)
+    ? await fetchNarrativeText(supabase, highlightsContext, page, highlights)
     : null
 
   return {

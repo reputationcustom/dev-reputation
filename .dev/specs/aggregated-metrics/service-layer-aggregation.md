@@ -30,7 +30,12 @@ concentra o reaproveitamento de código entre páginas.
    `PAGE_BLOCKS` no código, não lendo o markdown em runtime) quais blocos aquela página precisa.
 3. Para cada bloco necessário, chama a função de fetch correspondente (`fetchMetrics`,
    `fetchBreakdown`, `fetchTrend`, `fetchNarratives`, `fetchAuthors`, `fetchHighlights`,
-   `fetchTermSignals`, `fetchGraph`), em paralelo (`Promise.all`), nunca em série.
+   `fetchTermSignals`, `fetchGraph`), em paralelo (`Promise.all`), nunca em série. ✅ **Exceção
+   pontual pra `themes` (2026-08-09)** — `fetchNarratives` roda um passo antes do `Promise.all`
+   só nessa página, pra poder escopar `filters.narratives` (usado por `fetchHighlights`/
+   `fetchNarrativeText`) aos IDs das Narrativas-Pauta antes de buscá-los — sem isso, "Insights" em
+   `/themes` lia a organização inteira em vez de só Pautas (bug real, ver `electoral-themes.md`/
+   `ai-synthesis.md`). Toda outra página continua 100% paralela.
 4. Monta o objeto envelope completo, preenchendo com `[]`/`null` os blocos não usados pela
    página.
 5. Retorna o envelope pronto para a Edge Function apenas repassar como resposta.

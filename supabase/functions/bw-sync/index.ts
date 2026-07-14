@@ -2102,6 +2102,32 @@ async function syncAuthorTopics(
 // bw_query_metrics_daily_by_platform (passo 6.3, já sincronizado toda
 // invocação) — sem chamada nova só pra essa checagem. Nível Query inteira
 // (essa tabela não quebra por Category), não por categoryTarget.
+//
+// ⚠️ Achado real (2026-08-08), investigando relato do usuário de que X
+// Themes (Hashtags/Posters/Stories/Emojis) nunca atualiza por mais vezes
+// que bw-sync rode: `page_type` desta tabela vem de `series.id` da
+// dimensão de chart `pageTypes` (syncPlatformMetrics/syncPlatformMultiAggregate,
+// linha ~1301/~1580) — e o comentário original daquela função já admitia
+// "não peguei um payload de exemplo específico desta combinação... ainda é
+// inferido pelo padrão geral", ou seja, o valor exato que a Brandwatch
+// devolve pra X/Twitter nesta dimensão especificamente **nunca foi
+// confirmado contra um payload real**. Esta function, porém, sempre exigiu
+// `page_type = 'twitter'` (comparação exata, case-sensitive) como
+// pré-requisito rígido pra sequer TENTAR qualquer uma das 4 chamadas de X
+// Insights — se o valor real for `'Twitter'`/`'X'`/`'x'`/qualquer variação
+// de caixa, esse gate reprova silenciosamente pra sempre (log
+// `no_twitter_volume`, sem erro, sem retry diferente), e nenhuma
+// reexecução manual de bw-sync jamais destrava isso — exatamente o
+// sintoma relatado. Corrigido para aceitar `twitter`/`x` case-insensitive
+// (`ilike`, cobre a variação de caixa e o possível rebranding da
+// plataforma) — ainda uma inferência, não uma confirmação contra um
+// payload real, mas a lista de aliases aceitos casa com a mesma dualidade
+// `twitter`/`x` já usada em `get_authors_ranking` (`use_tweeters`,
+// migration `20260801010000`) pra filtro de plataforma vindo do frontend.
+// Log de diagnóstico adicionado (`queryHasTwitterVolume:no_match`) — se
+// isso ainda falhar depois deste fix, ele lista os `page_type` reais
+// encontrados pra este par, o que é o dado que faltava pra confirmar o
+// valor certo sem precisar de acesso ao banco.
 // =========================================================================
 
 async function queryHasTwitterVolume(supabase: SupabaseClient, projectId: number, queryId: number): Promise<boolean> {
@@ -2110,12 +2136,27 @@ async function queryHasTwitterVolume(supabase: SupabaseClient, projectId: number
     .select("total_mentions")
     .eq("project_id", projectId)
     .eq("query_id", queryId)
-    .eq("page_type", "twitter")
+    .or("page_type.ilike.twitter,page_type.ilike.x")
     .gt("total_mentions", 0)
     .limit(1)
     .maybeSingle();
   if (error) throw new Error(`Erro checando volume de X em bw_query_metrics_daily_by_platform: ${error.message}`);
-  return !!data;
+  if (data) return true;
+
+  // Diagnóstico: se não achou nem 'twitter' nem 'x' (case-insensitive),
+  // loga quais page_type realmente existem pra este par — só roda no
+  // caminho de falha, então não custa uma chamada extra ao Brandwatch,
+  // só uma leitura do Postgres já sincronizado.
+  const { data: known } = await supabase
+    .from("bw_query_metrics_daily_by_platform")
+    .select("page_type")
+    .eq("project_id", projectId)
+    .eq("query_id", queryId)
+    .gt("total_mentions", 0)
+    .limit(20);
+  const distinctPageTypes = [...new Set((known ?? []).map((r) => r.page_type as string))];
+  log("queryHasTwitterVolume:no_match", { projectId, queryId, distinctPageTypes });
+  return false;
 }
 
 // =========================================================================

@@ -13,8 +13,12 @@ import { NetSentimentDot } from "./score-badges";
 // não há como escopar `get-page-themes` com `pauta_id` de forma confiável
 // a partir só deste dado (ver `_pending.md` gap #17, "drill-down segue
 // pendente").
+// ✅ Ordenado por SOV decrescente (pedido do usuário, 2026-08-09) — antes
+// vinha na ordem crua devolvida por `get_theme_breakdown` (sem `order by`
+// explícito na função). Ordenação só de apresentação (Princípio técnico
+// 2), mesmo padrão já usado por `NarrativesTable`.
 export function PautaCardGrid({ breakdown, emptyMessage }: { breakdown: Breakdown | undefined; emptyMessage: string }) {
-  const items = (breakdown?.items ?? []).filter((item) => item.pct > 0);
+  const items = (breakdown?.items ?? []).filter((item) => item.pct > 0).sort((a, b) => b.pct - a.pct);
 
   if (items.length === 0) {
     return <EmptyState message={emptyMessage} />;
