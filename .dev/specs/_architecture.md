@@ -1,6 +1,6 @@
 ---
 tipo: architecture-map
-atualizado: 2026-07-30
+atualizado: 2026-07-31
 ---
 
 # Mapa de Arquitetura — Digital Intelligent Communication
@@ -70,7 +70,7 @@ graph TD
     style INTEL fill:#c3e6cb,stroke:#2e7d32
     style ENTITIES fill:#fff3cd,stroke:#856404
     style COMMUNICATIONS fill:#c3e6cb,stroke:#2e7d32
-    style EVENTRADAR fill:#fff3cd,stroke:#856404
+    style EVENTRADAR fill:#c3e6cb,stroke:#2e7d32
     style PROPGRAPH fill:#e2e3e5,stroke:#6c757d
     style DECISIONCENTER fill:#e2e3e5,stroke:#6c757d
     style REPORTS fill:#e2e3e5,stroke:#6c757d
@@ -110,6 +110,21 @@ fallback), mas fica mais completo com ela.
 > não têm código, mesmo critério já usado para não marcar um módulo verde por ter só uma parte
 > pronta (ver `aggregated-metrics`/`auth` acima). Ver `entities/data-model.md` para o detalhe
 > completo, inclusive o que foi deliberadamente deixado fora do seed.
+>
+> ✅ **`entity_accounts` dos 512 Deputados Federais populada no mesmo dia** (migration
+> `20260731030000`) — fonte oficial real por deputado (`redeSocial`, Câmara), não os 81 Senadores
+> (sem fonte oficial equivalente, confirmado nesta sessão). Ver `entities/data-model.md`.
+
+> ✅ **`event-radar` passou a verde em 2026-07-31** — 5 das 6 funcionalidades do módulo
+> implementadas em sessões consecutivas (2026-07-27 a 2026-07-31): `detection-engine` (1.1),
+> `deduplication-grouping` (1.2), `severity` (1.3), `volume-limits` (1.6, implementado antes de
+> 1.4 por dependência real, não por ordem numérica) e `agent-orchestrator` (1.4 — primeira e única
+> Edge Function do módulo, Claude Haiku 4.5, primeira migration de `feed_events`). Mesmo critério
+> já usado para `aggregated-metrics` (verde com `ai-synthesis.md` ainda pendente): só falta
+> `schema-integration.md` item 2 (`feed_event_feedback`, retroalimentação pós-publicação do
+> analista — precisa de UI própria, não pedida ainda) — item 1 do mesmo arquivo (escrita em
+> `feed_events`) já foi implementado como parte do código de 1.4. Ver `CLAUDE.md`, "Módulo
+> `event-radar`", pro detalhe completo de cada etapa.
 
 `threshold-engine` e `intelligent-feed` (módulos que existiam na tabela original de `_index.md`,
 Sprint 3) não aparecem como nós próprios — foram **absorvidos por `event-radar`** antes de
@@ -160,7 +175,7 @@ de `intelligence-center`, ver `_index.md`, "Módulo `command-center` removido".
 | `intelligence-center` | As 5 páginas do frontend (Executive Overview, Narrativas, Sentimento, Plataformas, Pautas Eleitorais) + `cases` (ações/decisões, ex-`command-center`) | implementado — `cases` (schema) ainda não | [intelligence-center/overview.md](intelligence-center/overview.md) |
 | `aggregated-metrics` | Envelope JSON único + SQL de agregação + Edge Functions por página, consumido pelo frontend e pela IA | implementado — `get_active_highlights`/região/`page_narrative_synthesis` pendentes; `page_cache` **desabilitado** (2026-07-14, investigação em aberto de `/narratives` vazio), ver `_pending.md` gap #34 | [aggregated-metrics/overview.md](aggregated-metrics/overview.md) |
 | `communications` | Registro de Comunicações/Decisões por Narrativa + acompanhamento de impacto (sentimento/menções/risco/momentum antes vs. depois) — Sprint 2.1 | implementado | [communications/overview.md](communications/overview.md) |
-| `event-radar` | Detecção estatística de picos/quedas/mudanças + 1 card de IA por evento — absorve `threshold-engine`/`intelligent-feed` | rascunho — 1.1 `detection-engine` (2026-07-27), 1.2 `deduplication-grouping` (2026-07-28), 1.3 `severity` (2026-07-29) e 1.6 `volume-limits` (2026-07-30) implementados (1.6 antes de 1.4, ver `overview.md`), 1.4-1.5 não | [event-radar/overview.md](event-radar/overview.md) |
+| `event-radar` | Detecção estatística de picos/quedas/mudanças + 1 card de IA por evento — absorve `threshold-engine`/`intelligent-feed` | rascunho — 1.1/1.2/1.3/1.6/1.4 implementados (2026-07-27 a 2026-07-31, 1.6 antes de 1.4, ver `overview.md`); só falta 1.5 item 2 (`feed_event_feedback`, `feed_events` já existe e está sendo populada) | [event-radar/overview.md](event-radar/overview.md) |
 | `propagation-graph` | Grafo de propagação com rollup materializado completo (versão simplificada já em `intelligence-center/narratives-exploration.md`) | rascunho | — |
 | `decision-center` | AI Advisors — perguntas livres/interativas do analista sobre mentions/narrativas | rascunho | — |
 | `executive-reports` | Relatórios periódicos (diário/semanal/mensal/executivo/crise) | rascunho | — |

@@ -349,6 +349,30 @@ para uma tendência estatística", não um valor inventado).
 > (`get_communication_impact`), que ancora Momentum/Tendência/Risco/
 > Sentimento numa data histórica (antes/depois de uma Comunicação/Decisão)
 > em vez de sempre "agora".
+>
+> ⚠️ **Bug real de overload duplicado, encontrado e corrigido (2026-07-14,
+> migration `20260731040000`)**: a migration seguinte na mesma sessão de
+> `20260726010000` (`20260726020000`, o fix de sentimento "proportion
+> only") recriou `get_narratives_table` com **6** parâmetros via `create
+> or replace` sem `drop function` prévio — como a assinatura de 6
+> parâmetros tinha acabado de ser dropada por `20260726010000` (que já
+> tinha migrado corretamente pra 7), esse `create or replace` **criou um
+> novo overload** em vez de substituir, deixando dois `get_narratives_table`
+> conflitantes no catálogo (6 e 7 parâmetros), divergentes entre si (o de
+> 7 nunca ganhou `category_label` nem o fix de sentimento). Toda chamada
+> via PostgREST (`get-page-overview`/`get-page-narratives`/
+> `get-narrative-detail`, que passam sempre 6 argumentos nomeados, nunca
+> `p_reference_at`) ficava sujeita a uma resolução de overload ambígua,
+> causando `narratives: []`/`ui_meta.narrative: null` silenciosos no
+> envelope (erro capturado pelo `try/catch` de `fetchNarratives`/
+> `fetchNarrativeSummary`, nunca propagado). `get_communication_impact` não
+> era afetado — chama com `p_reference_at =>` nomeado explicitamente, o
+> que resolve sem ambiguidade contra o overload de 7 parâmetros mesmo com
+> os dois coexistindo. Corrigido consolidando em UM ÚNICO
+> `get_narratives_table` de 7 parâmetros (drop dos dois antigos + create),
+> reunindo `category_label`/sentimento "proportion only" com
+> `p_reference_at` na Tendência. Ver `CLAUDE.md`, "`/narratives` retornando
+> vazio...", pro relato completo do diagnóstico.
 
 | Faixa | Rótulo |
 |---|---|

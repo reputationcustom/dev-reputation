@@ -3,10 +3,24 @@ tipo: feature-spec
 módulo: event-radar
 funcionalidade: schema-integration
 status: rascunho
-atualizado: 2026-07-25
+atualizado: 2026-07-31
 ---
 
 # Integração com o Schema Existente
+
+> ⚠️ **Item 1 implementado (2026-07-31), item 2 continua rascunho** — a
+> escrita em `feed_events` descrita no "Fluxo principal" item 1 abaixo foi
+> implementada como parte do próprio código de 1.4
+> (`event-radar-agent-orchestrator`, ver `agent-orchestrator.md`), não como
+> uma etapa/função separada — a spec original já descrevia isso como o
+> próprio passo 4 do "Fluxo principal" de `agent-orchestrator.md` ("recebe
+> a resposta e grava conforme schema-integration.md"), então implementar
+> 1.4 sem essa escrita não faria sentido. `feed_event_feedback` (item 2 —
+> retroalimentação pós-publicação do analista) **não** foi implementado —
+> precisa de uma UI própria (analista dando feedback num card já
+> publicado), não pedida ainda. Status deste arquivo continua `rascunho`
+> por causa do item 2; ver `data-model.md` pro schema real de `feed_events`
+> já em produção.
 
 ## Objetivo
 

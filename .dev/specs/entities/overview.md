@@ -36,6 +36,13 @@ atualizado: 2026-07-13
 > com o ranking de Autores) continuam só especificados, não implementados
 > — o catálogo já existe e já está populado, mas ainda só editável via SQL
 > direto, não pela UI.
+>
+> ✅ **`entity_accounts` dos 512 Deputados Federais também populada no
+> mesmo dia** (migration `20260731030000`) — fonte oficial real
+> (`redeSocial` do endpoint de detalhe de cada deputado na Câmara), 976
+> contas em 4 plataformas. Sem fonte equivalente para os 81 Senadores (API
+> do Senado confirmadamente não expõe esse dado) — ver `data-model.md`
+> para o detalhe completo.
 
 ## Objetivo
 

@@ -8,15 +8,28 @@ atualizado: 2026-07-13
 
 # Cadastro de Entidades (CRUD)
 
+> ✅ **Campos reorganizados (2026-07-13)**, pedido do usuário: "renomeie o
+> campo descrição para cargo, inclua um novo campo chamado partido, crie
+> um campo chamado ideologia... e reorganize os dados nessas novas
+> colunas." O formulário abaixo já reflete o schema atualizado
+> (`data-model.md`, migration `20260731050000`) — `Descrição` (textarea
+> livre) deixou de existir como campo próprio; `Cargo`/`Partido`/
+> `Ideologia` são campos estruturados de "Dados básicos", não mais linhas
+> de "Classificação" (`entity_tags`). Este arquivo continua `pronto`, não
+> implementado — a UI/Edge Functions descritas abaixo ainda não têm
+> código.
+
 ## Objetivo
 
 Dar a administradores da plataforma (`user_profiles.is_admin = true`) uma
 tela para cadastrar, editar, desativar/reativar e excluir Entidades
 (pessoas, veículos de imprensa, partidos, instituições, empresas e
 movimentos relevantes ao debate público monitorado) e suas classificações
-(contas por plataforma + tags de espectro/partido/cargo/etc.) — mesmo
-padrão de tela administrativa já usado por `auth/user-management.md`
-(`/admin/users`), aplicado a um cadastro diferente.
+(cargo/partido/ideologia + contas por plataforma + classificações
+adicionais via `entity_tags`, ex: estado/poder-instituição/postura em
+relação ao candidato) — mesmo padrão de tela administrativa já usado por
+`auth/user-management.md` (`/admin/users`), aplicado a um cadastro
+diferente.
 
 ## Usuários afetados
 

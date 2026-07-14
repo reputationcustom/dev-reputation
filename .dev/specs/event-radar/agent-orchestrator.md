@@ -2,11 +2,60 @@
 tipo: feature-spec
 módulo: event-radar
 funcionalidade: agent-orchestrator
-status: rascunho
-atualizado: 2026-07-25
+status: implementado
+atualizado: 2026-07-31
 ---
 
 # Orquestrador de Agent (única chamada à IA por evento)
+
+> ✅ **Implementado (2026-07-31)** — Edge Function
+> `supabase/functions/event-radar-agent-orchestrator/index.ts` (migration
+> `20260731020000_event_radar_agent_orchestrator.sql`), primeira e única
+> etapa do módulo com chamada de IA (1.1/1.2/1.3/1.6 são 100% SQL). Fluxo
+> igual ao descrito abaixo: lê `radar_staging_events` já dentro do cap
+> diário (`queued_for_agent_at is not null`, 1.6) e ainda não processados
+> (`agent_processed_at is not null` marca "IA já rodou" — coluna nova, não
+> antecipada em `data-model.md`), monta o payload via
+> `event_radar_build_agent_payload()` (SQL), faz a chamada e grava em
+> `feed_events` quando `should_publish=true` — que **também** foi criada
+> nesta migration (nunca tinha `data-model.md`/migration antes, mesmo
+> tabela documentada desde a "Fusão de módulos"). Agendada via `pg_cron` a
+> cada 15min, mesmo padrão `net.http_post` de `bw-sync-heartbeat`.
+>
+> **Modelo: Claude Haiku 4.5** (`claude-haiku-4-5`) — decisão explícita do
+> usuário (2026-07-31), dado que este módulo já declara "cada chamada de
+> IA tem custo" como princípio (`overview.md`) — conflitava com o default
+> geral de assistente de sempre usar o modelo mais capaz, por isso essa
+> escolha específica foi levada ao usuário em vez de decidida
+> silenciosamente. Configurável via `EVENT_RADAR_AGENT_MODEL` (secret da
+> Edge Function), sem precisar de nova migration/deploy de código.
+>
+> ⚠️ **Dedup semântico ("Regras de negócio") implementado como contexto no
+> payload, não como um prompt com múltiplos eventos simultâneos** — o
+> desenho é uma chamada por evento, então não há como literalmente "juntar
+> vários eventos no mesmo prompt". Em vez disso,
+> `event_radar_build_agent_payload()` inclui `sibling_events` (outros
+> eventos ativos agora no mesmo escopo) e `recent_related_cards` (cards já
+> publicados nas últimas 24h pra mesma Narrativa, só escopo `narrative` —
+> `feed_events` não tem uma coluna de `scope_id` própria, só
+> `related_narrative_id`) — o prompt instrui a IA a retornar
+> `should_publish: false` quando o evento não traz nada novo em relação a
+> esse contexto. Decisão de escopo documentada, não um gap silencioso.
+>
+> **Fora desta leva, deliberadamente**: "Resumo executivo" em lote (1x/dia
+> — feature separada, não descrita no "Fluxo principal" abaixo) e
+> `feed_event_feedback`/`schema-integration.md` item 2 (retroalimentação
+> pós-publicação do analista — precisa de UI própria, não pedida ainda).
+>
+> **Coluna nova em `feed_events`, não antecipada em `data-model.md`**:
+> `severity_explanation` — o "Schema de saída" abaixo já exigia esse campo
+> da IA ("por que essa severidade, em linguagem natural"), mas
+> `data-model.md` nunca tinha uma coluna pra guardá-lo (distinto de
+> `description`, que guarda o `explanation` — causa provável do evento em
+> si, não da severidade).
+>
+> ⚠️ Não testado contra a API real da Anthropic nem do Supabase nesta
+> sessão (sem credenciais/ambiente disponíveis) — revisado manualmente.
 
 ## Objetivo
 

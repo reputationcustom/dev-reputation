@@ -29,27 +29,84 @@ atualizado: 2026-07-13
 > federal ativa (Câmara e/ou Senado) + **512 deputados federais** + **81
 > senadores** = **593 parlamentares**, cada um com 3 `entity_tags`
 > (`office`/`party`/`state`) direto dos mesmos endpoints oficiais.
-> **Deliberadamente fora do seed** (mesmo critério de nunca fabricar sem
-> fonte confiável, ver o comentário completo no topo do arquivo da
-> migration): `entity_accounts` (handles de rede social — sem API oficial
-> em lote confiável para 593 pessoas; um handle errado quebraria
-> silenciosamente o vínculo com `bw_query_top_authors`, ver
-> `author-linking.md`), `influence_level` (campo explicitamente manual/
-> subjetivo por design), `political_spectrum`/`ideology` (classificação
-> contestável — não apresentada como fato sem fonte verificada nesta
-> sessão), e partidos registrados no TSE sem parlamentar federal eleito
-> hoje (ex: PCO, PSTU, PCB, UP, PMB, PRTB — fora do escopo "partidos e
-> parlamentares" tal como as duas fontes oficiais usadas confirmam agora).
-> Ambas as migrations foram revisadas manualmente (estrutura de `INSERT`,
-> ausência de vírgula solta antes de `on conflict`, encoding UTF-8 dos
-> nomes acentuados) mas **não executadas contra um banco real** nesta
-> sessão — sem credenciais/deploy neste ambiente, mesma limitação
-> recorrente de toda sessão sem acesso ao Supabase Dashboard já registrada
-> em várias entradas de `CLAUDE.md`. `entity-registration.md`
-> (CRUD/Edge Functions) e `author-linking.md` (`LEFT JOIN` em
-> `get_authors_ranking`) continuam `pronto`, não implementados — o módulo
-> `entities` como um todo permanece amarelo em `_architecture.md` até os
-> dois existirem também.
+> **Deliberadamente fora deste primeiro seed** (mesmo critério de nunca
+> fabricar sem fonte confiável, ver o comentário completo no topo do
+> arquivo da migration): `entity_accounts` — na época sem uma fonte oficial
+> em lote conhecida, ver ✅ nota logo abaixo, que fecha esse gap para os
+> deputados — `influence_level` (campo explicitamente manual/subjetivo por
+> design), `political_spectrum`/`ideology` (classificação contestável — não
+> apresentada como fato sem fonte verificada nesta sessão), e partidos
+> registrados no TSE sem parlamentar federal eleito hoje (ex: PCO, PSTU,
+> PCB, UP, PMB, PRTB — fora do escopo "partidos e parlamentares" tal como
+> as duas fontes oficiais usadas confirmam agora).
+>
+> ✅ **`entity_accounts` de Deputados Federais (2026-07-13, mesmo dia)**,
+> pedido do usuário: "consegue identificar as plataformas e os perfis dos
+> parlamentares? Se sim, crie um seed para entities account." — migration
+> `supabase/migrations/20260731030000_seed_deputy_social_accounts.sql`.
+> Resposta encontrada ao vivo nesta sessão: **sim para os 512 Deputados
+> Federais** (o endpoint de **detalhe** de cada deputado,
+> `dadosabertos.camara.leg.br/api/v2/deputados/{id}` — diferente do
+> endpoint de listagem usado no seed anterior — expõe um campo
+> `redeSocial`, preenchido voluntariamente por cada gabinete; 512/512
+> consultas com sucesso, 325 deputados com ao menos 1 conta declarada,
+> 976 contas válidas depois de filtrar 13 URLs comprovadamente malformadas
+> na própria fonte — ex: `twitter.com/https:`, um link colado dentro de
+> outro; `facebook.com/share`, sem perfil identificável — omitidas em vez
+> de gravadas erradas). **Não para os 81 Senadores** — a API de dados
+> abertos do Senado (`legis.senado.leg.br/dadosabertos/senador/{id}`) foi
+> conferida campo a campo nesta sessão e genuinamente não tem nenhum campo/
+> serviço de redes sociais; sem uma segunda fonte oficial em lote, os
+> senadores ficam sem `entity_accounts` até existir cadastro manual
+> (`/admin/entities`) ou uma fonte alternativa confiável. Plataformas
+> extraídas do domínio da URL (`twitter`/`instagram`/`facebook`/`youtube`),
+> formatos legados normalizados (`youtube.com/user/NOME`,
+> `facebook.com/pages/NOME/ID`, `twitter.com/#!/NOME`) — ver comentário
+> completo no topo da migration para o detalhe de cada tratamento.
+>
+> Ambas as migrations de dado foram revisadas manualmente (estrutura de
+> `INSERT`, ausência de vírgula solta antes de `on conflict`, encoding
+> UTF-8 dos nomes acentuados, ausência de handle duplicado entre 2
+> deputados) mas **não executadas contra um banco real** nesta sessão —
+> sem credenciais/deploy neste ambiente, mesma limitação recorrente de
+> toda sessão sem acesso ao Supabase Dashboard já registrada em várias
+> entradas de `CLAUDE.md`. `entity-registration.md` (CRUD/Edge Functions)
+> e `author-linking.md` (`LEFT JOIN` em `get_authors_ranking`) continuam
+> `pronto`, não implementados — o módulo `entities` como um todo permanece
+> amarelo em `_architecture.md` até os dois existirem também.
+>
+> ✅ **Reorganização de campos (2026-07-13, mesmo dia)**, pedido do
+> usuário: "renomeie o campo descrição para cargo, inclua um novo campo
+> chamado partido, crie um campo chamado ideologia (popule com direita,
+> esquerda, centro, centro direita, centro esquerda) e reorganize os dados
+> nessas novas colunas" — migration
+> `supabase/migrations/20260731050000_entities_cargo_partido_ideologia.sql`.
+> `description` → **renomeada para `cargo`** (`alter table ... rename
+> column`, dado preservado, não recriada); duas colunas novas, `partido
+> text` e `ideologia text`. Dado reorganizado (não buscado de novo — 100%
+> reaproveitado do que os dois seeds anteriores já tinham gravado):
+> `cargo`/`partido` dos 593 parlamentares migrados dos `entity_tags`
+> `office`/`party` para as colunas novas (esses 2 `tag_type` foram
+> **removidos** de `entity_tags` depois da migração — dado passa a viver
+> só num lugar, não duplicado; `state` continua em `entity_tags`,
+> inalterado); `cargo` dos 21 partidos zerado (a coluna guardava o nome
+> completo do partido antes da renomeação — ex: "Movimento Democrático
+> Brasileiro" —, que deixou de fazer sentido numa coluna chamada "cargo").
+> ⚠️ **`ideologia` é a única coluna deste módulo que não vem de uma fonte
+> oficial em lote** (diferente de `cargo`/`partido`/`estado`, direto da
+> Câmara/Senado) — os 21 partidos foram classificados por caracterização
+> amplamente citada na ciência política/imprensa brasileira (linha
+> editorial, composição de blocos parlamentares, posicionamento em pautas
+> econômicas/de costumes), não uma fonte única verificável como as
+> migrations anteriores — **classificação de melhor esforço, revisável
+> pelo admin a qualquer momento** (`/admin/entities`, quando implementada),
+> ver a nota completa no topo da migration para a lista partido→ideologia
+> usada. Os 593 parlamentares **herdam a ideologia do próprio partido**
+> (`entities.partido` → busca o `ideologia` do partido correspondente) —
+> não é uma avaliação individual por parlamentar. Revisão manual da mesma
+> natureza das anteriores (conferido programaticamente que as 21 siglas da
+> classificação batem exatamente, char a char incl. acentos, com as 21
+> siglas já semeadas) — **não executada contra um banco real**.
 
 ## Entidades
 
@@ -67,7 +124,9 @@ Brandwatch (que não tem noção de partido/espectro/cargo).
 | `id` | `uuid` | sim | PK — `gen_random_uuid()` |
 | `type` | `entity_type` (enum) | sim | `person` \| `media_outlet` \| `party` \| `institution` \| `company` \| `movement` \| `other` — ver enum abaixo |
 | `name` | `text` | sim | Nome de exibição (ex: "João da Silva", "Rede Globo", "Partido X") |
-| `description` | `text` | não | Texto livre — biografia curta, contexto, por que esta Entity é monitorada |
+| `cargo` | `text` | não | ✅ **Renomeado de `description` (2026-07-13)**, pedido do usuário. Cargo/função da Entity (ex: "Deputado Federal", "Senador", "Senadora") — para pessoas; `null` para os demais tipos (ex: partido — não se aplica) |
+| `partido` | `text` | não | ✅ **Adicionado (2026-07-13)**. Sigla do partido (ex: "PT", "PL", "MDB") — para pessoas vinculadas a um partido; `null` para os demais tipos, incl. o próprio partido (uma Entity `type = 'party'` não referencia a si mesma aqui). Texto livre, não FK — o vínculo com a linha `type = 'party'` correspondente (mesmo `name`) é só para leitura/relatório, nunca obrigatório |
+| `ideologia` | `text` | não | ✅ **Adicionado (2026-07-13)**. Posicionamento político — vocabulário usado até aqui: `esquerda`, `centro-esquerda`, `centro`, `centro-direita`, `direita` (texto livre, não enum/CHECK — mesmo motivo de `entity_tags` ser texto livre: classificação política é contestável e pode precisar de um valor novo no futuro, ex: uma corrente mais extrema). Para partidos, é a classificação em si; para pessoas, normalmente **herdada do próprio partido** (não uma avaliação individual por parlamentar) — ver nota no topo deste arquivo sobre a fonte (melhor esforço, não uma API oficial como `cargo`/`partido`) |
 | `photo_url` | `text` | não | URL de uma imagem/avatar (Supabase Storage ou externa) — sem upload próprio nesta versão, só um campo de URL (mesma simplicidade do `external_url` de `communications`) |
 | `influence_level` | `severity_level` (enum reaproveitado) | não | Avaliação **manual e subjetiva** do administrador sobre o quanto esta Entity influencia a campanha/candidato monitorado — `null` até alguém avaliar. Reaproveita o enum Postgres `severity_level` (`low`\|`medium`\|`high`\|`critical`, já criado em `foundation` — `create type severity_level as enum (...)`, reaproveitado por `narratives.risk_level`/`narratives.priority`) em vez de criar um tipo novo — mesmo princípio já registrado em `foundation/overview.md` ("Reuso de enums já existentes em vez de `text` livre") e no próprio comentário dessa migration ("Reusado por risk_level e priority em narratives (e futuramente cases)"). ⚠️ **A UI usa um rótulo próprio para este campo** (ex: "Baixa"/"Média"/"Alta"/"Muito alta"), diferente do rótulo usado para risco de Narrativa/Caso ("Baixo"/"Médio"/"Alto"/"Crítico") — mesmo valor de banco (mesmo tipo `severity_level`), semântica de exibição diferente; não reaproveitar o componente `RiskBadge` sem primeiro trocar o texto, para não confundir "risco" com "influência" na tela |
 | `is_active` | `boolean` | sim | Default `true`. Desativar (não excluir) preserva o cadastro para quem já referencia esta Entity — ver `entity-registration.md`, "Regras de negócio" |
@@ -96,6 +155,10 @@ referência):
 - `entities_type_idx` em `(type)` — filtro por tipo na listagem.
 - `entities_is_active_idx` em `(is_active)` — a listagem por padrão só
   mostra ativas (ver `entity-registration.md`).
+- `idx_entities_partido` em `(partido)` — ✅ **adicionado (2026-07-13)**,
+  filtro por partido na listagem/relatório.
+- `idx_entities_ideologia` em `(ideologia)` — ✅ **adicionado (2026-07-13)**,
+  filtro por espectro na listagem/relatório.
 
 **Políticas RLS**:
 
@@ -178,13 +241,20 @@ sem passar por esta lista):
 
 | `tag_type` | O que representa | Exemplos de `tag_value` | Seleção |
 |---|---|---|---|
-| `political_spectrum` | Posicionamento político | `esquerda`, `centro-esquerda`, `centro`, `centro-direita`, `direita` | única (recomendado) |
-| `ideology` | Corrente ideológica | `liberal`, `conservador`, `progressista`, `nacionalista`, `ambientalista` | múltipla |
-| `party` | Partido político (sigla) | `PT`, `PL`, `MDB`, `PSDB`... | única (recomendado) |
-| `office` | Cargo/função | `Senador`, `Deputado Federal`, `Prefeito`, `Colunista`, `Apresentador` | única (recomendado) |
 | `power_branch` | Poder/instituição a que pertence | `Executivo`, `Legislativo`, `Judiciário`, `Mídia`, `Sociedade Civil`, `Setor Privado` | múltipla |
 | `state` | Estado (UF) de atuação | `SP`, `RJ`, `MG`... | única (recomendado) |
 | `stance_to_candidate` | Postura em relação ao candidato/campanha monitorada | `aliado`, `opositor`, `crítico ocasional`, `neutro` | única (recomendado) |
+
+⚠️ **`party`/`office`/`political_spectrum` saíram desta tabela
+(2026-07-13)** — viraram colunas próprias de `entities`
+(`partido`/`cargo`/`ideologia`, ver acima), pedido explícito do usuário.
+Migration `20260731050000` moveu o dado que já existia como `entity_tags`
+(`party`/`office`, populados pelo seed de parlamentares) para as colunas
+novas e **removeu** essas 2 linhas de `entity_tags` — não ficam
+duplicadas em dois lugares. `political_spectrum` nunca chegou a ser
+populado como `entity_tags` (ficou só como sugestão de vocabulário até
+aqui) — o pedido do usuário de "criar um campo ideologia" foi resolvido
+direto como coluna, sem passar por EAV primeiro.
 
 ⚠️ **`influence_level`, apesar do nome parecido com `stance_to_candidate`
 acima, é coluna própria de `entities`, não um `tag_type`** — é o único
@@ -192,7 +262,9 @@ campo de classificação tratado como estruturado (não EAV) porque o pedido
 original do usuário o trata como um atributo central e único por Entity
 ("qual o nível de influência sobre o candidato"), o que se beneficia de
 ordenação/filtro direto na listagem (mais barato como coluna do que como
-`tag_type` — ver `entity-registration.md`, "Interface").
+`tag_type` — ver `entity-registration.md`, "Interface"). `cargo`/`partido`/
+`ideologia` seguem exatamente o mesmo raciocínio, aplicado agora a 3
+dimensões a mais (ver nota acima).
 
 **Políticas RLS**: mesmas de `entities` (SELECT aberto, escrita
 `is_current_user_admin()`).

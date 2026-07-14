@@ -2,7 +2,7 @@
 tipo: data-model
 módulo: event-radar
 status: rascunho
-atualizado: 2026-07-30
+atualizado: 2026-07-31
 ---
 
 # Modelo de Dados — Radar de Eventos
@@ -35,9 +35,10 @@ atualizado: 2026-07-30
 > abaixo, mas não existe um tipo chamado `risk_level` neste schema — o
 > enum de fato reaproveitado por `narratives.risk_level` chama-se
 > `severity_level` (`low`\|`medium`\|`high`\|`critical`,
-> `foundation_schema.sql`), corrigido na tabela abaixo. `feed_events`/
-> `feed_event_feedback` (resto deste arquivo) continuam rascunho, sem
-> migration — só `radar_staging_events` existe hoje.
+> `foundation_schema.sql`), corrigido na tabela abaixo. ✅ **`feed_events`
+> implementado em 2026-07-31** (migration `20260731020000`, junto com 1.4
+> `agent-orchestrator`) — ver seção própria abaixo. `feed_event_feedback`
+> continua rascunho, sem migration.
 
 Staging interno do motor de detecção (etapa 1.1) — **nunca lido pelo frontend**, só por
 `deduplication-grouping` (1.2), `severity` (1.3) e `agent-orchestrator` (1.4). Ver
@@ -59,7 +60,8 @@ Staging interno do motor de detecção (etapa 1.1) — **nunca lido pelo fronten
 | `severity_score`     | `numeric`        | não | 0-100, preenchido pela etapa 1.3 (`severity.md`) — `null` até essa etapa rodar |
 | `severity`           | `severity_level` | não | `low`\|`medium`\|`high`\|`critical`, mesmo enum de `narratives.risk_level` — preenchido pela etapa 1.3 |
 | `closed_at`          | `timestamptz`    | não | Preenchido pela etapa 1.2 quando o indicador volta ao normal e a regra deixa de disparar — evento deixa de ser "ativo" (ver `deduplication-grouping.md`) |
-| `queued_for_agent_at` | `timestamptz`   | não | ✅ **Coluna nova (2026-07-30, `volume-limits.md`)** — preenchida pela etapa 1.6 quando o evento entra no cap diário de organização (`daily_event_cap`, `event_radar_config()`); `null` enquanto não for a vez dele. Uma futura Edge Function de 1.4 lê `queued_for_agent_at is not null` pra saber o que processar |
+| `queued_for_agent_at` | `timestamptz`   | não | ✅ **Coluna nova (2026-07-30, `volume-limits.md`)** — preenchida pela etapa 1.6 quando o evento entra no cap diário de organização (`daily_event_cap`, `event_radar_config()`); `null` enquanto não for a vez dele. A Edge Function `event-radar-agent-orchestrator` (1.4) lê `queued_for_agent_at is not null` pra saber o que processar |
+| `agent_processed_at` | `timestamptz`   | não | ✅ **Coluna nova (2026-07-31, `agent-orchestrator.md`)** — marcada pela Edge Function `event-radar-agent-orchestrator` (1.4) depois da única chamada de IA por evento (`should_publish` true ou false, tanto faz). Distinta de `queued_for_agent_at`: um evento pode estar "na fila" (1.6) sem ainda ter sido processado (aguardando a Edge Function rodar) |
 | `created_at`/`updated_at` | `timestamptz` | sim | Padrão (`set_updated_at`) |
 
 **Índices**: unique parcial em `(organization_id, scope_type, scope_id, event_type, window) WHERE closed_at IS NULL` —
@@ -73,6 +75,15 @@ regra 3): staging interno, só `SUPABASE_SECRET_KEY` (as próprias Edge Function
 
 ### `feed_events` — colunas específicas de `event-radar`
 
+> ✅ **Implementado (2026-07-31)** — migration
+> `20260731020000_event_radar_agent_orchestrator.sql`, junto com a Edge
+> Function `event-radar-agent-orchestrator` (1.4). Duas correções em
+> relação ao texto abaixo: `severity`/`related_entity_id` (ver notas
+> inline) e uma coluna nova, `radar_staging_event_id` — sem ela não havia
+> como implementar "closed_at espelha radar_staging_events.closed_at"
+> (linha `closed_at` abaixo), que exige saber qual linha de `feed_events`
+> veio de qual linha de `radar_staging_events`.
+
 `feed_events` é uma tabela compartilhada (`_glossary.md`, "Feed Inteligente") — outros produtores
 além do radar já são citados no enum `feed_event_type` (`case_created`, `case_status_changed`,
 `note_published`, `new_entity_detected`, ver `_glossary.md`). Esta seção documenta só a parte
@@ -83,19 +94,21 @@ módulo tem `data-model.md` gravando nela ainda).
 |--------------------------|---------------------|-------------|-----------|
 | `id`                     | `uuid`              | sim | PK |
 | `organization_id`        | `uuid`              | sim | FK → `organizations(id)` ON DELETE CASCADE |
+| `radar_staging_event_id` | `uuid`              | não | ✅ **Coluna nova (2026-07-31)** — FK → `radar_staging_events(id)` ON DELETE SET NULL, `null` para eventos de origem não-radar. É o que permite fechar `closed_at` (abaixo) quando o evento de origem fecha |
 | `type`                   | `feed_event_type`   | sim | Enum já reservado em `_glossary.md` — para eventos de origem `event-radar`, o motor escolhe o valor mais próximo da **categoria** da regra: `threshold_triggered` para regras de volume (`volume_spike`/`volume_drop`/z-score), `sentiment_changed` para regras de sentimento (`sentiment_change`/`negative_sentiment_increase`/`negative_sentiment_spike`). **Não** um valor novo por regra — o enum é deliberadamente grosso, a granularidade real mora em `event_type` (abaixo) |
 | `event_type`             | `text`              | não | ✅ **Coluna nova, resolve a ambiguidade encontrada nesta revisão**: copia literalmente `radar_staging_events.event_type` (o rótulo granular da regra — `volume_spike`, `sentiment_change` etc.) — é o que o bloco `highlights` do envelope lê para diferenciar ícone/rótulo por tipo de evento (`standard-json-envelope.md`). `null` para eventos de origem não-radar (`case_created`/`note_published`/etc.), que não têm essa granularidade |
-| `severity`               | `risk_level`        | não | Copiado de `radar_staging_events.severity` no momento da publicação — `null` para eventos de origem não-radar |
+| `severity`               | `severity_level`    | não | ⚠️ Corrigido na implementação — texto original dizia "risk_level", tipo que não existe no schema; o enum real é `severity_level` (mesmo de `narratives.risk_level`). Copiado de `radar_staging_events.severity` no momento da publicação — `null` para eventos de origem não-radar |
 | `severity_score`         | `numeric`           | não | Copiado de `radar_staging_events.severity_score` — mesma ressalva acima |
-| `title`                  | `text`              | sim | ≤ 90 caracteres (`agent-orchestrator.md`, schema de saída) |
+| `severity_explanation`   | `text`              | não | ✅ **Coluna nova (2026-07-31)** — `agent-orchestrator.md`, "Schema de saída" já exigia esse campo da IA ("por que essa severidade"), mas nunca tinha coluna própria; distinto de `description` (causa provável do evento em si, não da severidade) |
+| `title`                  | `text`              | sim | ≤ 90 caracteres (`agent-orchestrator.md`, schema de saída) — reforçado por truncamento defensivo no código, já que JSON Schema não suporta `maxLength` |
 | `description`            | `text`              | sim | Nome de coluna já reservado em `_glossary.md` (`titulo`→`title`, `descricao`→`description`) — guarda o `explanation` do agent (texto mais longo, causa provável etc.) |
 | `summary`                | `text`              | sim | ≤ 300 caracteres — resumo curto, campo próprio (distinto de `description`/`explanation`) |
 | `recommendation`         | `text`              | não | Ação sugerida, quando aplicável |
 | `confidence`             | `numeric`           | não | 0-1, confiança da IA — `null` para eventos de origem não-radar |
 | `tags`                   | `text[]`            | não | Tags livres de busca/filtro |
 | `related_narrative_id`   | `uuid`              | não | FK → `narratives(id)` ON DELETE SET NULL — preenchido quando `scope_type = 'narrative'` |
-| `related_entity_id`      | `uuid`              | não | Sem FK ainda (`entities`, Sprint 2, ainda `rascunho`) — nullable, ligado quando `entities` existir |
-| `closed_at`              | `timestamptz`       | não | Espelha `radar_staging_events.closed_at`, para o card sumir do bloco `highlights` quando o evento correspondente for encerrado |
+| `related_entity_id`      | `uuid`              | não | Ainda sem FK — `entities/data-model.md` foi implementado em sessão concorrente a esta (migration `20260731000000`), mas não foi coordenado com esta migration; nullable, ligar via `alter table` numa sessão futura depois de confirmar a tabela em produção |
+| `closed_at`              | `timestamptz`       | não | Espelha `radar_staging_events.closed_at` (via `radar_staging_event_id`, acima), para o card sumir do bloco `highlights` quando o evento correspondente for encerrado — implementado dentro do próprio `run_event_detection()` (1.2), não numa função separada |
 | `created_at`/`updated_at`| `timestamptz`       | sim | Padrão (`set_updated_at`) |
 
 **Políticas RLS**: `feed_events_select_org` — leitura para `authenticated` escopada por

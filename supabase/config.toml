@@ -358,6 +358,12 @@ allow_dynamic_registration = false
 [functions.bw-sync]
 verify_jwt = false
 
+# event-radar-agent-orchestrator (1.4): mesma ressalva de bw-sync acima —
+# acionada só por pg_cron (net.http_post, migration `20260731020000`),
+# nunca pelo frontend.
+[functions.event-radar-agent-orchestrator]
+verify_jwt = false
+
 [edge_runtime]
 enabled = true
 # Supported request policies: `oneshot`, `per_worker`.

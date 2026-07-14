@@ -3768,7 +3768,7 @@ none of the 7 changes above (renamed widget, chart labels, table headers,
 the Brazil map's actual rendering/colors, the new `/authors` page) were
 visually confirmed in a real browser.
 
-## Módulo `event-radar` (Sprint 3) — 1.1 `detection-engine`, 1.2 `deduplication-grouping`, 1.3 `severity` e 1.6 `volume-limits` implementados (2026-07-27/28/29/30)
+## Módulo `event-radar` (Sprint 3) — 1.1 `detection-engine`, 1.2 `deduplication-grouping`, 1.3 `severity`, 1.6 `volume-limits` e 1.4 `agent-orchestrator` implementados (2026-07-27 a 2026-07-31)
 
 Primeiro código real do módulo `event-radar` (Sprint 3, `.dev/specs/event-radar/`
 — até esta sessão, 100% `rascunho`, nenhuma tabela existia). Usuário pediu
@@ -3993,6 +3993,100 @@ garantida entre si).
   nesta sessão (mesma limitação recorrente), nenhuma executada contra um
   banco de verdade. Sem componente TypeScript/frontend (SQL puro).
 
+### 1.4 `agent-orchestrator` (2026-07-31) — primeira chamada de IA e primeira Edge Function do módulo
+
+Pedido do usuário: seguir com 1.4. Migration
+`20260731020000_event_radar_agent_orchestrator.sql` + Edge Function
+`supabase/functions/event-radar-agent-orchestrator/index.ts` — a única
+etapa deste módulo que faz chamada de IA (1.1/1.2/1.3/1.6 são 100% SQL,
+`run_event_detection()`) e a única que precisa de Edge Function
+(agendada via `pg_cron`/`net.http_post` a cada 15min, mesmo padrão de
+`bw-sync-heartbeat`).
+
+- **Modelo: Claude Haiku 4.5** — decisão explícita do usuário, levantada
+  porque o módulo já declara "cada chamada de IA tem custo" como
+  princípio (`overview.md`), o que conflita com o default geral de
+  assistente de sempre usar o modelo mais capaz disponível. Configurável
+  via `EVENT_RADAR_AGENT_MODEL` (secret da Edge Function), sem precisar
+  de nova migration/deploy de código caso o usuário queira trocar depois.
+- **`feed_events` ganhou sua primeira migration nesta sessão** — a tabela
+  só existia documentada em `_glossary.md`/`data-model.md` desde a "Fusão
+  de módulos" (2026-07-12), nunca migrada. Criada junto com o enum
+  `feed_event_type` (7 valores, já listados em `_glossary.md`) e uma
+  coluna nova não antecipada em `data-model.md`:
+  `radar_staging_event_id` (FK → `radar_staging_events`) — sem ela não
+  havia como implementar "`closed_at` espelha
+  `radar_staging_events.closed_at`" (a frase exata do próprio
+  `data-model.md`), que exige saber qual linha de `feed_events` veio de
+  qual linha de `radar_staging_events`. Esse espelhamento foi implementado
+  dentro do próprio `run_event_detection()` (mais um `CREATE OR REPLACE`,
+  no mesmo bloco de fechamento de 1.2), não numa função separada.
+- **Segunda coluna nova, mesmo motivo**: `feed_events.severity_explanation`
+  — o "Schema de saída" de `agent-orchestrator.md` já exigia esse campo da
+  IA ("por que essa severidade, em linguagem natural") mas `data-model.md`
+  nunca teve uma coluna pra guardá-lo (distinto de `description`, que
+  guarda a causa provável do evento em si, não da severidade).
+- **Terceira coluna nova, em `radar_staging_events`**: `agent_processed_at`
+  — marca que a IA já rodou pra aquele evento, `should_publish` true ou
+  false tanto faz ("única chamada de IA por evento",
+  `agent-orchestrator.md`). Distinta de `queued_for_agent_at` (1.6): um
+  evento pode estar na fila do cap diário sem ainda ter sido processado
+  pela Edge Function.
+- **Payload agregado via `event_radar_build_agent_payload()` (SQL, não
+  JS)** — nunca texto bruto de mentions, só métricas já calculadas
+  (as do próprio evento), top tópicos com percentuais
+  (`bw_query_topics`), principais plataformas
+  (`bw_query_metrics_daily_by_platform`), contagens de autores
+  (`bw_query_top_authors`) — escopo `narrative`/`query` completos, escopo
+  `platform` mais magro (sem breakdown de tópicos/autores por plataforma
+  na fonte, mesmo gap honesto já documentado em 1.3).
+- **Dedup semântico (`agent-orchestrator.md`, "Regras de negócio") — a
+  única parte do módulo que genuinamente exige julgamento de IA —
+  implementado como contexto no payload, não como um prompt com vários
+  eventos simultâneos**: como o desenho é uma chamada por evento (não uma
+  chamada por lote de eventos relacionados), o payload inclui
+  `sibling_events` (outros eventos ativos agora no mesmo escopo, todos os
+  3 tipos de escopo) e `recent_related_cards` (cards já publicados nas
+  últimas 24h pra mesma Narrativa — só escopo `narrative`, já que
+  `feed_events` não tem uma coluna de `scope_id` própria, só
+  `related_narrative_id`) — o prompt instrui a IA a retornar
+  `should_publish: false` quando o evento não traz nada genuinamente novo
+  em relação a esse contexto. Decisão de escopo deliberada, documentada em
+  `agent-orchestrator.md`, não uma simplificação silenciosa.
+- **Saída forçada via `output_config.format` (JSON Schema, GA — sem beta
+  header)**, não tool-use — schema não suporta `maxLength`, então os
+  limites de 90/300 caracteres de `title`/`summary` (`agent-orchestrator.md`)
+  são reforçados por instrução no prompt + truncamento defensivo
+  (`.slice(0, 90)`/`.slice(0, 300)`) no código, nunca só confiados ao
+  schema.
+- **Tratamento de erro segue a tabela de "Fluxos alternativos" do spec ao
+  pé da letra**: `stop_reason: "refusal"` → não marca `agent_processed_at`,
+  reprocessado no próximo ciclo; resposta que não faz parse como JSON →
+  mesmo tratamento ("descartar e logar erro — nunca gravar payload
+  malformado"); falha ao gravar em `feed_events` depois de
+  `should_publish: true` → também não marca `agent_processed_at` (aceita
+  o custo de uma nova chamada de IA em troca de nunca perder um evento já
+  aprovado silenciosamente).
+- **Fora desta leva, deliberadamente**: "Resumo executivo" em lote (1x/dia
+  — feature separada, mencionada em `agent-orchestrator.md` mas não
+  descrita no próprio "Fluxo principal" desse arquivo, então tratada como
+  fora de escopo) e `feed_event_feedback`/`schema-integration.md` item 2
+  (retroalimentação pós-publicação do analista — precisa de UI própria,
+  não pedida ainda). `schema-integration.md` fica com status `rascunho`
+  só por causa desse item 2 — seu item 1 (escrita em `feed_events`) já foi
+  implementado como parte do próprio código de 1.4.
+- **Efeito colateral real**: `aggregated-metrics`'s `get_active_highlights`
+  (bloco `highlights` do envelope, `_pending.md` gap #8) já pode ser ligada
+  agora — `feed_events` existe e está sendo populada pela primeira vez.
+  Não implementado nesta sessão (fora do escopo pedido: só 1.4), mas
+  deixou de estar bloqueada.
+- **Verificação**: migration e Edge Function revisadas manualmente linha
+  por linha — sem acesso a um Supabase real nem a credenciais da API da
+  Anthropic nesta sessão (mesma limitação recorrente), nenhuma executada
+  contra ambiente de verdade. `npm:@anthropic-ai/sdk` importado sem pin de
+  versão (Deno resolve pra latest em build) — revisar se um deploy futuro
+  quebrar por breaking change do SDK.
+
 ### Módulo `entities` — spec completa + `data-model.md` implementado + seed real de partidos/parlamentares (2026-07-13)
 
 Duas sessões na mesma data. **Primeira**: usuário pediu a spec do módulo de
@@ -4109,7 +4203,38 @@ um autor do ranking) continuam só especificados — o catálogo já existe e
 já está populado no schema, mas hoje só é editável via SQL direto, não
 pela UI do produto.
 
-### `page_cache` desabilitado — investigação em aberto de `/narratives` retornando vazio (2026-07-14)
+**Follow-up, mesmo dia**: usuário perguntou "consegue identificar as
+plataformas e os perfis dos parlamentares? Se sim, crie um seed para
+entities account." Resposta real, verificada ao vivo, não assumida: **sim
+para os 512 Deputados Federais, não para os 81 Senadores** —
+`dadosabertos.camara.leg.br/api/v2/deputados/{id}` (endpoint de
+**detalhe**, diferente do endpoint de listagem já usado no seed anterior)
+expõe um campo `redeSocial` preenchido voluntariamente por cada gabinete;
+já `legis.senado.leg.br/dadosabertos/senador/{id}` foi conferido campo a
+campo nesta sessão e genuinamente não tem nenhum equivalente. Nova
+migration `supabase/migrations/20260731030000_seed_deputy_social_accounts.sql`:
+512/512 deputados consultados com sucesso (0 falhas), 325 com ao menos 1
+conta declarada, 989 URLs brutas → **976 linhas de `entity_accounts`**
+depois de descartar 13 URLs comprovadamente malformadas na própria fonte
+(ex: `twitter.com/https:` — um link colado dentro de outro pelo próprio
+gabinete; `facebook.com/share`/`facebook.com/profile.php` sem parâmetro
+`id` — sem handle real recuperável, omitidas em vez de gravadas erradas).
+Parser (script local, não commitado) normaliza plataforma pelo domínio da
+URL e resolve 3 formatos legados que apareceram de fato nos dados reais:
+`youtube.com/user/NOME` (YouTube antigo), `facebook.com/pages/NOME/ID`
+(Facebook Páginas antigo, usa o slug legível, não o ID numérico), e
+`twitter.com/#!/NOME` (Twitter hash-bang antigo, handle no fragmento da
+URL, não no path). Dedupe por `(platform, lower(username))` dentro do
+próprio seed (0 colisões reais encontradas) mais `on conflict (platform,
+username) do nothing` no banco (mesma constraint `entity_accounts_unique_handle`
+já definida no schema) para idempotência entre execuções. `entity_id` de
+cada linha reaproveita exatamente os mesmos UUIDs já gravados pela
+migration anterior — extraídos de volta do próprio arquivo SQL já
+commitado (parse por nome do deputado), não regerados, para garantir que
+cada conta aponta pra Entity certa. Ver `entities/data-model.md` para o
+detalhe completo.
+
+### `/narratives` retornando vazio — `page_cache` desabilitado, depois causa raiz real encontrada e corrigida (2026-07-14)
 
 User report: `get-page-narratives` devolvendo `narratives: []` para uma
 organização com Narrativas-folha ativas. Diagnóstico por leitura de código
@@ -4136,19 +4261,72 @@ function (ver histórico do git). `npx tsc --noEmit` confirma que isso não
 afeta o lado Next.js (arquivos `supabase/functions*` são excluídos do
 `tsconfig.json` de propósito).
 
-**Bug de `/narratives` continua em aberto** — o cache nunca foi
-confirmado como a causa real, só o principal suspeito ainda não
-descartado no momento do pedido. Hipóteses restantes, nenhuma verificada
-nesta sessão (sem acesso a logs/DB ao vivo): RLS sob a sessão JWT real do
-usuário divergindo da sessão elevada usada para rodar as queries de
-diagnóstico (mesmo `auth_organization_ids()`/RLS deveria valer igual, já
-que o mesmo client autenticado passa tanto pela checagem de
-`organization_members` quanto pela RPC — mas não descartado com certeza
-sem testar de verdade), ou uma exceção silenciosa em `fetchNarratives`
-(captura qualquer erro e retorna `[]`, só visível em Dashboard → Edge
-Functions → Logs → `get-page-narratives`, procurando por
-`fetchNarratives failed`). Ver `_pending.md`, gap #34, para o registro
-completo e os próximos passos de diagnóstico sugeridos.
+**Desabilitar o cache não resolveu** — usuário confirmou que continuava
+vazio, o que descartou `page_cache` como causa de vez e apontou de volta
+pro código das 3 Edge Functions pedidas para reexame:
+`get-page-overview`, `get-page-narratives`, `get-narrative-detail`.
+
+**Causa raiz real, encontrada nesta revisão**: `get_narratives_table`
+existia como **dois overloads conflitantes** no banco, mesma classe de
+bug já documentada neste arquivo ("Narrative card redesign...",
+2026-07-21) para esta mesma function. Sequência exata: `20260726010000`
+(módulo `communications`) adicionou `p_reference_at timestamptz default
+now()` (6 → 7 parâmetros) e corretamente fez `drop function if exists
+get_narratives_table(uuid, date, date, jsonb, uuid, text)` antes de
+recriar com 7 parâmetros. Minutos depois, na mesma sessão,
+`20260726020000` (o fix de sentimento "proportion only") fez só `create
+or replace function get_narratives_table(...)` com **6** parâmetros — sem
+`drop function` antes. Como a assinatura de 6 parâmetros tinha acabado de
+ser dropada, esse `create or replace` não substituiu nada: **criou** um
+novo overload de 6 parâmetros, coexistindo com o de 7. Os dois ficaram
+divergentes: o de 7 parâmetros nunca ganhou `category_label` (regressão —
+foi escrito a partir de uma cópia da function anterior a
+`20260725050000`) nem o fix de sentimento "proportion only".
+
+`get-page-overview`/`get-page-narratives`/`get-narrative-detail` chamam
+`get_narratives_table` via `supabase.rpc(...)` (PostgREST) com exatamente
+6 argumentos nomeados, nunca `p_reference_at` — com dois overloads do
+mesmo nome no catálogo, PostgREST fica sujeito a falhar ao escolher um
+único candidato (`PGRST203`, "could not choose the best candidate
+function") em vez de simplesmente preferir o de menos parâmetros default
+como o Postgres faria numa chamada SQL pura. Esse erro nunca chegava
+visível ao usuário: `fetchNarratives`/`fetchNarrativeSummary`
+(`aggregated-metrics-service.ts` + as 7 cópias inline nas Edge Functions)
+capturam qualquer exceção da RPC e devolvem `[]`/`null` silenciosamente —
+exatamente o sintoma reportado. Isso também explica por que as queries
+SQL diretas do usuário sempre mostraram dado real (SQL direto não passa
+pelo PostgREST, então nunca hits essa ambiguidade) e por que desabilitar
+`page_cache` não mudou nada (nunca foi a causa).
+
+`get_communication_impact` (também em `20260726010000`) chama
+`get_narratives_table` com argumentos nomeados incluindo `p_reference_at
+=>` explicitamente — resolve sem ambiguidade contra o overload de 7
+parâmetros mesmo com os dois coexistindo, o que explica por que o módulo
+`communications` nunca apresentou o mesmo sintoma.
+
+**Fix** (migration `20260731040000`): dropa os dois overloads antigos
+(`drop function` pras assinaturas de 6 e de 7 parâmetros) e recria UM
+ÚNICO `get_narratives_table`, 7 parâmetros, reunindo as duas metades que
+tinham divergido — `category_label`/sentimento "proportion only" (de
+`20260726020000`) + `p_reference_at` ancorando a janela de 14 dias da
+Tendência (de `20260726010000`, `trend_series` agora usa
+`(p_reference_at::date)` em vez de `current_date`). Diff isolado
+confirmado contra `20260726020000`: só a assinatura (parâmetro extra) e
+`trend_series` mudam, todo o resto (scope/momentum/risco/tags) é
+idêntico. `get_communication_impact`/`get_narrative_communication_timeline`
+não precisaram de nenhuma mudança — funções `language sql` não fixam o OID
+do que chamam por nome no momento da criação, resolvem a cada invocação
+contra o overload que existir no catálogo naquele momento.
+
+`page_cache` continua desabilitado (ver acima) — não era a causa, mas
+também não havia motivo pra reativar só por isso; fica como estava,
+retomada é decisão separada do usuário. `npx tsc --noEmit` confirma que a
+migration não afeta o lado Next.js (SQL puro). **Migration não executada
+contra um banco real nesta sessão** — sem credenciais/deploy neste
+ambiente, mesma limitação recorrente de toda sessão sem acesso ao
+Supabase Dashboard; `git push` para `develop` (fluxo já estabelecido) é o
+próximo passo para isso rodar de verdade e confirmar `/narratives`
+voltando a popular. Ver `_pending.md`, gap #34, pro registro completo.
 
 ## Directory structure
 
