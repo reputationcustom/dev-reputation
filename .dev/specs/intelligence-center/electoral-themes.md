@@ -8,6 +8,17 @@ atualizado: 2026-07-22
 
 # Pautas Eleitorais
 
+> ✅ **"Comparação entre períodos" implementada + movida pro início da
+> página (2026-07-14)** — era `EmptyState` desde a reorganização de
+> 2026-08-09 ("depende de síntese narrativa, ver `_pending.md`"). Fechada
+> via ai-synthesis Camada 2: compara o SOV por Pauta do período atual
+> contra o período imediatamente anterior (mesma duração), reaproveitando
+> `get_theme_breakdown` (já usado por "Share of Voice e sentimento por
+> pauta") chamado uma 2ª vez pro período anterior — nenhuma function SQL
+> nova. Ver `aggregated-metrics/ai-synthesis.md`, "Camada 2", pro
+> mecanismo completo. Movido pro início da página, antes de "Estrutura das
+> pautas" — pedido explícito do usuário.
+
 > ✅ **SOV da tabela e do gráfico corrigido pra escopo "só Pautas"
 > (2026-08-09, mesma sessão do item 4 abaixo)** — pedido do usuário: "tudo
 > [nessa página] deve ser somente em cima da categoria Pautas. SOV do
@@ -169,11 +180,13 @@ Mesmo público das demais páginas deste módulo.
    "Pautas" — nunca o ranking genérico da Query inteira — e cada autor
    carrega `narrative_labels`: os títulos de todas as pautas em que ele
    apareceu no período (pode ser mais de uma).
-5. Comparação entre períodos (ex: "Segurança perdeu 4 pontos de
-   participação, enquanto saúde ganhou 7 pontos na última semana") — cálculo
-   simples de diferença de SOV entre dois períodos já agregados
-   oficialmente (`narrative_metrics` de duas janelas), não uma nova fonte
-   de dado.
+5. ✅ **Implementado (2026-07-14)**: Comparação entre períodos (ex:
+   "Segurança perdeu 4 pontos de participação, enquanto saúde ganhou 7
+   pontos na última semana") — texto gerado por IA (ai-synthesis Camada
+   2, `ui_meta.period_comparison_text`) a partir de `get_theme_breakdown`
+   chamado 2 vezes (período atual + período imediatamente anterior de
+   mesma duração), não uma nova fonte de dado. Widget no início da
+   página, não na grade de 2 colunas mais abaixo.
 
 ## Fluxos alternativos e erros
 

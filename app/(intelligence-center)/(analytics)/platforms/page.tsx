@@ -7,6 +7,7 @@ import { PlatformParticipationBars } from "@/components/intelligence-center/char
 import { TrendLineChart } from "@/components/intelligence-center/charts/trend-line-chart";
 import { NarrativeTextPanel } from "@/components/intelligence-center/insights-panel";
 import { TopicSentimentList } from "@/components/intelligence-center/term-signals-list";
+import { ExpandableText } from "@/components/ui/expandable-text";
 import { EmptyState } from "@/components/ui/empty-state";
 
 // Análise por Plataforma (`/platforms`, intelligence-center/platform-analysis.md).
@@ -15,11 +16,14 @@ import { EmptyState } from "@/components/ui/empty-state";
 // por publicação, autores únicos por plataforma (o dado existe em
 // `bw_query_metrics_daily_by_platform`, mas `BreakdownItem` não expõe
 // esses 2 campos — só label/value/pct — sem function/envelope novo pra
-// isso ainda), velocidade de propagação por plataforma e conteúdos de
-// destaque (mentions individuais). "Sentimento por plataforma" não se
-// repete aqui — já é o próprio widget da página de Sentimento; esta
-// página usa a mesma breakdown só que como "Participação por plataforma"
-// (protótipo original), sem o score de sentimento.
+// isso ainda) e velocidade de propagação por plataforma. "Sentimento por
+// plataforma" não se repete aqui — já é o próprio widget da página de
+// Sentimento; esta página usa a mesma breakdown só que como "Participação
+// por plataforma" (protótipo original), sem o score de sentimento.
+// ✅ "Conteúdos de destaque" fechado via ai-synthesis Camada 2 (2026-07-14)
+// — nunca teve dado de "mentions em destaque" (gap real, ainda aberto),
+// mas ganhou um resumo qualitativo gerado por IA a partir de dado já
+// agregado (plataformas + termos em alta), ver ai-synthesis.md.
 // ✅ **Movidos para `/authors` (2026-07-25)**, pedido do usuário: "Perfis
 // relevantes" e "X Themes" (Hashtags/Most Mentioned X Posters/Top
 // Stories/Top Emojis) — são sobre autores, não sobre plataformas. Ver
@@ -40,6 +44,21 @@ export default function PlatformsPage() {
       <PageHeaderBar title="Análise por Plataforma" subtitle="Onde a conversa está acontecendo." />
 
       <div className="flex flex-col gap-6 p-8">
+        {/* ✅ Movido pro início da página (2026-07-14, pedido do usuário) —
+            "Conteúdos de destaque" era EmptyState desde que a página
+            existe (sem dado de "mentions em destaque" — ver
+            _pending.md). Fechado via ai-synthesis Camada 2, não uma
+            lista de mentions: um resumo qualitativo (plataformas
+            dominantes + termos em alta) já reaproveitando breakdowns/
+            term_signals já buscados nesta página, sem chamada nova. */}
+        <WidgetCard title="Conteúdos de destaque" status={status} onRetry={retry}>
+          {envelope?.ui_meta && typeof envelope.ui_meta.featured_content_text === "string" ? (
+            <ExpandableText text={envelope.ui_meta.featured_content_text} />
+          ) : (
+            <p className="text-sm text-text-tertiary">Síntese automática indisponível no momento.</p>
+          )}
+        </WidgetCard>
+
         <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
           <WidgetCard title="Participação por plataforma" status={status} onRetry={retry}>
             <PlatformParticipationBars breakdown={platformBreakdown} emptyMessage="Nenhum dado de plataforma ainda." />
@@ -60,10 +79,6 @@ export default function PlatformsPage() {
 
         <WidgetCard title="Velocidade de propagação por canal" status={status} onRetry={retry}>
           <EmptyState message="Ainda não implementado — sem function de comparação entre períodos por plataforma (ver _pending.md)." />
-        </WidgetCard>
-
-        <WidgetCard title="Conteúdos de destaque" status={status} onRetry={retry}>
-          <EmptyState message="Lista de mentions em destaque ainda não implementada — sem bloco correspondente no envelope atual." />
         </WidgetCard>
 
         {/* ✅ Adicionado 2026-07-14 (pedido do usuário: "em todas as

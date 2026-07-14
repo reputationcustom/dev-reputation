@@ -9,6 +9,7 @@ import { NarrativesTable } from "@/components/intelligence-center/narratives-tab
 import { AuthorsList } from "@/components/intelligence-center/authors-list";
 import { TermSignalsList, TopicSentimentList } from "@/components/intelligence-center/term-signals-list";
 import { HighlightsPanel, NarrativeTextPanel } from "@/components/intelligence-center/insights-panel";
+import { ExpandableText } from "@/components/ui/expandable-text";
 import { EmptyState } from "@/components/ui/empty-state";
 
 // Pautas Eleitorais (`/themes`, intelligence-center/electoral-themes.md).
@@ -32,14 +33,18 @@ import { EmptyState } from "@/components/ui/empty-state";
 //    (ver `pauta-cards.tsx`).
 // 2-3. A metade inferior da página virou uma grade de 2 colunas: à
 //    esquerda, a tabela interativa ("Narrativas") + "Autores e comunidades
-//    por pauta"; à direita, 3 frames empilhados — "Comparação entre
-//    períodos" (topo), "Termos emergentes" (frame reduzido, com scroll
-//    interno) e "Tópicos positivos e negativos por pauta". Um 4º pedido,
-//    "Insights dessa página deve focar apenas no conteúdo de Pautas
-//    Eleitorais", era na verdade um bug de escopo no backend (highlights/
-//    narrative_text liam a organização inteira, não só as Pautas) —
-//    corrigido em `aggregated-metrics-service.ts`/`assemblePageResponse`,
-//    ver CLAUDE.md; nenhuma mudança de layout do widget "Insights" em si.
+//    por pauta"; à direita, "Termos emergentes" (frame reduzido, com
+//    scroll interno) e "Tópicos positivos e negativos por pauta". Um 4º
+//    pedido, "Insights dessa página deve focar apenas no conteúdo de
+//    Pautas Eleitorais", era na verdade um bug de escopo no backend
+//    (highlights/narrative_text liam a organização inteira, não só as
+//    Pautas) — corrigido em `aggregated-metrics-service.ts`/
+//    `assemblePageResponse`, ver CLAUDE.md; nenhuma mudança de layout do
+//    widget "Insights" em si.
+// ✅ **"Comparação entre períodos" movida pro início da página e fechada
+// via ai-synthesis Camada 2 (2026-07-14)** — vivia dentro da grade de 2
+// colunas acima até então, sempre EmptyState (dependia de síntese
+// narrativa, ainda não implementada). Ver ai-synthesis.md.
 export default function ThemesPage() {
   const { status, envelope, retry } = usePageEnvelope("get-page-themes");
   const themeBreakdown = envelope?.breakdowns.find((b) => b.type === "theme");
@@ -49,6 +54,22 @@ export default function ThemesPage() {
       <PageHeaderBar title="Pautas Eleitorais" subtitle="O que está sendo discutido, por tema político." />
 
       <div className="flex flex-col gap-6 p-8">
+        {/* ✅ Movido pro início da página (2026-07-14, pedido do usuário) —
+            "Comparação entre períodos" era EmptyState desde a
+            reorganização de 2026-08-09 (dependia de ai-synthesis, ainda
+            não implementado à época). Fechado via Camada 2: compara o SOV
+            por Pauta do período atual contra o período imediatamente
+            anterior (mesma duração), reaproveitando get_theme_breakdown
+            (já usado por "Share of Voice e sentimento por pauta" abaixo)
+            chamado uma 2ª vez pro período anterior — ver ai-synthesis.md. */}
+        <WidgetCard title="Comparação entre períodos" status={status} onRetry={retry}>
+          {envelope?.ui_meta && typeof envelope.ui_meta.period_comparison_text === "string" ? (
+            <ExpandableText text={envelope.ui_meta.period_comparison_text} />
+          ) : (
+            <p className="text-sm text-text-tertiary">Síntese automática indisponível no momento.</p>
+          )}
+        </WidgetCard>
+
         {/* "Estrutura das pautas" — subcategorias da Category raiz "Pautas"
             (mesmos rótulos do card grid abaixo, só como chips soltos;
             protótipo original: `pautasChips`). */}
@@ -81,9 +102,10 @@ export default function ThemesPage() {
         </WidgetCard>
 
         {/* ✅ Reorganizado 2026-08-09 (pedido do usuário) — esquerda: tabela
-            interativa + Autores e comunidades por pauta; direita: 3 frames
-            empilhados (Comparação entre períodos, Termos emergentes
-            reduzido, Tópicos positivos e negativos por pauta). */}
+            interativa + Autores e comunidades por pauta; direita: 2 frames
+            empilhados (Termos emergentes reduzido, Tópicos positivos e
+            negativos por pauta) — "Comparação entre períodos" saiu daqui
+            em 2026-07-14, ver início da página. */}
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
           <div className="flex flex-col gap-6 lg:col-span-2">
             <WidgetCard title="Narrativas" status={status} onRetry={retry}>
@@ -102,14 +124,6 @@ export default function ThemesPage() {
           </div>
 
           <div className="flex flex-col gap-6">
-            {/* "Comparação entre períodos" (protótipo: callout textual, ex.
-                "Segurança perdeu 4 pontos..."). Depende de síntese narrativa
-                (ai-synthesis, não implementado) — mesmo padrão do resto do
-                produto, EmptyState honesto em vez de inventar o texto. */}
-            <WidgetCard title="Comparação entre períodos" status={status} onRetry={retry}>
-              <EmptyState message="Comparação textual entre períodos ainda não implementada — depende de síntese narrativa (ai-synthesis, ver _pending.md)." />
-            </WidgetCard>
-
             {/* ✅ Frame reduzido (2026-08-09, pedido do usuário: "diminuir o
                 frame de Termos emergentes") — mesmo `TermSignalsList` de
                 sempre, só dentro de um container com altura máxima e

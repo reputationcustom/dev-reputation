@@ -3,12 +3,17 @@
 import { useState } from "react";
 import type { NarrativeRow } from "@reputation/shared-types";
 import { usePageEnvelope } from "@/hooks/use-page-envelope";
+import { useUserProfile } from "@/hooks/use-user-profile";
+import { useIntelligenceCenterHeader } from "@/components/intelligence-center/header-context";
 import { PageHeaderBar } from "@/components/intelligence-center/page-header-bar";
 import { WidgetCard } from "@/components/intelligence-center/widget-card";
 import { NarrativesTable } from "@/components/intelligence-center/narratives-table";
 import { NarrativeCard } from "@/components/intelligence-center/narrative-card";
 import { NarrativeCategoryLanes } from "@/components/intelligence-center/narrative-category-lanes";
 import { TopicSentimentList } from "@/components/intelligence-center/term-signals-list";
+import { NarrativeTextPanel } from "@/components/intelligence-center/insights-panel";
+import { Toast } from "@/components/ui/toast";
+import { callFunction } from "@/lib/supabase/call-function";
 
 type DisplayMode = "both" | "table" | "cards";
 type TableGrouping = "flat" | "category";
@@ -74,6 +79,15 @@ export default function NarrativesListPage() {
       <PageHeaderBar title="Narrativas" subtitle="Explore todas as Narrativas em monitoramento." />
 
       <div className="flex flex-col gap-6 p-8">
+        {/* ✅ Adicionado 2026-07-14 (pedido do usuário: "atualizar o resumo
+            executivo de todas as narrativas... permita que eu consiga
+            executar a atualização... por algo disponível na sessão do
+            administrador") — força narratives.description a ser
+            recomposto AGORA pra toda Narrativa ativa desta organização,
+            sem esperar o cron de 30min/janela de staleness (ver
+            admin-refresh-narrative-summaries). Só admins veem o botão. */}
+        <RefreshNarrativeSummariesButton />
+
         <div className="flex flex-wrap items-center gap-2 self-start rounded-md border border-border-default p-0.5">
           {DISPLAY_MODE_OPTIONS.map((option) => (
             <button
@@ -165,7 +179,75 @@ export default function NarrativesListPage() {
         <WidgetCard title="Principais tópicos positivos e negativos" status={status} onRetry={retry}>
           <TopicSentimentList signals={envelope?.term_signals ?? []} />
         </WidgetCard>
+
+        {/* ✅ Adicionado 2026-07-14 (pedido do usuário: "inclua um resumo
+            executivo da página") — mesma Camada 0/1 de ai-synthesis.md já
+            usada em Visão Geral/Sentimento/Pautas Eleitorais
+            (PAGE_BLOCKS.narratives ganhou 'highlights'/'narrative_text'),
+            nenhum mecanismo novo. */}
+        <WidgetCard title="Resumo executivo da página" status={status} onRetry={retry}>
+          <NarrativeTextPanel text={envelope?.narrative_text ?? null} page="narratives" onGenerated={retry} />
+        </WidgetCard>
       </div>
     </>
+  );
+}
+
+// Botão admin-only "Atualizar resumos das Narrativas" —
+// admin-refresh-narrative-summaries (Edge Function nova, 2026-07-14).
+// Diferente de NarrativeTextPanel's "Atualizar resumo executivo" (que
+// recompõe o texto da PÁGINA via compose-narrative-synthesis), este botão
+// força narratives.description (o resumo de CADA Narrativa,
+// narrative-summary-composer) pra toda Narrativa ativa da organização de
+// uma vez, ignorando a janela de staleness que o cron de 30min sempre
+// respeita.
+function RefreshNarrativeSummariesButton() {
+  const { organizationId } = useIntelligenceCenterHeader();
+  const { isAdmin } = useUserProfile();
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [toast, setToast] = useState<{ type: "success" | "error"; message: string } | null>(null);
+
+  if (!isAdmin) return null;
+
+  async function handleRefresh() {
+    if (!organizationId) return;
+    setIsRefreshing(true);
+    try {
+      const result = await callFunction<{ processed: number; updated: number; hasMore: boolean }>(
+        "admin-refresh-narrative-summaries",
+        { organization_id: organizationId },
+      );
+      setToast({
+        type: "success",
+        message:
+          result.processed === 0
+            ? "Nenhuma Narrativa ativa encontrada para esta organização."
+            : `${result.updated} de ${result.processed} resumos executivos atualizados.${
+                result.hasMore ? " Ainda há mais Narrativas — clique de novo para continuar." : ""
+              }`,
+      });
+    } catch (err) {
+      setToast({
+        type: "error",
+        message: err instanceof Error ? err.message : "Não foi possível atualizar os resumos agora.",
+      });
+    } finally {
+      setIsRefreshing(false);
+      setTimeout(() => setToast(null), 5000);
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-2 self-start">
+      <button
+        type="button"
+        onClick={handleRefresh}
+        disabled={isRefreshing}
+        className="inline-flex items-center gap-2 rounded-md border border-accent-blue px-3 py-1.5 text-xs font-semibold text-accent-blue hover:bg-accent-blue-bg disabled:opacity-60"
+      >
+        {isRefreshing ? "Atualizando…" : "Atualizar resumos executivos das Narrativas"}
+      </button>
+      {toast && <Toast type={toast.type} message={toast.message} />}
+    </div>
   );
 }

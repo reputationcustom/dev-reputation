@@ -327,7 +327,13 @@ type BlockKey =
 // narratives-exploration.md/executive-overview.md/platform-analysis.md.
 export const PAGE_BLOCKS: Record<PageKey, BlockKey[]> = {
   overview: ['metrics', 'breakdowns', 'trends', 'narratives', 'highlights', 'term_signals', 'narrative_text'],
-  narratives: ['narratives', 'term_signals'],
+  // ✅ 'highlights'/'narrative_text' adicionados 2026-07-14 (pedido do
+  // usuário: "inclua um resumo executivo da página") — antes desta
+  // página não tinha nenhuma noção de highlights/Camada 0/1 de
+  // ai-synthesis.md, então nunca teve um "resumo executivo da página"
+  // como Overview/Sentimento/Pautas já têm. Mesmo mecanismo de sempre,
+  // nenhuma seção nova (usa section='main').
+  narratives: ['narratives', 'term_signals', 'highlights', 'narrative_text'],
   // ✅ 'term_signals' adicionado 2026-07-14 (pedido do usuário: "termos/
   // phrases mais citados" por Narrativa) — get_term_signals já suportava
   // escopo por Narrativa via filters.narratives, só faltava o wiring aqui.
@@ -1199,6 +1205,11 @@ async function composeAndPersistLayer1(
     {
       organization_id: ctx.organizationId,
       page,
+      // ✅ 2026-07-14 — explícito, nunca confiado ao default da coluna
+      // (migration 20260809050000): esta é a seção "main" (narrative_text
+      // genérico), distinta de qualquer seção Camada 2 específica de uma
+      // página (ver composeAndPersistSection).
+      section: 'main',
       period_start: ctx.period.start,
       period_end: ctx.period.end,
       filters_hash: filtersHashValue,
@@ -1207,7 +1218,7 @@ async function composeAndPersistLayer1(
       is_final: isPeriodClosed(ctx.period.end),
       generated_at: new Date().toISOString(),
     },
-    { onConflict: 'organization_id,page,period_start,period_end,filters_hash' },
+    { onConflict: 'organization_id,page,section,period_start,period_end,filters_hash' },
   )
   if (error) {
     console.error('[aggregated-metrics] composeAndPersistLayer1 upsert failed', error)
@@ -1266,6 +1277,12 @@ async function fetchNarrativeText(
       .select('narrative_text, is_final, generated_at')
       .eq('organization_id', ctx.organizationId)
       .eq('page', page)
+      // ✅ 2026-07-14 (migration 20260809050000) — explícito, nunca
+      // confiado ao default: sem isso, um .maybeSingle() encontraria
+      // 2+ linhas assim que alguma seção Camada 2 (featured_content/
+      // period_comparison/overview) existisse pra essa mesma
+      // (page, period, filters_hash).
+      .eq('section', 'main')
       .eq('period_start', ctx.period.start)
       .eq('period_end', ctx.period.end)
       .eq('filters_hash', hash)
@@ -1333,6 +1350,7 @@ async function composeNarrativeSynthesisOnDemand(
       {
         organization_id: ctx.organizationId,
         page,
+        section: 'main',
         period_start: ctx.period.start,
         period_end: ctx.period.end,
         filters_hash: hash,
@@ -1341,7 +1359,7 @@ async function composeNarrativeSynthesisOnDemand(
         is_final: isPeriodClosed(ctx.period.end),
         generated_at: new Date().toISOString(),
       },
-      { onConflict: 'organization_id,page,period_start,period_end,filters_hash' },
+      { onConflict: 'organization_id,page,section,period_start,period_end,filters_hash' },
     )
     if (error) console.error('[aggregated-metrics] composeNarrativeSynthesisOnDemand upsert failed', error)
     return { narrative_text: text, generated_by_ai: true }
@@ -1351,6 +1369,251 @@ async function composeNarrativeSynthesisOnDemand(
     narrative_text: fallback ?? 'Não foi possível gerar a análise deste período no momento. Tente novamente.',
     generated_by_ai: false,
   }
+}
+
+// =========================================================================
+// ai-synthesis.md "Camada 2" — seções específicas de uma página, sem
+// equivalente no radar (event-radar). ✅ Adicionado 2026-07-14, pedido do
+// usuário: preencher "Conteúdos de destaque" (platforms), "Comparação
+// entre períodos" (themes) e uma visão geral de Autores e Influenciadores
+// (authors) — os 3 eram EmptyState/gap documentado há sessões, por não
+// terem um evento discreto do radar por trás (são leituras de
+// breakdowns/trends/authors já agregados, não um pico/queda pontual).
+// Justificativa exigida por "Regras de negócio" da spec, por seção:
+// - featured_content (platforms): não há feed_events equivalente a
+//   "quais plataformas/termos dominam este período" — é uma leitura
+//   composta de 2 blocos já buscados (breakdowns+term_signals), não um
+//   evento.
+// - period_comparison (themes): comparação de SOV/sentimento por Pauta
+//   entre 2 janelas de tempo — o radar detecta picos/quedas pontuais, não
+//   "como o quadro geral mudou", e não teria como cobrir todas as Pautas
+//   de uma vez sem virar N eventos artificiais.
+// - overview (authors): perfil composto de quem são os autores/
+//   influenciadores + conteúdo em destaque (sites/hashtags) — não é um
+//   evento, é uma leitura de 3 blocos já agregados (authors+top_sites+
+//   x_insights).
+// Reaproveita a MESMA tabela/staleness/persistência de sempre
+// (page_narrative_synthesis, AI_SYNTHESIS_REFRESH_HOURS) via a coluna
+// `section` (migration 20260809050000) — nunca uma tabela nova. Diferente
+// da Camada 1 (`narrative_text`, seção 'main'), estas seções não têm
+// noção de "evento novo do radar" (não dependem de `highlights`), só do
+// gatilho de tempo — `layer: 'layer_2'` grava essa distinção.
+// =========================================================================
+
+interface SectionSynthesisRow {
+  narrative_text: string
+  is_final: boolean
+  generated_at: string
+}
+
+// Mesma janela de 14/31/etc. usada em SQL (get_metrics_cards' prev_range),
+// só em JS — data pura (YYYY-MM-DD), sem componente de hora, então
+// aritmética em UTC nunca sofre de fuso/DST (mesmo racional de
+// todaySaoPaulo() acima, que só compara strings de data, nunca instantes).
+function previousPeriodRange(start: string, end: string): { start: string; end: string } {
+  const startMs = new Date(`${start}T00:00:00Z`).getTime()
+  const endMs = new Date(`${end}T00:00:00Z`).getTime()
+  const days = Math.round((endMs - startMs) / 86_400_000) + 1
+  const prevEndMs = startMs - 86_400_000
+  const prevStartMs = prevEndMs - (days - 1) * 86_400_000
+  const fmt = (ms: number) => new Date(ms).toISOString().slice(0, 10)
+  return { start: fmt(prevStartMs), end: fmt(prevEndMs) }
+}
+
+async function composeSectionText(
+  supabase: SupabaseClient,
+  ctx: PageContext,
+  page: PageKey,
+  section: string,
+  systemPrompt: string,
+  payload: unknown,
+): Promise<string | null> {
+  const apiKey = Deno.env.get('ANTHROPIC_API_KEY')
+  if (!apiKey) {
+    console.error('[aggregated-metrics] composeSectionText: ANTHROPIC_API_KEY não configurada')
+    return null
+  }
+  try {
+    const anthropic = new Anthropic({ apiKey })
+    const response = await anthropic.messages.create({
+      model: NARRATIVE_SYNTHESIS_MODEL,
+      max_tokens: 300,
+      system: systemPrompt,
+      messages: [{ role: 'user', content: `Dados do período:\n\n${JSON.stringify(payload)}` }],
+    })
+    await recordAiUsage(supabase, {
+      source: 'ai_synthesis_narrative',
+      model: NARRATIVE_SYNTHESIS_MODEL,
+      inputTokens: response.usage.input_tokens,
+      outputTokens: response.usage.output_tokens,
+      organizationId: ctx.organizationId,
+      referenceId: `${page}:${section}:${ctx.period.start}..${ctx.period.end}`,
+    })
+    const textBlock = response.content.find((block) => block.type === 'text')
+    if (!textBlock || textBlock.type !== 'text') return null
+    const text = textBlock.text.trim()
+    return text ? text.slice(0, 400) : null
+  } catch (err) {
+    console.error(`[aggregated-metrics] composeSectionText(${page}:${section}) failed`, err)
+    return null
+  }
+}
+
+async function composeAndPersistSection(
+  supabase: SupabaseClient,
+  ctx: PageContext,
+  page: PageKey,
+  section: string,
+  filtersHashValue: string,
+  systemPrompt: string,
+  buildPayload: () => Promise<unknown>,
+): Promise<void> {
+  const payload = await buildPayload()
+  const text = await composeSectionText(supabase, ctx, page, section, systemPrompt, payload)
+  if (!text) return
+  const { error } = await supabase.from('page_narrative_synthesis').upsert(
+    {
+      organization_id: ctx.organizationId,
+      page,
+      section,
+      period_start: ctx.period.start,
+      period_end: ctx.period.end,
+      filters_hash: filtersHashValue,
+      narrative_text: text,
+      layer: 'layer_2',
+      is_final: isPeriodClosed(ctx.period.end),
+      generated_at: new Date().toISOString(),
+    },
+    { onConflict: 'organization_id,page,section,period_start,period_end,filters_hash' },
+  )
+  if (error) {
+    console.error('[aggregated-metrics] composeAndPersistSection upsert failed', error)
+  } else {
+    console.log('[aggregated-metrics] composeAndPersistSection:success', { page, section, organizationId: ctx.organizationId })
+  }
+}
+
+// Mesmo fluxo de fetchNarrativeText (linha existe → devolve + agenda
+// refresh em background se vencida; não existe → fallback + agenda
+// composição), só sem o gatilho de "evento novo" (não há highlights aqui)
+// e com um fallback determinístico próprio por seção, nunca um "carregando"
+// genérico sem explicação (mesma regra de UX de sempre — nunca uma tela
+// vazia sem contexto).
+async function fetchSectionText(
+  supabase: SupabaseClient,
+  ctx: PageContext,
+  page: PageKey,
+  section: string,
+  systemPrompt: string,
+  buildPayload: () => Promise<unknown>,
+  fallbackText: string,
+): Promise<string | null> {
+  try {
+    const hash = await cacheFingerprint(ctx)
+    const { data, error } = await supabase
+      .from('page_narrative_synthesis')
+      .select('narrative_text, is_final, generated_at')
+      .eq('organization_id', ctx.organizationId)
+      .eq('page', page)
+      .eq('section', section)
+      .eq('period_start', ctx.period.start)
+      .eq('period_end', ctx.period.end)
+      .eq('filters_hash', hash)
+      .maybeSingle()
+    if (error) throw error
+    const row = data as SectionSynthesisRow | null
+    if (row) {
+      if (!row.is_final && ctx.period.mode !== 'custom' && isNarrativeTextStale(row.generated_at)) {
+        console.log('[aggregated-metrics] fetchSectionText:stale_refresh_scheduled', {
+          page,
+          section,
+          organizationId: ctx.organizationId,
+          periodStart: ctx.period.start,
+          periodEnd: ctx.period.end,
+          generatedAt: row.generated_at,
+        })
+        scheduleBackground(composeAndPersistSection(supabase, ctx, page, section, hash, systemPrompt, buildPayload))
+      }
+      return row.narrative_text
+    }
+    if (ctx.period.mode !== 'custom') {
+      console.log('[aggregated-metrics] fetchSectionText:initial_compose_scheduled', { page, section, organizationId: ctx.organizationId })
+      scheduleBackground(composeAndPersistSection(supabase, ctx, page, section, hash, systemPrompt, buildPayload))
+    }
+    return fallbackText
+  } catch (err) {
+    console.error(`[aggregated-metrics] fetchSectionText(${page}:${section}) failed`, err)
+    return fallbackText
+  }
+}
+
+const PLATFORMS_FEATURED_CONTENT_SYSTEM_PROMPT = `Você escreve, em português do Brasil, um resumo curto (2-3 frases, até 400 caracteres) sobre os conteúdos/temas em destaque de uma campanha política — plataformas dominantes e termos em alta — a partir de um payload de dados já agregados. NUNCA invente número/fato que não esteja no payload. Tom direto e humano: sem gancho dramático, sem vocabulário de IA ("além disso", "desempenha papel fundamental", "nesse sentido"), sem atribuição vaga, sem conclusão genérica/otimista. Responda só com o parágrafo, sem título, sem marcadores, sem aspas.`
+
+function buildPlatformsFeaturedContentPayload(breakdown: Breakdown | undefined, termSignals: TermSignal[]): unknown {
+  return {
+    platforms: (breakdown?.items ?? []).slice(0, 5).map((i) => ({ label: i.label, pct: i.pct })),
+    top_terms: termSignals.slice(0, 8).map((t) => ({ term: t.term, growth_pct: t.growth_pct, sentiment: t.sentiment_associated })),
+  }
+}
+
+function platformsFeaturedContentFallback(breakdown: Breakdown | undefined, termSignals: TermSignal[]): string {
+  if ((breakdown?.items.length ?? 0) === 0 && termSignals.length === 0) {
+    return 'Nenhum conteúdo em destaque identificado neste período.'
+  }
+  return 'Preparando um resumo dos conteúdos em destaque deste período.'
+}
+
+const THEMES_PERIOD_COMPARISON_SYSTEM_PROMPT = `Você escreve, em português do Brasil, uma comparação curta (2-4 frases, até 400 caracteres) entre o período atual e o período imediatamente anterior de Share of Voice por Pauta eleitoral, a partir de um payload com os 2 períodos já calculados. Cite só as mudanças mais relevantes (maiores altas/quedas de participação). NUNCA invente número/fato que não esteja no payload. Tom direto e humano: sem gancho dramático, sem vocabulário de IA, sem atribuição vaga, sem conclusão genérica/otimista. Responda só com o parágrafo, sem título, sem marcadores, sem aspas.`
+
+async function buildThemesPeriodComparisonPayload(
+  supabase: SupabaseClient,
+  ctx: PageContext,
+  currentBreakdown: Breakdown | undefined,
+): Promise<unknown> {
+  const prev = previousPeriodRange(ctx.period.start, ctx.period.end)
+  const prevCtx: PageContext = { ...ctx, period: { ...ctx.period, start: prev.start, end: prev.end } }
+  const previousBreakdown = await fetchOneBreakdown('theme', supabase, prevCtx)
+  return {
+    current_period: {
+      start: ctx.period.start,
+      end: ctx.period.end,
+      pautas: (currentBreakdown?.items ?? []).map((i) => ({ label: i.label, pct: i.pct })),
+    },
+    previous_period: {
+      start: prev.start,
+      end: prev.end,
+      pautas: (previousBreakdown?.items ?? []).map((i) => ({ label: i.label, pct: i.pct })),
+    },
+  }
+}
+
+function themesPeriodComparisonFallback(breakdown: Breakdown | undefined): string {
+  if ((breakdown?.items.length ?? 0) === 0) {
+    return 'Nenhuma pauta eleitoral configurada ainda para comparar entre períodos.'
+  }
+  return 'Preparando a comparação entre este período e o anterior.'
+}
+
+const AUTHORS_OVERVIEW_SYSTEM_PROMPT = `Você escreve, em português do Brasil, uma visão geral sucinta (2-3 frases, até 400 caracteres) sobre os autores/influenciadores e os conteúdos em destaque (sites, hashtags) mais relevantes de uma campanha política no período, a partir de um payload de dados já agregados. NUNCA invente número/fato que não esteja no payload. Tom direto e humano: sem gancho dramático, sem vocabulário de IA, sem atribuição vaga, sem conclusão genérica/otimista. Responda só com o parágrafo, sem título, sem marcadores, sem aspas.`
+
+function buildAuthorsOverviewPayload(authors: AuthorRow[], topSites: TopSiteItem[], xInsights: XInsightItem[]): unknown {
+  const byReach = [...authors].sort((a, b) => b.reach - a.reach)
+  return {
+    total_authors: authors.length,
+    top_authors: byReach.slice(0, 5).map((a) => ({ name: a.name, mentions: a.mentions, reach: a.reach })),
+    top_sites: [...topSites].sort((a, b) => b.volume - a.volume).slice(0, 5).map((s) => ({ domain: s.domain, volume: s.volume })),
+    top_hashtags: xInsights
+      .filter((x) => x.insight_type === 'hashtag')
+      .slice(0, 5)
+      .map((x) => ({ name: x.name, volume: x.volume })),
+  }
+}
+
+function authorsOverviewFallback(authors: AuthorRow[], topSites: TopSiteItem[], xInsights: XInsightItem[]): string {
+  if (authors.length === 0 && topSites.length === 0 && xInsights.length === 0) {
+    return 'Ainda sem dado suficiente para uma visão geral de autores e influenciadores neste período.'
+  }
+  return 'Preparando uma visão geral dos autores e conteúdos em destaque deste período.'
 }
 
 async function fetchGraph(supabase: SupabaseClient, ctx: PageContext): Promise<DisseminationGraph | null> {
@@ -1446,6 +1709,49 @@ export async function assemblePageResponse(
     ? await fetchNarrativeText(supabase, highlightsContext, page, highlights)
     : null
 
+  // ✅ ai-synthesis.md "Camada 2" (2026-07-14) — seções específicas de uma
+  // página só, sem equivalente no radar (ver bloco de justificativa acima
+  // de composeSectionText). Usa `context` (não `highlightsContext`) — as 3
+  // seções abaixo não dependem de `filters.narratives`, já são escopadas
+  // pelo próprio bloco que consomem (get_theme_breakdown já é Pautas-only,
+  // get_authors_ranking/get_top_sites/get_x_insights já são o escopo da
+  // página `authors`). Cada bloco só roda na sua própria página — nenhuma
+  // chamada extra nas outras 4.
+  const uiMeta: Record<string, unknown> = {}
+  if (page === 'platforms') {
+    const platformBreakdown = breakdowns.find((b) => b.type === 'platform')
+    uiMeta.featured_content_text = await fetchSectionText(
+      supabase,
+      context,
+      page,
+      'featured_content',
+      PLATFORMS_FEATURED_CONTENT_SYSTEM_PROMPT,
+      () => Promise.resolve(buildPlatformsFeaturedContentPayload(platformBreakdown, termSignals)),
+      platformsFeaturedContentFallback(platformBreakdown, termSignals),
+    )
+  } else if (page === 'themes') {
+    const themeBreakdown = breakdowns.find((b) => b.type === 'theme')
+    uiMeta.period_comparison_text = await fetchSectionText(
+      supabase,
+      context,
+      page,
+      'period_comparison',
+      THEMES_PERIOD_COMPARISON_SYSTEM_PROMPT,
+      () => buildThemesPeriodComparisonPayload(supabase, context, themeBreakdown),
+      themesPeriodComparisonFallback(themeBreakdown),
+    )
+  } else if (page === 'authors') {
+    uiMeta.authors_overview_text = await fetchSectionText(
+      supabase,
+      context,
+      page,
+      'overview',
+      AUTHORS_OVERVIEW_SYSTEM_PROMPT,
+      () => Promise.resolve(buildAuthorsOverviewPayload(authors, topSites, xInsights)),
+      authorsOverviewFallback(authors, topSites, xInsights),
+    )
+  }
+
   return {
     schema_version: ENVELOPE_SCHEMA_VERSION,
     page,
@@ -1464,7 +1770,7 @@ export async function assemblePageResponse(
     x_insights: xInsights,
     top_sites: topSites,
     narrative_text: narrativeText,
-    ui_meta: {},
+    ui_meta: uiMeta,
   }
 }
 

@@ -154,7 +154,12 @@ export function NarrativesTable({
     return <EmptyState message={emptyMessage} />;
   }
 
-  function renderRow(row: NarrativeRow) {
+  // ✅ Indentação da Subcategoria sob o cabeçalho da Categoria (pedido do
+  // usuário, 2026-07-14: "dê uma identação para a subcategoria quando a
+  // visualização for categoria e subcategoria... está tudo muito juntinho")
+  // — só aplicada quando `groupByCategory` está ativo (`indent = true`);
+  // a lista plana (sem agrupamento) mantém o padding original.
+  function renderRow(row: NarrativeRow, indent = false) {
     return (
       <tr
         key={row.id}
@@ -163,7 +168,7 @@ export function NarrativesTable({
           onRowClick ? "cursor-pointer hover:bg-bg-page" : ""
         } ${selectedId === row.id ? "bg-accent-blue-bg" : ""}`}
       >
-        <td className="px-4 py-3 font-medium text-text-primary">
+        <td className={`py-3 font-medium text-text-primary ${indent ? "pl-8 pr-4" : "px-4"}`}>
           <Link
             href={`/narratives/${row.id}`}
             onClick={(e) => e.stopPropagation()}
@@ -246,7 +251,7 @@ export function NarrativesTable({
                         </button>
                       </td>
                     </tr>
-                    {isExpanded && groupRows.map((row) => renderRow(row))}
+                    {isExpanded && groupRows.map((row) => renderRow(row, true))}
                   </Fragment>
                 );
               })

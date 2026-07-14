@@ -199,6 +199,10 @@ exibidos na UI ficam em português:
   junto do envelope.
 - **`ui_meta`**: qualquer dado que serve só para renderização (cores de gráfico, cursor de
   paginação, ids técnicos de UI). Este bloco NUNCA deve ser enviado para a IA.
+  ✅ **3 chaves de texto Camada 2 adicionadas (2026-07-14)**, ver `ai-synthesis.md`: `featured_content_text`
+  (só `platforms`), `period_comparison_text` (só `themes`), `authors_overview_text` (só
+  `authors`) — cada uma um parágrafo curto gerado por IA a partir de dado já agregado da própria
+  página, sem equivalente no radar. `null`/ausente em toda outra página.
 
 ## Regras de negócio
 

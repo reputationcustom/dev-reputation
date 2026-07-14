@@ -8,6 +8,15 @@ atualizado: 2026-08-08
 
 # Autores e Influenciadores
 
+> ✅ **Visão geral sucinta em "Conteúdo em destaque" (2026-07-14)** —
+> pedido do usuário: "deve conter uma visão geral sucinta sobre os autores
+> e influenciadores." Texto gerado por IA (ai-synthesis Camada 2,
+> `ui_meta.authors_overview_text`) a partir de dado já buscado por esta
+> página (top 5 autores por alcance, top 5 sites, top 5 hashtags) — sem
+> chamada nova. Renderizado no topo do widget "Conteúdo em destaque (Top
+> Sites, X Themes)", guia "Visão Geral", acima de `TopSitesPanel`/
+> `XInsightsPanel`. Ver `aggregated-metrics/ai-synthesis.md`, "Camada 2".
+
 > ✅ **Redesenho em 2 guias (2026-08-08)**, pedido do usuário: "Precisamos
 > ajustar a página Autores e Influenciadores com dois objetivos distintos:
 > 1) Visualizar os autores genericamente: detratores, impulsionadores,

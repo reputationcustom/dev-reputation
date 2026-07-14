@@ -7675,6 +7675,150 @@ mostrando sentimento na tabela "Autores e comunidades por pauta" depois de
 `runAuthorEnrichmentStep` rodar algumas vezes (throttle de 1 autor por
 invocação, mesmo padrão de sempre).
 
+### ai-synthesis Camada 2 — 3 seções reais + resumo executivo em `/narratives` + admin force-refresh (2026-07-14)
+
+User request, 5 itens numa mensagem só + um pedido geral de fechamento:
+(1) Overview's "O que os gráficos mostram?" considerar diário/semanal/
+mensal + "mostrar mais"/"mostrar menos"; (2) `/narratives` — "atualizar o
+resumo executivo de todas as narrativas" + "inclua um resumo executivo da
+página"; (3) `/platforms` — "Conteúdos de destaque" gerado pela synthesis,
+movido pro início da página; (4) `/themes` — "Comparação entre períodos"
+gerado pela synthesis, movido pro início da página; (5) `/authors` —
+"Conteúdo em destaque (Top Sites, X Themes)" ganha "uma visão geral
+sucinta sobre os autores e influenciadores"; todos os 5 com "mostrar
+mais"/"mostrar menos" quando o texto transborda o frame; e, geral: "permita
+que eu consiga executar a atualização do resumo executivo, pode ser via
+cron ou por algo disponível na sessão do administrador."
+
+**Achado antes de qualquer código**: item 1 (diário/semanal/mensal) já
+funcionava por construção desde 2026-07-14 mais cedo (a chave de
+`page_narrative_synthesis` já inclui `period_start`/`period_end`, cada
+modo do header produz um par distinto) — nada a corrigir aí além do
+"mostrar mais"/"mostrar menos". Os itens 3/4/5 pediam 3 textos novos que
+não existiam em nenhuma página — "Conteúdos de destaque" e "Comparação
+entre períodos" eram `EmptyState` desde que suas páginas existem (gaps
+documentados, sem fonte de dado — nunca houve `feed_events`/mentions
+individuais por trás), e "Autores e Influenciadores" nunca teve nenhum
+texto de síntese. Nenhum dos 3 tem equivalente no radar (`event-radar`) —
+exatamente o caso que `ai-synthesis.md` já reserva pra "Camada 2", nunca
+implementada até agora (0 usos reais).
+
+**Generalização de schema** (migration `20260809050000`) —
+`page_narrative_synthesis` ganhou `section text not null default 'main'`,
+chave única virou `(organization_id, page, section, period_start,
+period_end, filters_hash)`. `'main'` é o `narrative_text` genérico de
+sempre (Camada 0/1); os 3 textos novos usam seções próprias
+(`'featured_content'`, `'period_comparison'`, `'overview'`). Todo o código
+que já lia/escrevia essa tabela (`fetchNarrativeText`/
+`composeAndPersistLayer1`/`composeNarrativeSynthesisOnDemand`) passou a
+filtrar/gravar `section = 'main'` **explicitamente** — sem isso, um
+`.maybeSingle()` encontraria 2+ linhas assim que a primeira seção nova
+existisse pra essa mesma `(page, period, filters_hash)`, quebrando o fluxo
+existente silenciosamente até o primeiro erro em produção.
+
+**Mecanismo genérico** (`fetchSectionText`/`composeAndPersistSection`/
+`composeSectionText`, `aggregated-metrics-service.ts`) — mesma
+tabela/persistência/janela de frescor (`AI_SYNTHESIS_REFRESH_HOURS`) da
+Camada 1, só sem o gatilho de "evento novo do radar" (essas seções não
+dependem de `highlights`) e com `layer: 'layer_2'`. Cada seção: system
+prompt próprio, função de payload (só dado já agregado **já buscado por
+essa mesma requisição** — nunca uma chamada extra, exceto a exceção abaixo)
+e fallback determinístico próprio (nunca tela vazia sem explicação):
+- **`platforms:featured_content`** — payload = breakdown de plataforma
+  (top 5) + `term_signals` (top 8), ambos já buscados por `/platforms`.
+- **`themes:period_comparison`** — payload = `get_theme_breakdown` (já
+  usado por "Share of Voice e sentimento por pauta") chamado uma **2ª
+  vez**, pro período imediatamente anterior de mesma duração
+  (`previousPeriodRange()` — aritmética de data pura em JS, sem chamada à
+  Brandwatch). Único dos 3 com uma chamada extra (RPC Postgres, barata).
+- **`authors:overview`** — payload = top 5 autores por alcance + top 5
+  sites + top 5 hashtags, todos já buscados por `/authors`.
+
+Wiring em `assemblePageResponse`: 3 branches `if (page === '...')` depois
+do cálculo de `narrativeText`, cada uma só roda na sua própria página,
+resultado anexado a `ui_meta` (`featured_content_text`/
+`period_comparison_text`/`authors_overview_text` — nunca vai pra IA,
+mesma regra de sempre pra `ui_meta`).
+
+**Frontend**: novo `components/ui/expandable-text.tsx` (`ExpandableText`)
+— mede `scrollHeight > clientHeight` do parágrafo clampado
+(`-webkit-line-clamp`, 4 linhas) pra só mostrar "Mostrar mais" quando o
+texto de fato transborda (o pedido do usuário dizia "menor que cabe no
+frame", tratado como imprecisão — o único comportamento que faz sentido é
+o oposto: toggle quando **maior**/transborda). Usado por
+`NarrativeTextPanel` (seção `'main'`) e pelos 3 widgets novos.
+`/narratives` ganhou "Resumo executivo da página" (mesmo mecanismo de
+sempre — `PAGE_BLOCKS.narratives` ganhou `'highlights'`/`'narrative_text'`,
+únicas ausentes até agora entre as 5 páginas de análise). `/platforms`'s
+"Conteúdos de destaque" e `/themes`'s "Comparação entre períodos" foram
+movidos pro início de suas páginas, pedido explícito do usuário.
+
+**Admin force-refresh** — 2 mecanismos, cada um resolvendo uma metade
+diferente do pedido:
+1. `NarrativeTextPanel`'s botão (antes só em período `custom`) agora
+   também aparece pra `is_admin` em qualquer período — reaproveita a Edge
+   Function já existente (`compose-narrative-synthesis`, síncrona), só
+   muda a visibilidade no frontend. Cobre a seção `'main'` de qualquer
+   página.
+2. Nova Edge Function admin-only **`admin-refresh-narrative-summaries`**
+   — força `narratives.description` (resumo **por Narrativa**, produtor
+   `narrative-summary-composer`, ver `foundation/narratives.md`) a ser
+   regerado agora pra toda Narrativa ativa de uma organização.
+   `narrative_summary_due_ids()` ganhou `p_organization_id`/`p_force`
+   (migration `20260809060000`, `drop function` — muda de 1 pra 3
+   parâmetros) — com `p_force = true`, ignora as 4 condições de staleness
+   de sempre. Botão "Atualizar resumos executivos das Narrativas" em
+   `/narratives`, admin-only, até `MAX_BATCH_SIZE = 50` por clique.
+   **Deliberadamente não exposto via `narrative-summary-composer` em si**
+   (só o `pg_cron` chama, `verify_jwt = false`, sem CORS/auth) — aceitar
+   um `organization_id` arbitrário ali sem autenticação seria um vetor de
+   "gaste dinheiro de IA da vítima" pra qualquer um que soubesse a URL.
+
+**Propagação (Princípio técnico 5)**: todas as mudanças de
+`aggregated-metrics-service.ts` foram propagadas pras 8 Edge Functions
+deployadas via uma técnica diferente das sessões anteriores (mais segura
+pra um diff deste tamanho): em vez de N substituições de string pequenas,
+um script Node localiza o marcador estável de fim do corpo compartilhado
+(`getPageEnvelopeWithCache`, sempre a última function do arquivo canônico)
+em cada arquivo deployado e substitui **tudo antes dele** pelo prefixo
+canônico inteiro, preservando só o que vem depois (o handler HTTP
+específico de cada função, e `fetchNarrativeSummary` no caso de
+`get-narrative-detail`). Confirmado por diff byte-a-byte que os 8 prefixos
+ficaram idênticos ao canônico. **Efeito colateral positivo, achado durante
+a verificação**: isso corrigiu de graça um drift real e pré-existente,
+não introduzido por esta sessão — `compose-narrative-synthesis` estava
+faltando o bloco inteiro de `top_sites` (`TopSiteItem`/`fetchTopSites`/
+`PAGE_BLOCKS.authors` com `'top_sites'`) desde a sessão de 2026-08-08 que
+adicionou esse recurso, porque aquela propagação só cobriu "as 7 Edge
+Functions deployadas" sem incluir `compose-narrative-synthesis` na lista
+— mesma classe de erro já documentada em "`compose-narrative-synthesis`
+503 em produção" (2026-08-07). Nunca quebrou nada em produção (essa
+function não usa `top_sites`), mas violava a garantia de "cópia inteira
+byte-a-byte" que Princípio técnico 5 pressupõe — agora corrigido.
+
+**Especificações atualizadas**: `aggregated-metrics/ai-synthesis.md` (novo
+blockquote de topo detalhando os 3 payloads + admin force-refresh + seção
+"Camada 2" do corpo marcada como implementada + tabela de schema com
+`section`), `standard-json-envelope.md` (3 chaves novas de `ui_meta`),
+`intelligence-center/platform-analysis.md`/`electoral-themes.md`/
+`authors-and-influencers.md`/`narratives-exploration.md` (nota por
+página).
+
+**Verificação**: `npx tsc --noEmit` e `npm run build` (com `rm -rf .next`
+antes) passam limpos — 21 rotas, mesma contagem de antes. Balanço de
+parênteses/chaves conferido nos 8 arquivos deployados + na nova Edge
+Function `admin-refresh-narrative-summaries` (mesmo proxy de verificação
+de toda sessão sem acesso a Deno/Supabase real). Sem ambiente real
+disponível nesta sessão — as 2 migrations novas (`20260809050000`/
+`20260809060000`) revisadas manualmente, não executadas contra um banco
+real, mesma limitação recorrente; `git push` para `develop` é o próximo
+passo. Sinais a acompanhar em produção: os 3 novos widgets mostram
+"Preparando..."/uma mensagem de ausência de dado no primeiro carregamento
+de cada `(organização, período)` e o texto real na carga seguinte (mesmo
+padrão fire-and-forget de sempre); e o botão "Atualizar resumos
+executivos das Narrativas" respondendo com uma contagem real de
+`processed`/`updated`.
+
 ## Directory structure
 
 ```

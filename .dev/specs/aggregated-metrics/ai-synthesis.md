@@ -260,6 +260,102 @@ atualizado: 2026-07-14
 > Nenhuma mudança de schema — reaproveita a `page_narrative_synthesis`
 > existente por inteiro.
 
+> ✅ **Camada 2 implementada — 3 seções reais + admin force-refresh
+> (2026-07-14)** — pedido do usuário: preencher, via ai-synthesis, 3
+> widgets que eram `EmptyState`/gap há sessões por não terem equivalente
+> no radar — "Conteúdos de destaque" (`platforms`), "Comparação entre
+> períodos" (`themes`) e uma visão geral sucinta de "Autores e
+> Influenciadores" (`authors`); mais uma exigência geral: "permita que eu
+> consiga executar a atualização do resumo executivo... por algo
+> disponível na sessão do administrador."
+>
+> **Schema**: `page_narrative_synthesis` ganhou a coluna `section text not
+> null default 'main'` (migration `20260809050000`) — generaliza a chave
+> pra `(organization_id, page, section, period_start, period_end,
+> filters_hash)`. `'main'` é o `narrative_text` genérico de sempre (Camada
+> 0/1); as 3 seções novas usam valores próprios (`'featured_content'`,
+> `'period_comparison'`, `'overview'`). Todo o código existente
+> (`fetchNarrativeText`/`composeAndPersistLayer1`/
+> `composeNarrativeSynthesisOnDemand`) foi atualizado pra filtrar/gravar
+> `section = 'main'` **explicitamente** — sem isso, um `.maybeSingle()`
+> encontraria 2+ linhas assim que a primeira seção nova existisse pra essa
+> mesma `(page, period, filters_hash)`.
+>
+> **Mecanismo genérico** (`fetchSectionText`/`composeAndPersistSection`/
+> `composeSectionText`, `aggregated-metrics-service.ts`) — mesma
+> tabela/persistência/janela de frescor (`AI_SYNTHESIS_REFRESH_HOURS`,
+> default 1h) já usada pela Camada 1, só sem o gatilho de "evento novo do
+> radar" (essas 3 seções não dependem de `highlights`) e com
+> `layer: 'layer_2'`. Cada seção tem seu próprio *system prompt* + função
+> de payload (só dado já agregado, nunca mentions cruas) + fallback
+> determinístico próprio (nunca uma tela vazia sem explicação):
+> - **`platforms` / `featured_content`** ("Conteúdos de destaque") —
+>   payload = breakdown de plataforma (top 5) + `term_signals` (top 8) já
+>   buscados pela página. Justificativa da Camada 2: não há
+>   `feed_events` equivalente a "quais plataformas/termos dominam este
+>   período" — é uma leitura composta, não um evento pontual.
+> - **`themes` / `period_comparison`** ("Comparação entre períodos") —
+>   payload = `get_theme_breakdown` (já usado por "Share of Voice e
+>   sentimento por pauta") chamado uma 2ª vez pro período imediatamente
+>   anterior (mesma duração, `previousPeriodRange()` — aritmética de data
+>   pura em JS, sem chamada à Brandwatch). Justificativa: o radar detecta
+>   picos/quedas pontuais, não "como o quadro geral mudou" — e não cobre
+>   todas as Pautas de uma vez sem virar N eventos artificiais.
+> - **`authors` / `overview`** (dentro de "Conteúdo em destaque (Top
+>   Sites, X Themes)") — payload = top 5 autores por alcance + top 5 sites
+>   + top 5 hashtags, já buscados pela página. Justificativa: perfil
+>   composto de quem são os autores/conteúdos em destaque, não um evento.
+>
+> **Frontend**: novo `components/ui/expandable-text.tsx`
+> (`ExpandableText`) — pedido do usuário, nos 5 widgets afetados: "se a
+> descrição for maior que cabe no frame, inclua a opção mostrar mais e
+> mostrar menos" (o texto literal do pedido dizia "menor", tratado como
+> imprecisão de digitação — o padrão padrão de UX, e o único que faz
+> sentido, é mostrar o toggle quando o texto **transborda** o clamp, nunca
+> quando já cabe). Mede `scrollHeight > clientHeight` do próprio parágrafo
+> clampado (`line-clamp` via `-webkit-line-clamp`) — só mostra
+> "Mostrar mais" quando o texto de fato transborda 4 linhas; um texto
+> curto nunca ganha o toggle. Usado por `NarrativeTextPanel` (Camada 0/1,
+> seção `'main'`) e pelos 3 widgets de Camada 2 acima.
+>
+> **Página `narratives` ganhou "Resumo executivo da página"** — antes
+> desta sessão, `/narratives` era a única das 5 páginas de análise sem
+> nenhuma noção de `highlights`/`narrative_text` (`PAGE_BLOCKS.narratives`
+> não incluía nenhum dos dois). Fechado adicionando os 2 blocos — mesmo
+> mecanismo de sempre (Camada 0/1, seção `'main'`), nenhuma seção nova.
+>
+> **Admin force-refresh** (pedido do usuário: "algo disponível na sessão
+> do administrador") — 2 mecanismos, cada um cobrindo uma parte diferente
+> do pedido:
+> 1. `NarrativeTextPanel`'s botão (antes só visível em período `custom`)
+>    agora também aparece pra `is_admin` em qualquer período
+>    (`daily`/`weekly`/`monthly`) — reaproveita a mesma Edge Function já
+>    existente (`compose-narrative-synthesis`, síncrona, sempre recompõe
+>    quando chamada), só muda a visibilidade do botão no frontend. Cobre
+>    o `narrative_text`/seção `'main'` de qualquer página.
+> 2. Nova Edge Function admin-only, **`admin-refresh-narrative-summaries`**
+>    (mesmo padrão de auth de todo `admin-*`: Bearer JWT →
+>    `supabaseAdmin.auth.getUser(token)` → checar `user_profiles.is_admin`)
+>    — força `narratives.description` (o resumo **por Narrativa**,
+>    produzido por `narrative-summary-composer`, ver
+>    `foundation/narratives.md`) a ser regerado AGORA pra toda Narrativa
+>    ativa de uma organização, até `MAX_BATCH_SIZE = 50` por chamada
+>    (admin clica de novo se sobrar mais — mesmo padrão de "continuar em
+>    lotes" já aceito em outras partes do produto). `narrative_summary_due_ids()`
+>    ganhou `p_organization_id`/`p_force` (migration `20260809060000`, drop
+>    function — mudança de aridade) — com `p_force = true`, ignora as 4
+>    condições de staleness de sempre e devolve toda Narrativa ativa da
+>    organização. Botão "Atualizar resumos executivos das Narrativas" em
+>    `/narratives`, admin-only. **Deliberadamente não exposto** via
+>    `narrative-summary-composer` em si (que só o `pg_cron` chama,
+>    `verify_jwt = false`, sem CORS/auth) — aceitar um `organization_id`
+>    arbitrário nessa function sem autenticação seria um vetor de
+>    "gaste dinheiro de IA da vítima" pra qualquer um que soubesse a URL.
+>
+> Nenhuma mudança nas 2 seções pré-existentes documentadas acima
+> (recomposição por tempo/por evento novo do radar) — os 2 gatilhos
+> continuam valendo exatamente como descrito, só pra seção `'main'`.
+
 ## Objetivo
 
 Preencher `narrative_text` do envelope com o texto explicativo que aparece nas páginas (ex: "O
@@ -351,6 +447,17 @@ comentário qualitativo). Antes de implementar a Camada 2 para qualquer página,
 deve registrar no spec da página por que a Camada 0 ou 1 não foram suficientes — mesma regra de
 "justificar chamada extra de IA" que já vale para o `event-radar`.
 
+✅ **Implementada (2026-07-14)** — 3 seções reais, cada uma numa página específica, nenhuma
+compartilhada entre páginas. Diferente da Camada 1 (`narrative_text`, sempre a seção `'main'` de
+`page_narrative_synthesis`), cada seção da Camada 2 usa seu próprio valor de `section` — mesma
+tabela, mesma janela de frescor (`AI_SYNTHESIS_REFRESH_HOURS`), mesmo mecanismo
+persistência/staleness (`fetchSectionText`/`composeAndPersistSection` em
+`aggregated-metrics-service.ts`), só sem o gatilho de "evento novo do radar" (essas seções não
+dependem de `highlights`, só do tempo). Ver o blockquote de topo deste arquivo pro detalhamento
+completo de cada seção (`platforms:featured_content`, `themes:period_comparison`,
+`authors:overview`) e das páginas correspondentes (`intelligence-center/platform-analysis.md`,
+`electoral-themes.md`, `authors-and-influencers.md`) pra justificativa por página.
+
 ## Fluxo principal
 
 1. A Edge Function da página já retornou `highlights` (leitura de `feed_events`, ver
@@ -429,6 +536,7 @@ deve registrar no spec da página por que a Camada 0 ou 1 não foram suficientes
 | `id`               | `uuid`         | sim | PK |
 | `organization_id`  | `uuid`         | sim | FK → `organizations(id)` ON DELETE CASCADE |
 | `page`             | `text`         | sim | mesmo slug de `envelope.page` (`overview`, `narratives`, `narrative_detail` etc.) |
+| `section`          | `text`         | sim | ✅ **2026-07-14** (migration `20260809050000`) — `'main'` é o `narrative_text` genérico de sempre (Camada 0/1); outros valores (`'featured_content'`, `'period_comparison'`, `'overview'`) são seções Camada 2 específicas de uma página só. Default `'main'`, mas todo código precisa gravar/filtrar explicitamente — nunca confiar no default (ver blockquote de topo). |
 | `period_start`     | `date`         | sim | |
 | `period_end`       | `date`         | sim | |
 | `filters_hash`     | `text`         | sim | hash determinístico de `filters_applied` (evita a tabela crescer sem limite com toda combinação de filtro já vista — mesmas combinações reusam a mesma linha) |
@@ -438,7 +546,7 @@ deve registrar no spec da página por que a Camada 0 ou 1 não foram suficientes
 | `generated_at`     | `timestamptz`  | sim | quando a composição rodou de fato (não confundir com `created_at`/`updated_at` — pode ser regravado com `generated_at` novo se `is_final = false` e um gatilho de invalidação disparar) |
 | `created_at`/`updated_at` | `timestamptz` | sim | padrão (`set_updated_at`) |
 
-**Índices**: unique `(organization_id, page, period_start, period_end, filters_hash)`.
+**Índices**: unique `(organization_id, page, section, period_start, period_end, filters_hash)` — ✅ ganhou `section` em 2026-07-14 (antes: sem essa coluna).
 
 **Políticas RLS**: ✅ 3 policies (`page_narrative_synthesis_select_org`/`_insert_org`/`_update_org`,
 migration `20260802020000`) — todas `organization_id in (select auth_organization_ids())`, mesmo

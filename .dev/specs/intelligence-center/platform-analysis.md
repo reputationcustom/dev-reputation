@@ -8,6 +8,18 @@ atualizado: 2026-07-18
 
 # Análise por Plataforma
 
+> ✅ **"Conteúdos de destaque" fechado via ai-synthesis Camada 2, movido pro
+> início da página (2026-07-14)** — gap desde que a página existe (nunca
+> teve fonte de "mentions em destaque", ver `_pending.md`). Em vez de
+> construir uma lista de mentions individuais (fora de escopo — não existe
+> agregado oficial da Brandwatch pra isso, e a premissa do projeto proíbe
+> derivar isso localmente sobre `mentions` amostrada), fechado como um
+> resumo qualitativo gerado por IA a partir do que a própria página já
+> busca (breakdown de plataforma + `term_signals`) — ver
+> `aggregated-metrics/ai-synthesis.md`, "Camada 2". Widget movido pro topo
+> da página, pedido explícito do usuário. A lista de mentions individuais
+> continua como gap real, não fechado por esta mudança — ver `_pending.md`.
+
 > ✅ **Movidos para `/authors` (2026-07-25)**, pedido do usuário: "Perfis
 > relevantes" e "X Themes" (Top Hashtags/Most Mentioned X Posters/Top
 > Stories/Top Emojis) — conceitualmente são sobre autores, não sobre
@@ -135,7 +147,11 @@ Mesmo público das demais páginas deste módulo.
 - **Conteúdos de destaque**: cards com preview de mentions específicas
   (autor, plataforma, sentimento, alcance, narrativa) — dado por mention
   individual (`mentions`/`content_source`/`reach_estimate`), mesmo padrão de
-  "menções relevantes" já usado em `narratives-exploration.md`.
+  "menções relevantes" já usado em `narratives-exploration.md`. ⚠️ Ainda um
+  gap real (nunca implementado) — o widget de mesmo nome foi fechado de
+  outra forma (ver blockquote de topo): um resumo textual gerado por IA
+  (`ui_meta.featured_content_text`, `envelope.md`), não uma lista de cards
+  de mentions individuais.
 
 ## Regras de negócio
 

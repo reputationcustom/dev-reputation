@@ -23,6 +23,7 @@ import {
   type AuthorFiltersState,
 } from "@/components/intelligence-center/author-filters-toolbar";
 import { dominantSentiment } from "@/components/intelligence-center/author-color";
+import { ExpandableText } from "@/components/ui/expandable-text";
 import { EmptyState } from "@/components/ui/empty-state";
 
 // "Autores e Influenciadores" — ✅ redesenhada em 2 guias (2026-08-08),
@@ -201,7 +202,19 @@ export default function AuthorsPage() {
 
             <WidgetCard title="Conteúdo em destaque (Top Sites, X Themes)" status={status} onRetry={retry}>
               <div className="flex flex-col gap-6">
-                <TopSitesPanel items={envelope?.top_sites ?? []} timezone={timezone} />
+                {/* ✅ Adicionado 2026-07-14 (pedido do usuário: "deve conter
+                    uma visão geral sucinta sobre os autores e
+                    influenciadores") — ai-synthesis Camada 2, a partir de
+                    dado já agregado nesta página (top autores por
+                    alcance/top sites/top hashtags), sem chamada nova. */}
+                {envelope?.ui_meta && typeof envelope.ui_meta.authors_overview_text === "string" ? (
+                  <ExpandableText text={envelope.ui_meta.authors_overview_text} />
+                ) : (
+                  <p className="text-sm text-text-tertiary">Síntese automática indisponível no momento.</p>
+                )}
+                <div className="border-t border-border-subtle pt-6">
+                  <TopSitesPanel items={envelope?.top_sites ?? []} timezone={timezone} />
+                </div>
                 <div className="border-t border-border-subtle pt-6">
                   <h3 className="mb-3 text-sm font-semibold text-text-primary">X Themes (Hashtags, Posters, Stories, Emojis)</h3>
                   <XInsightsPanel items={envelope?.x_insights ?? []} timezone={timezone} />

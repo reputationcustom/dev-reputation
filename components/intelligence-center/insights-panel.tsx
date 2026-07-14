@@ -3,9 +3,11 @@
 import { useState } from "react";
 import type { Highlight, PageKey } from "@reputation/shared-types";
 import { EmptyState } from "@/components/ui/empty-state";
+import { ExpandableText } from "@/components/ui/expandable-text";
 import { Toast } from "@/components/ui/toast";
 import { callFunction } from "@/lib/supabase/call-function";
 import { useIntelligenceCenterHeader } from "@/components/intelligence-center/header-context";
+import { useUserProfile } from "@/hooks/use-user-profile";
 
 const SEVERITY_COLOR: Record<string, string> = {
   low: "border-risk-low bg-risk-low-bg",
@@ -59,6 +61,16 @@ export function HighlightsPanel({ highlights }: { highlights: Highlight[] }) {
 // mostrar o texto novo é reler o envelope inteiro (que agora encontra a
 // linha recém-persistida na primeira tentativa), em vez de duplicar
 // estado de narrative_text nesta página e na de cima.
+//
+// ✅ Botão "Atualizar resumo executivo" pra admins em qualquer período
+// (2026-07-14, pedido do usuário: "permita que eu consiga executar a
+// atualização do resumo executivo... por algo disponível na sessão do
+// administrador") — mesma Edge Function/mesma ação de sempre
+// (compose-narrative-synthesis, síncrona, sempre recompõe quando chamada),
+// só a visibilidade do botão mudou: além do período `custom` (qualquer
+// usuário), agora também aparece pra `is_admin` em daily/weekly/monthly —
+// não precisa mais esperar o refresh automático (por tempo ou por evento
+// novo do radar, ver ai-synthesis.md) pra forçar uma recomposição agora.
 export function NarrativeTextPanel({
   text,
   page,
@@ -73,8 +85,10 @@ export function NarrativeTextPanel({
   pautaId?: string;
 }) {
   const { organizationId, period, periodMode } = useIntelligenceCenterHeader();
+  const { isAdmin } = useUserProfile();
   const [isGenerating, setIsGenerating] = useState(false);
   const [toast, setToast] = useState<{ type: "success" | "error"; message: string } | null>(null);
+  const canManuallyRefresh = periodMode === "custom" || isAdmin;
 
   async function handleGenerate() {
     if (!organizationId) return;
@@ -108,11 +122,11 @@ export function NarrativeTextPanel({
   return (
     <div className="flex flex-col gap-3">
       {text ? (
-        <p className="text-sm leading-relaxed text-text-primary">{text}</p>
+        <ExpandableText text={text} />
       ) : (
         <p className="text-sm text-text-tertiary">Síntese automática indisponível no momento.</p>
       )}
-      {periodMode === "custom" && (
+      {canManuallyRefresh && (
         <div>
           <button
             type="button"
@@ -120,7 +134,11 @@ export function NarrativeTextPanel({
             disabled={isGenerating}
             className="inline-flex items-center gap-2 rounded-md bg-accent-blue px-3 py-1.5 text-xs font-semibold text-white hover:opacity-90 disabled:opacity-60"
           >
-            {isGenerating ? "Analisando…" : "Analisar período com IA"}
+            {isGenerating
+              ? "Analisando…"
+              : periodMode === "custom"
+                ? "Analisar período com IA"
+                : "Atualizar resumo executivo"}
           </button>
         </div>
       )}

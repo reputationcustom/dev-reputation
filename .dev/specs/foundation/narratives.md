@@ -249,6 +249,40 @@ nesta sessão (sem credenciais/ambiente disponíveis) — revisado
 manualmente. Confirmar em produção, via logs (`[narrative-summary-composer]`),
 que `description` está de fato sendo populado depois do próximo deploy.
 
+### Admin force-refresh (2026-07-14)
+
+✅ Pedido do usuário: "permita que eu consiga executar a atualização do
+resumo executivo... por algo disponível na sessão do administrador."
+Esperar o próximo tick do `pg_cron` (a cada 30min) e que a organização do
+admin calhe de ser a mais "devida" no momento não é uma opção pra quem
+quer confirmar agora que o resumo está atualizado.
+
+Nova Edge Function **`admin-refresh-narrative-summaries`** (mesmo padrão
+de auth de todo `admin-*`: Bearer JWT → `supabaseAdmin.auth.getUser(token)`
+→ checar `user_profiles.is_admin`) — duplica a lógica de composição de
+`narrative-summary-composer` (mesmo `SYSTEM_PROMPT`/modelo/truncamento,
+Princípio técnico 5), mas a origem da lista de Narrativas é diferente:
+`narrative_summary_due_ids()` ganhou `p_organization_id uuid default
+null`/`p_force boolean default false` (migration `20260809060000`, `drop
+function` — mudança de aridade de 1 pra 3 parâmetros). Chamada do
+`pg_cron` (sem argumentos) continua com o comportamento de sempre — as 4
+condições de staleness, sem filtro de organização. Chamada desta Edge
+Function passa `p_organization_id => <org do admin>`/`p_force => true` —
+ignora as 4 condições e devolve **toda** Narrativa ativa daquela
+organização, até `MAX_BATCH_SIZE = 50` por chamada (admin clica de novo se
+sobrar mais, mesmo padrão de "continuar em lotes" já aceito em outras
+partes do produto — ex: backfill de mentions).
+
+Roda de forma síncrona (o admin está disposto a esperar, mesmo padrão de
+`compose-narrative-synthesis`), botão "Atualizar resumos executivos das
+Narrativas" em `/narratives` (admin-only, `intelligence-center/
+narratives-exploration.md`). **Deliberadamente não exposto via
+`narrative-summary-composer` em si** — essa function só o `pg_cron` chama
+(`verify_jwt = false`, sem CORS/auth); aceitar um `organization_id`
+arbitrário ali sem autenticação seria um vetor de "gaste dinheiro de IA da
+vítima" pra qualquer um que soubesse a URL, daí a Edge Function separada
+com o gate de admin de verdade.
+
 ## Fluxos alternativos e erros
 
 | Situação | Comportamento esperado |

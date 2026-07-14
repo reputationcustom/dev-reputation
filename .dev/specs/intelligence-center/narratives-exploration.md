@@ -8,6 +8,20 @@ atualizado: 2026-08-08
 
 # Exploração de Narrativas (lista + detalhe)
 
+> ✅ **"Resumo executivo da página" + admin force-refresh (2026-07-14)** —
+> pedido do usuário: "atualizar o resumo executivo de todas as narrativas.
+> Além disso, inclua um resumo executivo da página." Duas mudanças
+> independentes: (1) novo widget "Resumo executivo da página"
+> (`NarrativeTextPanel`, mesma Camada 0/1 de `ai-synthesis.md` já usada em
+> Visão Geral/Sentimento/Pautas Eleitorais — `PAGE_BLOCKS.narratives`
+> ganhou `'highlights'`/`'narrative_text'`, antes ausentes); (2) botão
+> "Atualizar resumos executivos das Narrativas" (admin-only) — força
+> `narratives.description` (resumo **por Narrativa**, diferente do widget
+> acima) a ser regerado agora pra toda Narrativa ativa da organização,
+> via nova Edge Function `admin-refresh-narrative-summaries` — ver
+> `foundation/narratives.md`, "Admin force-refresh", pro mecanismo
+> completo.
+
 > ✅ **Lista reestruturada (2026-07-14)**, pedido do usuário, 5 itens:
 > 1. **Coluna "Ação" removida** de `NarrativesTable` (agora 6 colunas:
 >    Narrativa/SOV/Tendência/Sentimento/Momentum/Risco) — "não está sendo
