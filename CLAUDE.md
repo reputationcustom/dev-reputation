@@ -7819,6 +7819,66 @@ padrão fire-and-forget de sempre); e o botão "Atualizar resumos
 executivos das Narrativas" respondendo com uma contagem real de
 `processed`/`updated`.
 
+### Heartbeat de `bw-sync` apertado de 15min pra 1min (2026-08-09)
+
+User request, direto após uma análise de log real (ver a conversa desta
+mesma sessão, sem entrada própria neste arquivo por ter sido diagnóstico
+puramente conversacional): rodar o pipeline inteiro uma vez estava
+levando ~5,5-7h reais (medido via logs de produção), bem acima do piso
+teórico de ~2,5-3h calculado a partir do custo de chamadas por fase.
+Causa raiz do desvio, confirmada no log: não era falta de orçamento — era
+**espera ociosa**. Com o heartbeat fixo em 15min (`*/15 * * * *`,
+migration `20260711020000`), quando a janela de 10min da Brandwatch
+libera orçamento no minuto 3 de um ciclo, o sistema só percebe isso no
+próximo múltiplo de 15 — no log real, `topics` esgotou o orçamento
+(`rateLimitUsed: 27`) e o próximo trabalho de verdade só aconteceu ~17
+minutos depois, a maior parte disso sendo `invocation:
+rate_limit_near_ceiling_skip` puro, sem nenhuma chamada à Brandwatch.
+
+Cogitado e descartado: construir um "agente"/orquestrador dedicado — o
+que ele faria (checar continuamente se sobrou orçamento e disparar a
+próxima chamada assim que possível) é exatamente o que o dispatcher/
+`bw_sync_lock`/`hasBrandwatchCallBudget()` já fazem hoje; o problema era
+puramente a frequência de checagem, não falta de inteligência de
+orquestração. Fix, migration `20260809070000` (`select cron.alter_job(
+(select jobid from cron.job where jobname = 'bw-sync-heartbeat'),
+schedule => '* * * * *')`) — reagenda o job já existente pra 1min em vez
+de recriá-lo, primeiro uso de `cron.alter_job` neste projeto (os
+comentários da migration original de 2026-07-11 já antecipavam esse
+mecanismo exato para uma futura mudança de cadência). Justificativa de
+custo: uma invocação ociosa (`no_pair_due`/`rate_limit_near_ceiling_skip`)
+já é barata hoje — confirmado nos próprios logs, ~24-46ms de boot + 1-2
+leituras no Postgres, sem tocar a Brandwatch — então rodar 15x mais vezes
+não pesa em custo real, só reduz a folga entre "orçamento liberou" e "o
+sistema percebeu".
+
+**Não muda, deliberadamente**: `BW_SYNC_INTERVAL_HOURS` (controla quando
+um PAR fica "devido" pra um ciclo novo) e `getSyncStalenessWindowMs()`
+(janela de frescor por fase, mesmo secret) — ambos continuam sendo o
+parâmetro de negócio, configurável via secret sem migration, exatamente a
+distinção já registrada desde a migration original do heartbeat
+(2026-07-11: "cadência fixa — decisão de infraestrutura, não é o
+parâmetro de negócio que o usuário pediu para ser configurável"). Esta
+migration só aperta a cadência de *checagem*, nunca a de "quando um ciclo
+novo é considerado devido". Também não muda o teto real de 30 chamadas/
+10min da Brandwatch — o piso teórico de ~2,5-3h continua sendo o piso,
+esta mudança só elimina o desperdício de espera ociosa em torno dele, sem
+prometer ultrapassá-lo.
+
+**Verificação**: migration revisada manualmente (sintaxe padrão de
+`cron.alter_job`, mesmo padrão já usado por `cron.schedule` nas migrations
+que já agendam jobs neste projeto) — sem acesso a um Supabase real nesta
+sessão, não executada contra um banco de verdade, mesma limitação
+recorrente de toda sessão sem credenciais de deploy. Sem componente
+TypeScript/Edge Function nesta mudança (SQL puro, só reagenda um job
+`pg_cron` já existente). `git push` para `develop` é o próximo passo; o
+sinal de que funcionou é `cron.job` mostrando `schedule = '* * * * *'`
+pra `bw-sync-heartbeat` (`select schedule from cron.job where jobname =
+'bw-sync-heartbeat'`) e o intervalo real entre `invocation:start`
+consecutivos nos logs caindo de ~15min pra ~1min, com o tempo até o
+próximo trabalho real depois de um `rate_limit_near_ceiling_skip` caindo
+de dezenas de minutos pra poucos minutos.
+
 ## Directory structure
 
 ```
