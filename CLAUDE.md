@@ -4494,6 +4494,181 @@ desenvolvido").
   atualizado). `_architecture.md` ainda não tocado nesta sessão — próximo
   item.
 
+### `run_event_detection()` nunca gravava nada — statement timeout na 1.3 (severity) fazia rollback do ciclo inteiro (2026-08-03)
+
+Incidente real de produção, reportado pelo usuário: "reveja pq a cron não
+está iniciando esse processo" (`radar_staging_events` permanecia vazia),
+seguido do log exato colado do Supabase:
+
+```
+ERROR:  canceling statement due to statement timeout
+CONTEXT:  ... PL/pgSQL function event_radar_reach_engagement_severity(uuid,text,text) line 65 ...
+          PL/pgSQL function run_event_detection() line 314 ...
+```
+
+**O `pg_cron` estava, na verdade, chamando `run_event_detection()`
+corretamente a cada 15min** — o job `event_radar_detection_15min`
+(`20260727000000`) nunca parou de disparar. O sintoma "a cron não inicia o
+processo" era, na real, "toda invocação falha e sofre rollback total": a
+função inteira é um único `language plpgsql` sem nenhum bloco `EXCEPTION`
+em lugar nenhum, executada pelo `pg_cron` como uma única transação
+implícita (`select run_event_detection()`) — um erro não capturado em
+QUALQUER statement aborta a chamada inteira e desfaz tudo que ela já tinha
+feito antes na mesma invocação, incluindo os `INSERT`s de detecção (1.1) e
+o fechamento por dedup (1.2), que rodam mais cedo no corpo da função e já
+tinham sido bem-sucedidos. Como a etapa que sempre falhava (1.3, severity)
+roda por último, **nenhuma linha nova jamais sobrevivia** em
+`radar_staging_events`, ciclo após ciclo — dava exatamente a impressão de
+"a cron nunca dispara nada".
+
+**Causa raiz da query lenta**: `event_radar_reach_engagement_severity()`
+(1.3, `20260729000000`), escopo `'platform'`, calcula `v_max` via uma
+subquery correlacionada — `select max(metric_date) from
+bw_query_metrics_daily_by_platform pd2 where pd2.query_id = pd.query_id
+and pd2.page_type = pd.page_type and pd2.category_id is null` — executada
+uma vez por linha candidata. O único índice que cobre essa tabela é o
+`unique (project_id, query_id, category_id_key, page_type, metric_date)`
+(`20260711090000`) — lidera por `project_id`, que **não** aparece no
+filtro da subquery, então o Postgres não tem como fazer um index seek por
+`query_id`/`page_type` sozinho. Como `bw_query_metrics_daily_by_platform`
+"acumula indefinidamente" por design (ver "Data storage is historical by
+design" acima — nenhum job de retenção/poda existe), o custo dessa
+subquery sem índice adequado só cresce com o tempo até estourar o
+`statement_timeout`. `bw_query_metrics_daily` (escopo `'query'`) tem
+exatamente o mesmo problema estrutural (`unique (project_id, query_id,
+category_id, metric_date)`, também líder por `project_id`) — ainda não
+visto no log deste incidente, mas mesma causa, corrigido preventivamente
+junto. `narrative_metrics` (escopo `'narrative'`) nunca teve esse
+problema — seu `unique (narrative_id, metric_date, period)` já lidera por
+`narrative_id`, a coluna de fato usada pela subquery daquele escopo.
+
+**Fix, migration `20260803000000`, duas partes**:
+1. Dois índices parciais novos, cobrindo exatamente o padrão de filtro
+   usado (e reutilizável por qualquer consumidor futuro do mesmo padrão
+   "linha da Query/Plataforma inteira, dia mais recente"):
+   `bw_query_metrics_daily_query_date_idx` (`query_id, metric_date desc
+   where category_id is null`) e
+   `bw_query_metrics_daily_by_platform_query_page_date_idx` (`query_id,
+   page_type, metric_date desc where category_id is null`).
+2. `run_event_detection()` — mesmo corpo de `20260802000000`, só a etapa
+   1.3 (severity + seu espelhamento em `feed_events`) passou a rodar
+   dentro de um bloco `begin ... exception when others then raise
+   warning ...; end;` (savepoint implícito): uma falha ali (esta ou
+   qualquer futura, ex: outra query lenta) não derruba mais a 1.1/1.2 já
+   commitadas na mesma invocação — só pula a atualização de severidade
+   deste ciclo (loga um aviso, visível em Dashboard → Database →
+   Logs/pg_cron) e segue direto pra 1.6, que já tolera `severity_score`
+   nulo/stale (`order by ... desc nulls last`). Mesma filosofia de
+   degradação graciosa já usada em `bw-sync` (budget de chamadas, rate
+   limit) — nunca perder progresso já feito por causa de uma sub-etapa
+   que falhou depois.
+
+**Verificação**: migration revisada manualmente (balanço de parênteses do
+corpo SQL — fora dos comentários `--` — conferido em 0, `begin`/
+`exception`/`end` contados e batendo com a estrutura esperada) — sem
+acesso a um Supabase real nesta sessão (mesma limitação recorrente de toda
+sessão sem credenciais de deploy), não executada contra um banco de
+verdade. `git push` pra `develop` (fluxo já estabelecido) é o próximo
+passo pra isso rodar de verdade e confirmar `radar_staging_events`
+passando a receber linhas.
+
+### `event-radar` 100% implementado — widget "Radar de Eventos" (frontend-highlights-feed.md) fecha o módulo (2026-08-02)
+
+Pedido do usuário, continuação direta da sessão de Fase B: "reveja a
+documentação do frontend do event-radar, se estiver coerente e conciso com
+o que está desenvolvido, pode seguir com o desenvolvimento do frontend."
+Revisão de `frontend-highlights-feed.md` encontrou 2 problemas reais de
+coerência antes de escrever qualquer código:
+
+- **`formatRelativeDate` não faz o que o spec alegava.** O texto descrevia
+  o tempo relativo do card como "há 3h"/"há 2 dias" via
+  `formatRelativeDate` (`lib/date/format.ts`) — mas essa função só tem
+  granularidade de **dia** (`Hoje`/`Ontem`/`há N dias`), sem hora/minuto.
+  Pra uma janela de 72h, a maioria dos eventos aconteceria "Hoje", sem
+  distinção nenhuma entre um evento de 20 minutos atrás e um de 20 horas
+  atrás — o oposto do "visão rápida do que aconteceu" pedido
+  originalmente. Corrigido adicionando `formatRelativeTime` (nova função
+  no mesmo arquivo): granularidade de minuto/hora, cai pra
+  `formatRelativeDate` a partir de 24h (mesmo fallback dia-a-dia de
+  sempre). A diferença entre dois instantes não depende de fuso (duração,
+  não data de calendário) — só o fallback pra "Hoje"/"Ontem" precisa do
+  fuso do usuário, mesma disciplina já usada por toda outra função do
+  arquivo.
+- **Decisão de implementação em aberto, resolvida**: o spec registrava
+  como pendência "Edge Function (extensão de `get-page-overview`) vs. RPC
+  direta do cliente" pra expor `get_recent_highlights`. Resolvida a favor
+  de **RPC direta** (`supabase.rpc('get_recent_highlights', ...)`,
+  `hooks/use-recent-highlights.ts`) — sem Edge Function nova, sem bloco no
+  envelope. Justificativa do próprio spec já apontava pra isso: esta
+  janela é fixa (72h), independente do período/filtros do header, então
+  amarrar ao ciclo de fetch de `get-page-overview` (que refaz a chamada
+  toda vez que o período muda) não faria sentido — mesmo padrão de leitura
+  direta via RLS já usado por `use-narratives-list.ts`/
+  `use-communication-types.ts` (módulo `communications`).
+
+**Implementação**:
+- **`get_recent_highlights(p_organization_id, p_hours default 72, p_limit
+  default 10)`** (migration `20260802040000`) — leitura pura de
+  `feed_events`, `security invoker` (RLS de `feed_events_select_org` segue
+  valendo pro client autenticado), inclui eventos fechados de propósito
+  (`closed_at` preenchido — "o que aconteceu", não "o que está ativo
+  agora"). Devolve `id`/`created_at`/`closed_at`, que o tipo `Highlight` do
+  envelope padrão não tem — este widget usa sua própria forma de resposta
+  (`RecentHighlight`, `hooks/use-recent-highlights.ts`), nunca o tipo
+  `Highlight`/bloco `highlights` genérico (decisão já registrada no spec
+  desde 2026-08-01, confirmada ainda válida nesta revisão).
+- **`hooks/use-recent-highlights.ts`** — mesmo padrão 3-estados
+  (loading/error/loaded) + `retry` de `use-narratives-list.ts`, chamando a
+  RPC direto via `createClient()` (browser client, `@supabase/ssr`).
+- **`components/intelligence-center/recent-events-panel.tsx`** —
+  `RecentEventsPanel` (lista de cards, cada um com ícone por `event_type`
+  ↑/↓/●, `RiskBadge`, `formatRelativeTime`, `title`/`summary`/`tags`, link
+  "Ver Narrativa →" via `next/link` pra `/narratives/[id]` — mesma rota que
+  a intercepting route `@modal/(.)narratives/[id]` já intercepta como
+  modal) + `FeedbackMenu` (menu "⋮" com as 4 opções de
+  `feed_event_feedback.feedback_type`, `INSERT` direto do client, sem Edge
+  Function, exatamente como `data-model.md` já especificava). ⚠️
+  **Desvio deliberado do spec**: implementado **sem** o campo de
+  comentário opcional (clicar numa opção já envia direto) — a coluna
+  `comment` fica disponível no schema pra uma extensão futura. Também
+  **sem `createPortal`** — diferente de `UserRowMenu`
+  (`user-row-menu.tsx`, que precisa de portal porque vive dentro de um
+  container `overflow-x-auto` que clipa um menu `absolute`), esta lista
+  vertical simples não tem esse problema, então o dropdown mais simples
+  se aplica.
+- **`overview/page.tsx`**: `HighlightsPanel` (bloco `highlights` genérico
+  por período) substituído por `RecentEventsPanel` só neste lugar —
+  `HighlightsPanel` não foi removido do arquivo (`insights-panel.tsx`),
+  fica disponível pra uma futura página que precise do bloco `highlights`
+  por período (`/sentiment`/`/themes` já pedem esse bloco em `PAGE_BLOCKS`
+  sem nenhum widget consumindo-o ainda). Comentários de
+  `HighlightsPanel`/`NarrativeTextPanel` (que diziam "sempre vazio,
+  event-radar/ai-synthesis não implementados") também corrigidos — ambos
+  os blocos são reais desde a Fase B da sessão anterior.
+- **Verificação**: `npx tsc --noEmit` e `npm run build` (com `rm -rf
+  .next` antes, pra descartar 2 falhas transitórias de build por conflito
+  de arquivo com um processo concorrente no mesmo diretório) confirmados
+  limpos — 19 rotas, `/overview` cresceu de 4.85kB pra 6.18kB de First
+  Load JS. Migration revisada manualmente, não executada contra um banco
+  real nesta sessão (mesma limitação recorrente de toda sessão sem
+  credenciais de deploy).
+
+**Fechamento do módulo**: com a UI implementada, `schema-integration.md`
+(que só faltava isso) e `frontend-highlights-feed.md` passaram a
+`implementado` — as 8 funcionalidades do módulo (`data-model`/
+`detection-engine`/`deduplication-grouping`/`severity`/
+`agent-orchestrator`/`volume-limits`/`schema-integration`/
+`aggregated-metrics-integration`/`frontend-highlights-feed`, contando
+`data-model` = 9) estão todas `implementado` — `event-radar` como módulo
+inteiro passa de `rascunho` pra `implementado` pela primeira vez, menos de
+uma semana depois do primeiro código real (2026-07-27). Documentação
+fechada em `frontend-highlights-feed.md`, `data-model.md`,
+`schema-integration.md`, `overview.md`, `_architecture.md`, `_index.md`
+(3 linhas stale corrigidas: a Sequência de Implantação Sprint 2 ainda
+descrevia `get_active_highlights`/Camada 1 de `ai-synthesis` como
+pendentes, e a tabela de módulos ainda listava `event-radar` como
+`rascunho`), `_pending.md` gap #35.
+
 ### Módulo `entities` — spec completa + `data-model.md` implementado + seed real de partidos/parlamentares (2026-07-13)
 
 Duas sessões na mesma data. **Primeira**: usuário pediu a spec do módulo de

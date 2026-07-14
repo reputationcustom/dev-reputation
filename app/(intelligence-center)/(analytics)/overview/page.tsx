@@ -8,7 +8,8 @@ import { MetricCard, SentimentMetricCard } from "@/components/intelligence-cente
 import { TrendLineChart } from "@/components/intelligence-center/charts/trend-line-chart";
 import { NarrativesTable } from "@/components/intelligence-center/narratives-table";
 import { NarrativeCard } from "@/components/intelligence-center/narrative-card";
-import { HighlightsPanel, NarrativeTextPanel } from "@/components/intelligence-center/insights-panel";
+import { NarrativeTextPanel } from "@/components/intelligence-center/insights-panel";
+import { RecentEventsPanel } from "@/components/intelligence-center/recent-events-panel";
 import { ScoreLegend } from "@/components/intelligence-center/score-badges";
 import { EmptyState } from "@/components/ui/empty-state";
 
@@ -80,9 +81,20 @@ export default function OverviewPage() {
           </div>
         </WidgetCard>
 
-        <WidgetCard title="Insights" status={status} onRetry={retry}>
-          <HighlightsPanel highlights={envelope?.highlights ?? []} />
-        </WidgetCard>
+        {/* event-radar/frontend-highlights-feed.md — janela FIXA de 72h,
+            independente do período selecionado no header acima (por isso
+            RecentEventsPanel tem seu próprio fetch/estado, não usa o
+            `status`/`retry` do envelope desta página). Substitui o antigo
+            widget "Insights" (HighlightsPanel, bloco `highlights` genérico
+            por período) só neste lugar — HighlightsPanel continua existindo
+            pra uso futuro em outra página. */}
+        <div className="rounded-xl border border-border-default bg-bg-card p-5">
+          <h2 className="text-sm font-bold text-text-primary">Radar de Eventos</h2>
+          <p className="text-xs text-text-tertiary">Últimas 72 horas</p>
+          <div className="mt-4">
+            <RecentEventsPanel />
+          </div>
+        </div>
 
         {/* "Top 3 Narrativas por Menções" (protótipo original `topThreeCards`)
             — renomeado 2026-07-25 (pedido do usuário) de "Top 3 Narrativas"

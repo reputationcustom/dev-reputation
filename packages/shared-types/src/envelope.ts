@@ -254,7 +254,7 @@ export type XInsightType = 'hashtag' | 'emoticon' | 'url' | 'mentioned_author';
 
 // "X Themes" da Brandwatch (Top Hashtags/Emojis/Stories/Most Mentioned X
 // Posters) — bw_query_x_insights (foundation/data-model.md), só na página
-// `platforms`. `tweets`/`retweets`/`volume` mapeiam pros rótulos da própria
+// `authors`. `tweets`/`retweets`/`volume` mapeiam pros rótulos da própria
 // UI da Brandwatch: Posts = tweets, Reposts = retweets, All Posts = volume,
 // Impressions = impressions (confirmado contra developers.brandwatch.com/
 // docs/twitter-insights, ver sql-aggregation.md).
@@ -267,6 +267,11 @@ export interface XInsightItem {
   retweets: number | null;
   impressions: number | null;
   reach_estimate: number | null;
+  // ✅ Adicionado 2026-08-03 — quando esse item foi sincronizado pela
+  // última vez (bw-sync só re-sincroniza X Insights a cada 7 dias por
+  // par, ver isXInsightsStale em bw-sync/index.ts). Nunca null — toda
+  // linha vem de uma sincronização real.
+  synced_at: string;
 }
 
 export interface PageEnvelope {

@@ -2,36 +2,28 @@
 tipo: feature-spec
 módulo: event-radar
 funcionalidade: schema-integration
-status: rascunho
+status: implementado
 atualizado: 2026-08-02
 ---
 
 # Integração com o Schema Existente
 
-> ⚠️ **Item 1 implementado (2026-07-31), item 2 implementado no schema
-> (2026-08-01), UI de nenhum dos dois existe ainda** — a escrita em
-> `feed_events` descrita no "Fluxo principal" item 1 abaixo foi
-> implementada como parte do próprio código de 1.4
-> (`event-radar-agent-orchestrator`, ver `agent-orchestrator.md`), não como
-> uma etapa/função separada — a spec original já descrevia isso como o
-> próprio passo 4 do "Fluxo principal" de `agent-orchestrator.md` ("recebe
-> a resposta e grava conforme schema-integration.md"), então implementar
-> 1.4 sem essa escrita não faria sentido.
->
-> `feed_event_feedback` (item 2 — retroalimentação pós-publicação do
-> analista) ganhou schema/RLS (migration `20260801000000`,
+> ✅ **Ambos os itens implementados, incl. UI (2026-08-02)** — item 1
+> (escrita em `feed_events`) implementado em 2026-07-31 como parte do
+> próprio código de 1.4 (`event-radar-agent-orchestrator`, ver
+> `agent-orchestrator.md`) — a spec original já descrevia isso como o
+> próprio passo 4 do "Fluxo principal" de `agent-orchestrator.md`, então
+> implementar 1.4 sem essa escrita não faria sentido. Item 2
+> (`feed_event_feedback`, retroalimentação pós-publicação do analista)
+> ganhou schema/RLS em 2026-08-01 (migration `20260801000000`,
 > **deliberadamente sem Edge Function** — INSERT direto do cliente,
-> validado por RLS + CHECK constraint, exatamente como `data-model.md` já
-> especificava), mas **nenhuma UI existe pra usá-lo** — nem pra dar
-> feedback, nem pra ver os cards de `feed_events` em primeiro lugar. ✅
-> **Atualizado 2026-08-02**: o bloco `highlights` do envelope
-> (`get_active_highlights`, migration `20260802010000`) **já foi
-> implementado** — deixou de ser o bloqueio. O que falta agora pra este
-> arquivo sair de `rascunho` é só a UI dedicada (o widget "Radar de
-> Eventos", especificado em `frontend-highlights-feed.md`, também
-> `rascunho`, sem código) — não mais uma dependência de backend. Ver
-> `data-model.md` pro schema real de `feed_events`/`feed_event_feedback`
-> já em produção.
+> validado por RLS + CHECK constraint) e UI em 2026-08-02: o widget "Radar
+> de Eventos" (`frontend-highlights-feed.md`, `/overview`) é a primeira
+> página do frontend renderizando cards de `feed_events`, com um menu de
+> feedback por card (`RecentEventsPanel`) cobrindo os 4 tipos de
+> `feedback_type` (sem o campo de comentário opcional, simplificação
+> deliberada — ver `frontend-highlights-feed.md`). Ver `data-model.md` pro
+> schema real de `feed_events`/`feed_event_feedback` já em produção.
 
 ## Objetivo
 

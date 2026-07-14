@@ -127,21 +127,15 @@ fallback), mas fica mais completo com ela.
 > `intelligence-center/authors-and-influencers.md`, "Redesenho interativo", pro consumo completo
 > (dispersão/breakdowns/painel de detalhe em `/authors`).
 
-> ✅ **`event-radar` passou a verde em 2026-07-31** — 5 das 6 funcionalidades do módulo
-> implementadas em sessões consecutivas (2026-07-27 a 2026-07-31): `detection-engine` (1.1),
-> `deduplication-grouping` (1.2), `severity` (1.3), `volume-limits` (1.6, implementado antes de
-> 1.4 por dependência real, não por ordem numérica) e `agent-orchestrator` (1.4 — primeira e única
-> Edge Function do módulo, Claude Haiku 4.5, primeira migration de `feed_events`). Mesmo critério
-> já usado para `aggregated-metrics` (verde com `ai-synthesis.md` ainda pendente): só falta
-> `schema-integration.md` (a única funcionalidade que continua `rascunho`) — não por falta de
-> schema (os dois itens do arquivo, escrita em `feed_events` e `feed_event_feedback`, têm código/
-> migration desde 2026-08-01), mas porque nenhuma UI existe pra renderizar um card de
-> `feed_events` nem pra dar feedback nele. ✅ **Atualizado 2026-08-02**: a "Fase B" de
+> ✅ **`event-radar` passou a verde em 2026-07-31**, 100% `implementado` desde 2026-08-02 — as 8
+> funcionalidades do módulo (`data-model`/`detection-engine`/`deduplication-grouping`/`severity`/
+> `agent-orchestrator`/`volume-limits`/`schema-integration`/`aggregated-metrics-integration`/
+> `frontend-highlights-feed`) estão todas `implementado`. Última peça: o widget "Radar de Eventos"
+> (`frontend-highlights-feed.md`, `RecentEventsPanel` em `/overview`, janela fixa de 72h + feedback
+> do analista) fechou `schema-integration.md` (que só faltava UI) depois que a "Fase B" de
 > `fluxo-aggregated-metrics.md` (A1 `get_active_highlights`/A2 boost de `risk_score`/A3
-> `ai-synthesis` Camada 1) foi implementada — o bloco `highlights` deixou de ser o bloqueio;
-> o que falta pra `schema-integration.md` fechar é só a UI dedicada, especificada em
-> `frontend-highlights-feed.md` (`rascunho`, sem código ainda). Ver `CLAUDE.md`, "Módulo
-> `event-radar`", pro detalhe completo de cada etapa.
+> `ai-synthesis` Camada 1) já tinha destravado o bloco `highlights` no dia anterior. Ver
+> `CLAUDE.md`, "Módulo `event-radar`", pro detalhe completo de cada etapa.
 
 `threshold-engine` e `intelligent-feed` (módulos que existiam na tabela original de `_index.md`,
 Sprint 3) não aparecem como nós próprios — foram **absorvidos por `event-radar`** antes de
@@ -193,7 +187,7 @@ de `intelligence-center`, ver `_index.md`, "Módulo `command-center` removido".
 | `intelligence-center` | As 5 páginas do frontend (Executive Overview, Narrativas, Sentimento, Plataformas, Pautas Eleitorais) + `cases` (ações/decisões, ex-`command-center`) | implementado — `cases` (schema) ainda não | [intelligence-center/overview.md](intelligence-center/overview.md) |
 | `aggregated-metrics` | Envelope JSON único + SQL de agregação + Edge Functions por página, consumido pelo frontend e pela IA | implementado — 10/10 functions SQL, `ai-synthesis.md` Camadas 0/1 completas (2026-08-02); `page_cache` **desabilitado** (2026-07-14, decisão do usuário de retomar depois), ver `_pending.md` gap #34 | [aggregated-metrics/overview.md](aggregated-metrics/overview.md) |
 | `communications` | Registro de Comunicações/Decisões por Narrativa + acompanhamento de impacto (sentimento/menções/risco/momentum antes vs. depois) — Sprint 2.1 | implementado | [communications/overview.md](communications/overview.md) |
-| `event-radar` | Detecção estatística de picos/quedas/mudanças + 1 card de IA por evento — absorve `threshold-engine`/`intelligent-feed` | rascunho — 1.1-1.4/1.6 implementados (2026-07-27 a 2026-07-31) + Fase B de `fluxo-aggregated-metrics.md` (2026-08-02); só falta `schema-integration.md` (UI pra `feed_events`/`feed_event_feedback`, spec em `frontend-highlights-feed.md`, sem código ainda) | [event-radar/overview.md](event-radar/overview.md) |
+| `event-radar` | Detecção estatística de picos/quedas/mudanças + 1 card de IA por evento — absorve `threshold-engine`/`intelligent-feed` | implementado (2026-08-02) — 8/8 funcionalidades, incl. widget "Radar de Eventos" na Visão Geral | [event-radar/overview.md](event-radar/overview.md) |
 | `propagation-graph` | Grafo de propagação com rollup materializado completo (versão simplificada já em `intelligence-center/narratives-exploration.md`) | rascunho | — |
 | `decision-center` | AI Advisors — perguntas livres/interativas do analista sobre mentions/narrativas | rascunho | — |
 | `executive-reports` | Relatórios periódicos (diário/semanal/mensal/executivo/crise) | rascunho | — |

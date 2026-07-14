@@ -2,28 +2,38 @@
 tipo: feature-spec
 módulo: event-radar
 funcionalidade: frontend-highlights-feed
-status: rascunho
-atualizado: 2026-08-01
+status: implementado
+atualizado: 2026-08-02
 ---
 
 # Radar de Eventos — Feed das Últimas 72h (frontend)
 
-> ⚠️ **Rascunho — Fase 1 (Especificação)**, pedido do usuário: "crie a
-> documentação do frontend do módulo event-radar de acordo com o que foi
-> desenvolvido. A ideia é que o usuário tenha uma visão rápida e fácil do
-> que aconteceu nas últimas 72h." Este arquivo só documenta — nenhum
-> código foi escrito nesta sessão. Segue a divisão em duas fases já
-> definida em `overview.md`: isto é a Fase 1; a Fase 2 (implementação) só
-> começa depois que este spec estiver `pronto`.
+> ✅ **Implementado (2026-08-02)**, pedido do usuário: "reveja a
+> documentação do frontend do event-radar, se estiver coerente e conciso
+> com o que está desenvolvido, pode seguir com o desenvolvimento do
+> frontend." Revisão encontrou 2 problemas reais de coerência, corrigidos
+> antes do código: (1) a alegação de que `formatRelativeDate`
+> (`lib/date/format.ts`) já produzia "há 3h" era falsa — essa função só
+> tem granularidade de **dia** (Hoje/Ontem/há N dias), sem hora/minuto;
+> resolvido adicionando `formatRelativeTime` (nova função no mesmo
+> arquivo, cai pra `formatRelativeDate` a partir de 24h); (2) a "decisão de
+> implementação em aberto" (Edge Function vs. RPC direta) foi resolvida a
+> favor de **RPC direta do client** (`supabase.rpc('get_recent_highlights', ...)`,
+> sem Edge Function nova) — mesmo padrão já usado por
+> `use-narratives-list.ts`/`use-communication-types.ts` (leitura protegida
+> só por RLS), justificado pelo próprio argumento do spec ("não depende do
+> período/filtros do header como o resto do envelope"). Migration
+> `20260802040000`, `hooks/use-recent-highlights.ts`,
+> `components/intelligence-center/recent-events-panel.tsx`. `npx tsc
+> --noEmit`/`npm run build` confirmados limpos (19 rotas, `/overview`
+> cresceu de 4.85kB pra 6.18kB de First Load JS).
 >
 > Este é o **primeiro spec de frontend do módulo `event-radar`** —
-> `overview.md`, "Rotas/Páginas" ainda diz "este módulo não expõe páginas
-> próprias... as páginas de frontend que exibem sua saída são as de
-> `aggregated-metrics` (bloco `highlights`)". Isso continua verdadeiro no
-> sentido de que não há uma rota `/eventos` nova aqui — este spec descreve
-> um **widget**, dentro de uma página já existente de `intelligence-center`,
-> não uma página nova. Ver "Por que não é o bloco `highlights` genérico"
-> abaixo pro porquê de não bastar reaproveitar o que já está especificado.
+> `overview.md`, "Rotas/Páginas" foi atualizado — não há uma rota
+> `/eventos` nova, este spec descreve um **widget** dentro de uma página já
+> existente de `intelligence-center` (`/overview`), não uma página nova.
+> Ver "Por que não é o bloco `highlights` genérico" abaixo pro porquê de
+> não bastar reaproveitar o que já está especificado.
 
 ## Objetivo
 
@@ -84,10 +94,15 @@ própria UI, não só na documentação.
    (cor da borda + badge), só não decide a ordem.
 4. Cada card mostra: ícone por `event_type`, badge de severidade
    (`RiskBadge`, reaproveitado de `score-badges.tsx`), tempo relativo ("há
-   3h", "há 2 dias" — `formatRelativeDate`, `lib/date/format.ts`), `title`,
-   `summary`, `tags` (chips pequenos), e um link "Ver Narrativa →" quando
-   `related_narrative_id` existe (abre `narrative-detail-modal.tsx`, mesmo
-   padrão de clique já usado em `NarrativeCard`/`NarrativesTable`).
+   3h", "há 2 dias" — `formatRelativeTime`, `lib/date/format.ts`, nova
+   função com granularidade de hora/minuto; `formatRelativeDate` existente
+   só tem granularidade de dia, insuficiente pra uma janela de 72h onde a
+   maioria dos eventos aconteceu "hoje"), `title`, `summary`, `tags` (chips
+   pequenos), e um link "Ver Narrativa →" quando `related_narrative_id`
+   existe (`next/link` pra `/narratives/[id]`, mesma rota que a
+   intercepting route `@modal/(.)narratives/[id]` já intercepta pra abrir
+   como modal — mesmo padrão de clique já usado em
+   `NarrativeCard`/`NarrativesTable`).
 5. Cada card tem um menu de feedback (ver "Feedback do analista" abaixo).
 
 ## Interface (UI)
@@ -110,28 +125,37 @@ própria UI, não só na documentação.
     visual já usado em `score-badges.tsx`.
   - `RiskBadge` com `severity`/`severity_label` (mapeamento 1:1 já
     existente — `severity` é o mesmo enum de `risk_level`).
-  - Tempo relativo via `formatRelativeDate(created_at, timezone)` — mesma
-    função já usada no resto do produto (`lib/date/format.ts`), nunca uma
-    formatação de data nova.
+  - Tempo relativo via `formatRelativeTime(created_at, timezone)` (nova
+    função em `lib/date/format.ts`, mesmo arquivo/convenção de fuso do
+    resto do produto — granularidade de hora/minuto, cai pra
+    `formatRelativeDate` a partir de 24h).
   - `title` (negrito), `summary` (texto secundário), `tags` (chips,
     reaproveitando o estilo de pill já usado em `narrative-card.tsx`).
   - Link "Ver Narrativa →" (só quando `related_narrative_id` existe) —
     abre o modal de detalhe (intercepting route já existente,
     `@modal/(.)narratives/[id]`), mesmo comportamento de qualquer outro
     card/tabela que já linka pra uma Narrativa.
-- **Feedback do analista**: um ícone de "⋮" (mesmo padrão de menu de ações
-  já usado em `users-admin-view.tsx`) abrindo 4 opções — Útil / Irrelevante
-  / Severidade errada / Explicação incorreta (`feedback_type`, ver
-  `data-model.md`) — mais um campo de comentário opcional. Ao enviar:
-  `INSERT` direto em `feed_event_feedback` via `supabase-js` (sem Edge
-  Function — mesma decisão já registrada em `data-model.md`/`CLAUDE.md`
-  quando o schema foi criado: toda validação cabe em RLS/CHECK). Toast de
-  confirmação (regra transversal #3). Depois de enviar, o card mostra um
-  estado "Feedback enviado ✓" no lugar do menu — **suave, só client-side**:
-  não há constraint no banco impedindo múltiplos feedbacks da mesma pessoa
-  no mesmo card (`data-model.md` não define um por design), então um
-  reload da página permite enviar de novo. Aceitável pro MVP — não é um
-  gate de segurança, é só evitar clique duplo acidental.
+- **Feedback do analista**: um ícone de "⋮" abrindo 4 opções — Útil /
+  Irrelevante / Severidade errada / Explicação incorreta (`feedback_type`,
+  ver `data-model.md`). ⚠️ **Implementado sem o campo de comentário
+  opcional** (simplificação deliberada, não um esquecimento — clicar numa
+  opção já envia direto, sem um segundo passo de texto livre; a coluna
+  `comment` de `feed_event_feedback` fica disponível no schema pra uma
+  extensão futura, se o produto quiser). Dropdown simples (`absolute`, sem
+  portal) — diferente de `UserRowMenu` (`user-row-menu.tsx`, que usa
+  `createPortal` porque a tabela de usuários vive num container
+  `overflow-x-auto`, que clipa um menu `absolute`); `RecentEventsPanel` é
+  uma lista vertical simples, sem esse problema de clipping, então o
+  padrão mais simples se aplica. Ao enviar: `INSERT` direto em
+  `feed_event_feedback` via `supabase-js` (sem Edge Function — mesma
+  decisão já registrada em `data-model.md`/`CLAUDE.md` quando o schema foi
+  criado: toda validação cabe em RLS/CHECK). Toast de confirmação (regra
+  transversal #3). Depois de enviar, o card mostra um estado "Feedback
+  enviado ✓" no lugar do menu — **suave, só client-side**: não há
+  constraint no banco impedindo múltiplos feedbacks da mesma pessoa no
+  mesmo card (`data-model.md` não define um por design), então um reload
+  da página permite enviar de novo. Aceitável pro MVP — não é um gate de
+  segurança, é só evitar clique duplo acidental.
 - **Estados**: loading = skeleton (regra transversal #1, mesmo padrão de
   `SKELETON_ROWS` já usado em outras listas); erro = `<ErrorMessage
   onRetry />` (regra do "Backend communication failures" do `CLAUDE.md`);
@@ -175,11 +199,12 @@ própria UI, não só na documentação.
 ## Dados envolvidos
 
 - **Lê**: `feed_events` (organização ativa, `created_at` dentro da janela
-  de 72h) — nova function SQL `get_recent_highlights(p_organization_id
-  uuid, p_hours integer default 72, p_limit integer default 10)`, leitura
-  pura sobre `feed_events`, mesmo princípio de `get_active_highlights`
-  ("nunca recalcula insight, apenas filtra e ordena o que o radar já
-  publicou").
+  de 72h) — ✅ **`get_recent_highlights(p_organization_id uuid, p_hours
+  integer default 72, p_limit integer default 10)` implementada (migration
+  `20260802040000`)**, leitura pura sobre `feed_events`, mesmo princípio de
+  `get_active_highlights` ("nunca recalcula insight, apenas filtra e
+  ordena o que o radar já publicou"). Chamada direto do client
+  (`security invoker`, RLS de `feed_events` aplica normalmente).
 - **Escreve**: `feed_event_feedback` (INSERT direto do cliente, já
   implementado — ver `data-model.md`).
 - ⚠️ **Mudança necessária no contrato do envelope, ainda não feita**: o
@@ -203,17 +228,20 @@ usuário autenticado da organização (RLS já implementada,
 
 ## Dependências técnicas
 
-- Nova function SQL `get_recent_highlights` (migration futura, Fase 2).
-- Nova Edge Function ou extensão de uma já existente pra expor
-  `get_recent_highlights` ao frontend — a decidir na Fase 2 se isso vira
-  parte de `get-page-overview` (um bloco a mais no envelope daquela
-  página especificamente) ou uma function RPC chamada direto pelo cliente
-  (mais simples, já que não depende do período/filtros do header como o
-  resto do envelope) — **decisão de implementação, não de produto,
-  registrada aqui como aberta**.
-- Componente novo `RecentEventsPanel` + `hooks/use-recent-highlights.ts`
-  (padrão 3-estados já usado por todo hook de carregamento do projeto).
-- `formatRelativeDate` (`lib/date/format.ts`) já existe, sem mudança.
+- ✅ Function SQL `get_recent_highlights` (migration `20260802040000`).
+- ✅ **Resolvido**: RPC chamada direto pelo cliente (`supabase.rpc(...)`,
+  `hooks/use-recent-highlights.ts`) — sem Edge Function nova, sem bloco no
+  envelope de `get-page-overview`. Decisão a favor da opção mais simples,
+  já que este widget genuinamente não depende do período/filtros do
+  header como o resto do envelope (mesmo padrão de leitura direta via RLS
+  já usado por `use-narratives-list.ts`/`use-communication-types.ts`).
+- ✅ Componente `RecentEventsPanel`
+  (`components/intelligence-center/recent-events-panel.tsx`) +
+  `hooks/use-recent-highlights.ts` (padrão 3-estados já usado por todo
+  hook de carregamento do projeto).
+- ✅ `formatRelativeTime` — nova função em `lib/date/format.ts`
+  (granularidade de hora/minuto, cai pra `formatRelativeDate` a partir de
+  24h) — a função existente sozinha não bastava, ver blockquote de topo.
 
 ## Gaps conhecidos (fora de escopo deste spec)
 

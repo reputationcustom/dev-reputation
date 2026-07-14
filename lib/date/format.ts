@@ -1,5 +1,5 @@
 import { formatInTimeZone, toZonedTime, fromZonedTime } from "date-fns-tz";
-import { differenceInCalendarDays, startOfMonth, endOfMonth, subMonths, subDays } from "date-fns";
+import { differenceInCalendarDays, differenceInMinutes, differenceInHours, startOfMonth, endOfMonth, subMonths, subDays } from "date-fns";
 
 // Fuso horário do usuário (CLAUDE.md, "Fuso horário do usuário"): datas são
 // sempre armazenadas em UTC (timestamptz) — a conversão pro fuso de exibição
@@ -59,6 +59,32 @@ export function formatRelativeDate(
   if (diffDays === 1) return "Ontem";
   if (diffDays > 1) return `há ${diffDays} dias`;
   return formatDate(target, timezone);
+}
+
+/**
+ * Datas relativas com granularidade de hora/minuto: "agora", "há N min",
+ * "há N h", caindo para `formatRelativeDate` (Hoje/Ontem/há N dias) a
+ * partir de 24h — diferente de `formatRelativeDate` acima, que é só
+ * dia-a-dia e não serve pra um evento que aconteceu há 20 minutos (tudo
+ * viraria "Hoje", sem distinção útil). Usado por `RecentEventsPanel`
+ * (event-radar/frontend-highlights-feed.md, janela de 72h) — a diferença
+ * entre dois instantes não depende de fuso horário (duração, não data de
+ * calendário), então o cálculo em si é direto; só o fallback pra
+ * `formatRelativeDate` (Hoje/Ontem) é que precisa do fuso, já que dia de
+ * calendário é fuso-dependente.
+ */
+export function formatRelativeTime(date: Date | string, timezone: string = DEFAULT_TIMEZONE): string {
+  const target = typeof date === "string" ? new Date(date) : date;
+  const now = new Date();
+  const diffMinutes = differenceInMinutes(now, target);
+
+  if (diffMinutes < 1) return "agora mesmo";
+  if (diffMinutes < 60) return `há ${diffMinutes} min`;
+
+  const diffHours = differenceInHours(now, target);
+  if (diffHours < 24) return `há ${diffHours}h`;
+
+  return formatRelativeDate(target, timezone);
 }
 
 /**

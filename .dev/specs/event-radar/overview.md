@@ -1,7 +1,7 @@
 ﻿---
 tipo: module-overview
 módulo: event-radar
-status: rascunho
+status: implementado
 atualizado: 2026-08-02
 ---
 
@@ -22,19 +22,17 @@ atualizado: 2026-08-02
 > chamada de IA** (Claude Haiku 4.5, primeira e única Edge Function do
 > módulo) e também escreve em `feed_events` (que ganhou sua primeira
 > migration nesta mesma sessão — ver `agent-orchestrator.md`/`data-model.md`).
-> Status do módulo continua `rascunho` só por causa de 1.5
-> (`schema-integration`) — mas seu item 1 (escrita em `feed_events`) já
-> foi implementado como parte do próprio código de 1.4, e seu item 2
-> (`feed_event_feedback`) ganhou schema/RLS em 2026-08-01 (migration
-> `20260801000000`, sem Edge Function — INSERT direto do cliente validado
-> por RLS/CHECK). ✅ **Atualizado 2026-08-02**: `aggregated-metrics`'s
-> `get_active_highlights` (bloco `highlights`) foi implementada
-> (`fluxo-aggregated-metrics.md`, "Fase B", migration `20260802010000`) —
-> mas **nenhuma UI existe ainda** consumindo esse bloco pra renderizar um
-> card de `feed_events`/pendurar um botão de feedback (o widget dedicado,
-> `frontend-highlights-feed.md`, segue `rascunho`, sem código). O que
-> mantém este módulo em `rascunho` hoje é só essa UI faltante, não mais
-> nenhuma dependência de backend.
+> ✅ **Módulo passou a `implementado` (2026-08-02)** — 1.5
+> (`schema-integration`) fechou nesta mesma data: item 1 (escrita em
+> `feed_events`) já estava implementado desde 1.4, item 2
+> (`feed_event_feedback`) ganhou schema/RLS em 2026-08-01 e UI em
+> 2026-08-02 (widget "Radar de Eventos", `frontend-highlights-feed.md`,
+> `RecentEventsPanel` em `/overview`, menu de feedback por card). O bloco
+> `highlights`/`get_active_highlights` de `aggregated-metrics` (Fase B,
+> migration `20260802010000`) e `aggregated-metrics-integration.md`
+> também estão implementados — todas as 8 funcionalidades da tabela abaixo
+> são `implementado`, nenhuma pendência de backend ou frontend restante
+> neste módulo.
 
 > ✅ **Absorve `threshold-engine`/`intelligent-feed`** (Sprint 3 em `_index.md`, nunca tiveram
 > spec própria) — é a especificação concreta do mesmo motor de risco + feed de eventos que esses
@@ -71,10 +69,10 @@ exata.
 | `deduplication-grouping`            | Dedup determinístico antes de qualquer chamada de IA               | implementado  | [deduplication-grouping.md](deduplication-grouping.md)             |
 | `severity`                          | Score 0-100 determinístico + mapeamento para categoria de risco    | implementado  | [severity.md](severity.md)                                         |
 | `agent-orchestrator`                | Única chamada de IA por evento, saída estruturada                  | implementado  | [agent-orchestrator.md](agent-orchestrator.md)                         |
-| `schema-integration`                | Escrita em `feed_events` (toda severidade, sem aprovação manual) + feedback do analista | rascunho  | [schema-integration.md](schema-integration.md)                           |
+| `schema-integration`                | Escrita em `feed_events` (toda severidade, sem aprovação manual) + feedback do analista | implementado  | [schema-integration.md](schema-integration.md)                           |
 | `volume-limits`                     | Cap diário de eventos publicados por organização                   | implementado  | [volume-limits.md](volume-limits.md)                                 |
-| `aggregated-metrics-integration`    | Contrato de campos compartilhado com o envelope de página          | rascunho  | [aggregated-metrics-integration.md](aggregated-metrics-integration.md)   |
-| `frontend-highlights-feed`          | Widget "Radar de Eventos" na Visão Geral — últimas 72h, independente do período do header | rascunho  | [frontend-highlights-feed.md](frontend-highlights-feed.md)   |
+| `aggregated-metrics-integration`    | Contrato de campos compartilhado com o envelope de página          | implementado  | [aggregated-metrics-integration.md](aggregated-metrics-integration.md)   |
+| `frontend-highlights-feed`          | Widget "Radar de Eventos" na Visão Geral — últimas 72h, independente do período do header | implementado  | [frontend-highlights-feed.md](frontend-highlights-feed.md)   |
 
 ## Dependências
 
@@ -114,10 +112,11 @@ Este módulo tem uma ordem interna estrita — cada etapa consome a saída da an
 
 Este módulo não expõe uma rota própria — ele alimenta `feed_events`, já existente no schema
 (`cases` não é mais tocado por este módulo, ver `schema-integration.md`). O bloco `highlights`
-genérico (por página/período) é exibido pelas páginas de `aggregated-metrics`. ✅ **Especificado
-em 2026-08-01** (`frontend-highlights-feed.md`, ainda `rascunho`/não implementado): um widget
-próprio do módulo, "Radar de Eventos", dentro da Visão Geral (`/overview`) — janela fixa de
-últimas 72h, independente do período selecionado no header, com feedback do analista por card.
+genérico (por página/período) é exibido pelas páginas de `aggregated-metrics`. ✅ **Implementado
+(2026-08-02)** (`frontend-highlights-feed.md`): um widget próprio do módulo, "Radar de Eventos"
+(`RecentEventsPanel`), dentro da Visão Geral (`/overview`) — janela fixa de últimas 72h,
+independente do período selecionado no header, com feedback do analista por card
+(`feed_event_feedback`, `get_recent_highlights` chamada direto pelo client).
 
 ## Dados gerenciados
 

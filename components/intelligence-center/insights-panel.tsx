@@ -8,15 +8,17 @@ const SEVERITY_COLOR: Record<string, string> = {
   critical: "border-risk-critical bg-risk-critical-bg",
 };
 
-// Bloco `highlights` — leitura de feed_events, populada por `event-radar`
-// (Sprint 3, ainda não implementado — ver _pending.md gap #8). Sempre vazio
-// hoje; o EmptyState é honesto sobre o motivo em vez de fingir "nenhum
-// insight" como se fosse um estado normal de dado zerado.
+// Bloco `highlights` — leitura de feed_events (get_active_highlights,
+// escopada pelo período/filtros da página), já implementada desde
+// 2026-08-02 (event-radar "Fase B"). Não usada por /overview hoje — essa
+// página renderiza RecentEventsPanel (janela FIXA de 72h,
+// event-radar/frontend-highlights-feed.md) no lugar; este componente fica
+// disponível pra uma futura página que precise do bloco `highlights`
+// genérico por período (ex: `/sentiment`/`/themes`, que já pedem esse
+// bloco em PAGE_BLOCKS mas ainda não têm um widget consumindo-o).
 export function HighlightsPanel({ highlights }: { highlights: Highlight[] }) {
   if (highlights.length === 0) {
-    return (
-      <EmptyState message="Nenhum insight automático ainda — depende do motor de detecção (event-radar), não implementado nesta fase." />
-    );
+    return <EmptyState message="Nenhum insight automático no período selecionado." />;
   }
 
   return (
@@ -34,15 +36,14 @@ export function HighlightsPanel({ highlights }: { highlights: Highlight[] }) {
   );
 }
 
-// Bloco `narrative_text` — síntese de IA (ai-synthesis.md, não implementado
-// nesta fase, fica sempre `null`). Mesmo raciocínio do highlights acima.
+// Bloco `narrative_text` — síntese de IA (ai-synthesis.md, Camadas 0/1
+// implementadas). `null` só ocorre num erro de fetch (fetchNarrativeText
+// sempre monta um template determinístico como fallback, ver
+// aggregated-metrics-service.ts) — texto genérico abaixo cobre esse caso
+// raro, não o caminho normal.
 export function NarrativeTextPanel({ text }: { text: string | null }) {
   if (!text) {
-    return (
-      <p className="text-sm text-text-tertiary">
-        Síntese automática ainda não disponível (depende da camada de IA, não implementada nesta fase).
-      </p>
-    );
+    return <p className="text-sm text-text-tertiary">Síntese automática indisponível no momento.</p>;
   }
   return <p className="text-sm leading-relaxed text-text-primary">{text}</p>;
 }
