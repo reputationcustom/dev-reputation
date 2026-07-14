@@ -63,6 +63,12 @@ export interface EnvelopePeriod {
   end: string
   granularity: string
   comparison: string
+  // ✅ Adicionado 2026-07-14 — espelha o PeriodMode do header
+  // (header-context.tsx). Opcional; só consumido por fetchNarrativeText
+  // abaixo, pra decidir se a composição da Camada 1 dispara sozinha em
+  // background (daily/weekly/monthly) ou só sob pedido explícito do
+  // usuário via compose-narrative-synthesis (custom). Ver ai-synthesis.md.
+  mode?: 'daily' | 'weekly' | 'monthly' | 'custom'
 }
 
 export interface EnvelopeFilters {
@@ -1104,6 +1110,21 @@ async function composeAndPersistLayer1(
 // ver _pending.md #21, então uma linha existente é sempre a resposta
 // final por enquanto); não existe → fallback imediato é a Camada 0,
 // composição real roda em background via scheduleBackground.
+//
+// ✅ Exceção adicionada 2026-07-14 (pedido do usuário: diferenciar
+// diário/semanal/mensal e, "em caso de período personalizado", deixar o
+// disparo da IA a critério do usuário) — `ctx.period.mode === 'custom'`
+// NUNCA agenda a composição em background sozinho: um período
+// personalizado pode ser reaberto/reeditado livremente pelos 2 campos de
+// data do header, então compor via IA a cada combinação nova digitada
+// seria caro e frequentemente descartado antes do usuário terminar de
+// ajustar o intervalo. Continua devolvendo a linha já persistida se
+// existir (ex: um período personalizado já analisado antes por
+// compose-narrative-synthesis, mesmo endpoint que o botão "Analisar com
+// IA" chama) — só o disparo *automático* fica condicionado a
+// daily/weekly/monthly. period.mode ausente (nunca deveria acontecer
+// vindo do header atual, mas uma chamada direta à Edge Function sem esse
+// campo) é tratado como não-custom, preservando o comportamento anterior.
 async function fetchNarrativeText(
   supabase: SupabaseClient,
   ctx: PageContext,
@@ -1128,11 +1149,61 @@ async function fetchNarrativeText(
     const row = data as PageNarrativeSynthesisRow | null
     if (row) return row.narrative_text
     const fallback = await fetchLayer0NarrativeText(supabase, ctx, highlights)
-    scheduleBackground(composeAndPersistLayer1(supabase, ctx, page, hash, highlights))
+    if (ctx.period.mode !== 'custom') {
+      scheduleBackground(composeAndPersistLayer1(supabase, ctx, page, hash, highlights))
+    }
     return fallback
   } catch (err) {
     console.error('[aggregated-metrics] fetchNarrativeText (Camada 1) failed', err)
     return fetchLayer0NarrativeText(supabase, ctx, highlights)
+  }
+}
+
+// ✅ Adicionado 2026-07-14 — chamada pela Edge Function dedicada
+// compose-narrative-synthesis (botão "Analisar com IA" do frontend, só
+// visível pra período personalizado — ver NarrativeTextPanel). Diferente
+// de fetchNarrativeText (leitura, dispara composição em background quando
+// aplicável), esta function SEMPRE compõe de forma síncrona quando há
+// highlights suficientes pra valer a chamada de IA (mesmo gate de 2+ já
+// usado pela Camada 1 automática — com 0/1 highlight a Camada 0 já é
+// determinística e suficiente, chamar IA seria custo sem benefício) e
+// aguarda o resultado antes de responder, já que aqui é uma ação explícita
+// do usuário disposto a esperar por uma análise real, não um carregamento
+// de página que precisa responder rápido.
+async function composeNarrativeSynthesisOnDemand(
+  supabase: SupabaseClient,
+  ctx: PageContext,
+  page: PageKey,
+): Promise<{ narrative_text: string; generated_by_ai: boolean }> {
+  const highlights = await fetchHighlights(supabase, ctx)
+  if (highlights.length <= 1) {
+    const text = await fetchLayer0NarrativeText(supabase, ctx, highlights)
+    return { narrative_text: text ?? 'Não há dados suficientes para gerar uma análise deste período.', generated_by_ai: false }
+  }
+  const hash = await cacheFingerprint(ctx)
+  const text = await composeLayer1NarrativeText(supabase, ctx, page, highlights)
+  if (text) {
+    const { error } = await supabase.from('page_narrative_synthesis').upsert(
+      {
+        organization_id: ctx.organizationId,
+        page,
+        period_start: ctx.period.start,
+        period_end: ctx.period.end,
+        filters_hash: hash,
+        narrative_text: text,
+        layer: 'layer_1',
+        is_final: isPeriodClosed(ctx.period.end),
+        generated_at: new Date().toISOString(),
+      },
+      { onConflict: 'organization_id,page,period_start,period_end,filters_hash' },
+    )
+    if (error) console.error('[aggregated-metrics] composeNarrativeSynthesisOnDemand upsert failed', error)
+    return { narrative_text: text, generated_by_ai: true }
+  }
+  const fallback = await fetchLayer0NarrativeText(supabase, ctx, highlights)
+  return {
+    narrative_text: fallback ?? 'Não foi possível gerar a análise deste período no momento. Tente novamente.',
+    generated_by_ai: false,
   }
 }
 

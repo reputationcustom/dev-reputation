@@ -135,12 +135,22 @@ export function IntelligenceCenterProvider({ children }: { children: React.React
     setPeriodModeState(mode);
   }
 
+  // `mode` viaja junto no envelope.period (ai-synthesis.md, Camada 1) —
+  // é o que permite o backend saber se deve compor a síntese em IA
+  // automaticamente (daily/weekly/monthly) ou só sob pedido explícito do
+  // usuário (custom, via botão "Analisar com IA" em NarrativeTextPanel).
   const period = useMemo<EnvelopePeriod>(() => {
     if (periodMode === "custom") {
-      return { start: customRange.start, end: customRange.end, granularity: "day", comparison: "previous_period" };
+      return {
+        start: customRange.start,
+        end: customRange.end,
+        granularity: "day",
+        comparison: "previous_period",
+        mode: "custom",
+      };
     }
     const range = getLastNDaysRange(PERIOD_MODE_DAYS[periodMode], timezone);
-    return { start: range.start, end: range.end, granularity: "day", comparison: "previous_period" };
+    return { start: range.start, end: range.end, granularity: "day", comparison: "previous_period", mode: periodMode };
   }, [periodMode, customRange, timezone]);
 
   const value: HeaderContextValue = {

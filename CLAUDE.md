@@ -1846,6 +1846,73 @@ push` to `develop` is the next step for this to actually run; confirm via
 after deploy, same recurring caveat as every other session in this file
 without deploy access.
 
+### `narrative_text` (ai-synthesis.md) gains a period-mode-aware trigger + manual "Analisar com IA" for custom ranges
+
+User request: "O resumo executivo gerado pela IA deve ter a
+diferenciação, diário, semanal e mensal para suportar a navegação do
+usuário. Em caso de período personalizado, vamos colocar um botão no
+frontend para possibilitar o usuário final chamar a IA para analisar caso
+ele queira."
+
+**Diário/semanal/mensal already worked by construction** — each header
+mode (`header-context.tsx`) produces a distinct `period.start`/`period.end`,
+and `page_narrative_synthesis`'s key includes both, so switching tabs
+already reads/writes its own composition, never reusing another mode's
+text. Nothing to fix there. **The real gap was the second half of the
+request**: `fetchNarrativeText()` (`aggregated-metrics-service.ts`)
+unconditionally scheduled the Camada 1 background composition for *any*
+period with 2+ highlights — including a custom range still being typed
+into the header's 2 date fields, where every intermediate combination
+could fire (and immediately waste) an AI call before the user settled on
+a final range.
+
+Fixed with a new optional `period.mode` field (`"daily" | "weekly" |
+"monthly" | "custom"`, mirrors the header's `PeriodMode` — added to
+`EnvelopePeriod` in `packages/shared-types/src/envelope.ts` and, per
+Principle 5, in the canonical `aggregated-metrics-service.ts` plus all 7
+deployed `get-page-*`/`get-narrative-detail` inline copies, propagated
+mechanically via a scratch Node script and verified byte-identical to
+canonical except the pre-existing per-function handler differences):
+`fetchNarrativeText()` only calls `scheduleBackground(composeAndPersistLayer1(...))`
+when `ctx.period.mode !== 'custom'` — for a custom range, the page always
+loads with the Camada 0 deterministic fallback, never triggering AI on
+its own (a previously-persisted row for that exact custom range is still
+returned as-is, same as any other mode).
+
+New 8th Edge Function, **`compose-narrative-synthesis`** (not a
+`get-page-*` — doesn't assemble a full envelope, only the `narrative_text`
+block) — a full copy of `aggregated-metrics-service.ts` plus its own
+handler, backing a new "Analisar período com IA" button in
+`NarrativeTextPanel` (`components/intelligence-center/insights-panel.tsx`,
+now `"use client"`), shown only when `periodMode === "custom"`. Reuses a
+new `composeNarrativeSynthesisOnDemand()` (same file) — same 2+-highlight
+gate as the automatic path (below that, Camada 0 is already sufficient
+and deterministic; paying for an AI call would add nothing), but runs
+**synchronously** (awaits the Anthropic call before responding) since
+this is an explicit, waited-for user action, not a page load that needs
+to stay fast — and persists to the same `page_narrative_synthesis` row
+`get-page-*` already reads. `NarrativeTextPanel` wires `page`/`onGenerated`
+(the page's own `usePageEnvelope().retry`) from all 4 call sites
+(`overview`, `sentiment`, `platforms`, `themes` — the only pages that
+render this component today; `narrative_detail` has a separate,
+pre-existing gap of never reading `narrative_text` at all, out of scope
+here) — after a successful compose, the simplest way to show the new text
+is just re-fetching the whole envelope, which now finds the freshly
+persisted row on the first read, rather than threading a second copy of
+`narrative_text` state through each page.
+
+No migration — `page_narrative_synthesis` already had exactly the schema/
+key needed. `npx tsc --noEmit` and `npm run build` (with `rm -rf .next`
+first) both pass clean, 21 routes (no new Next.js route — the new
+function is Edge-Function-only). Not tested against a live Supabase/
+Anthropic environment this session (no credentials) — same recurring
+caveat as every session in this file without deploy access; `git push` to
+`develop` is the next step, and the signal to check afterward is a custom
+period's "O que os gráficos mostram?"/"Mudança de sentimento"/"Insights"
+widget staying on the Camada 0 template until the button is clicked, with
+no `[aggregated-metrics] composeLayer1NarrativeText` log line firing on
+its own for that request.
+
 ### Reporting/BI split
 
 `reporting.narratives_overview` and `reporting.mentions_daily` exist for
@@ -5966,6 +6033,96 @@ credenciais de deploy; o sinal de que funcionou é o painel refletir uma
 sincronização manual em segundos, não em até 59min, e o log
 `[bw-sync] refreshNarrativeMetricsForToday:done` aparecendo logo após
 `invocation:step_done {"step":"daily_metrics"}` nos logs de produção.
+
+### Dispatcher de fases parava na primeira com trabalho real — "furo" de sincronismo entre SOV/volumetria/etc. corrigido (2026-08-06)
+
+Usuário: "A cada 15 min está executando pela cron, porém a execução está
+em apenas 1 step e os demais steps só são atualizados quando há
+intervenção manual. Onde está o furo... é importante rodar todo o ciclo
+no mesmo momento (ou mto próximos), pois entre uma execução e outra pode
+ocorrer discrepância entre os dados. Exemplo: o SOV foi buscado em um
+momento e a volumetria de menções em outra." Diagnóstico confirmado lendo
+`runSyncInvocation()`: o dispatcher de fases (`sync_cursors.next_step`,
+"Execução em fases", 2026-07-11) parava a invocação inteira assim que a
+**primeira** fase fazia trabalho real (`result.didWork === true`) —
+comportamento original, pensado como rede de segurança de CPU. Como
+`daily_metrics` (3ª de 16 fases) quase sempre tem trabalho pendente a
+cada heartbeat de 15min, o cron parava ali quase toda vez —
+`hourly_metrics`/`weekly_monthly`/`topics`/`platform_by_narrative`/
+`x_insights`/`top_authors`/`top_tweeters`/`author_enrichment`/
+`top_sites`/`top_shared_sites`/`demographics`/`full_text_enrichment`/
+`sov` só avançavam quando alguém clicava "Invoke" manualmente várias
+vezes seguidas no Dashboard (cada clique comprime em minutos o que o cron
+levaria horas pra alcançar) — exatamente o sintoma relatado, e a causa
+direta do "SOV vs. volumetria desencontrados": cada tipo de métrica podia
+ter sido sincronizado num ciclo de cron inteiramente diferente do outro.
+
+**Corrigido em `bw-sync/index.ts`, sem migration**: o dispatcher agora
+encadeia quantas fases o orçamento permitir dentro da MESMA invocação,
+mesmo as que fizeram trabalho real. Só para (`stopReason`, novo, logado
+em todo `invocation:step_done`) quando: `cycle_complete` (as 16 fases
+fecharam); `stay_on_step` (o burst de sentimento de `daily_metrics`
+continua espalhado entre heartbeats de propósito — existe especificamente
+pra não estourar o teto de 30 chamadas/10min da Brandwatch dentro de uma
+invocação só, não é "atropelado" por este loop); `call_budget_exhausted`
+(`hasBrandwatchCallBudget()`, já compartilhado por toda fase
+"stale-gated"); ou `time_budget_exhausted` (novo
+`INVOCATION_TIME_BUDGET_MS = 45_000`, checado só ENTRE fases — nunca
+interrompe uma fase no meio, cada fase mantém seus próprios orçamentos
+internos, ex: `MENTIONS_LOOP_BUDGET_MS = 20_000` pra mentions). Cada fase
+"stale-gated" continua avançando no máximo 1 `categoryTarget` por
+passagem (trade-off inalterado, "Execução em fases") — o que muda é que o
+dispatcher agora visita TODAS as fases dentro do orçamento por invocação,
+não só a primeira que tinha trabalho, então o ciclo inteiro tende a
+fechar dentro da mesma invocação (ou poucas, em sequência próxima) sempre
+que o orçamento permitir. Novo campo `stepsRun` no log final
+`[bw-sync] invocation:done` (e na resposta JSON) — confirma, invocação a
+invocação, quantas fases foram de fato encadeadas (`1` era o máximo
+possível sempre que havia trabalho real, antes desta correção).
+
+**Efeito colateral esperado, positivo**: como o ciclo completo volta a
+fechar perto da cadência pretendida (`BW_SYNC_INTERVAL_HOURS`, 3h
+padrão) em vez de se estender por muito mais tempo, a fase `mentions`
+(histórico bruto, ver "Mentions polling walks history forward" acima)
+volta a ser visitada com a frequência originalmente pretendida — o que
+deve, por tabela, acelerar o preenchimento de
+`sync_cursors.backfill_completed_at` pra quem tiver esse campo
+permanentemente `null` (mesmo dia, ver logo abaixo).
+
+⚠️ Não elimina o "Trade-off aceito" de "Execução em fases" (várias
+Narrativas na mesma fase "stale-gated" ainda cobrem 1
+`categoryTarget`/invocação, então popular todas pode levar vários ciclos)
+— só elimina o desencontro **entre tipos de métrica diferentes** dentro
+do mesmo ciclo, que era o problema relatado.
+
+**Verificação**: balanço de parênteses/chaves conferido no arquivo
+alterado (mesmo proxy de verificação usado em toda sessão sem acesso a
+Supabase/Brandwatch real). Sem ambiente real disponível nesta sessão — o
+sinal de que funcionou é `stepsRun > 1` aparecendo nos logs
+`[bw-sync] invocation:done` em produção, e o desencontro de dados
+relatado parando de se repetir.
+
+**`sync_cursors.backfill_completed_at` permanentemente `null` — mesmo
+dia, pergunta separada do usuário**: esclarecido que **não** deveria ser
+preenchido quando um ciclo (16 fases) se encerra — são sinais
+propositalmente independentes desde `20260710020000`
+(`resolveMentionsSinceAdded()`/`runMentionsStep()`): `backfill_completed_at`
+só liga (uma vez, permanentemente) quando o walk ascendente de `mentions`
+(desde `BRANDWATCH_MENTIONS_START_DATE`) retorna uma página com **menos**
+de `MENTIONS_PAGE_SIZE` (1000) resultados — "não sobrou mais histórico
+antes de agora". Um ciclo inteiro pode fechar (`last_synced_at` avança)
+várias vezes com o backfill de mentions ainda em andamento — não é bug,
+é o desenho. Causa mais provável de estar `null` há muito tempo: a mesma
+raiz do furo de sincronismo acima — `mentions` só busca até 10.000
+registros (10 páginas) por vez em que é sua vez, e só recebia sua vez
+uma vez por ciclo inteiro, que estava levando bem mais que 3h pra fechar.
+Nenhuma mudança de código pra este campo — o comportamento já está
+correto; o sinal a acompanhar é `pagesFetched`/`reachedNow` em
+`[bw-sync] invocation:mentions_synced` depois do próximo deploy, pra
+confirmar que o backlog está de fato avançando (se `reachedNow` nunca
+vier `true` mesmo depois de vários ciclos pós-fix, o próximo passo é
+medir o volume real do backlog contra `BRANDWATCH_MENTIONS_START_DATE`,
+não assumir mais bug de código sem esse dado).
 
 ## Directory structure
 

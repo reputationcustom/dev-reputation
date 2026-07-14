@@ -46,7 +46,7 @@ export default function SentimentPage() {
               (ai-synthesis.md, Camadas 0/1), posição exata do protótipo
               original. */}
           <WidgetCard title="Mudança de sentimento" status={status} onRetry={retry}>
-            <NarrativeTextPanel text={envelope?.narrative_text ?? null} />
+            <NarrativeTextPanel text={envelope?.narrative_text ?? null} page="sentiment" onGenerated={retry} />
           </WidgetCard>
         </div>
 

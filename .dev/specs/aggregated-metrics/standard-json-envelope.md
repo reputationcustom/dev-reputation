@@ -3,7 +3,7 @@ tipo: feature-spec
 módulo: aggregated-metrics
 funcionalidade: standard-json-envelope
 status: implementado
-atualizado: 2026-07-22
+atualizado: 2026-07-14
 ---
 
 # Contrato do Envelope JSON (formato único de resposta de página)
@@ -20,6 +20,21 @@ atualizado: 2026-07-22
 > `velocity_score`/`velocity_label`). Único campo que nunca é preenchido
 > hoje: `narrative_text` — fica sempre `null` (nem o template Camada 0 de
 > `ai-synthesis.md` está implementado ainda, ver nota nesse arquivo).
+> ⚠️ Nota desatualizada desde 2026-07-25/2026-08-02 — `narrative_text`
+> (Camadas 0 e 1 de `ai-synthesis.md`) está implementado e populado de
+> verdade; ver esse arquivo pro estado real.
+
+> ✅ **`period.mode` adicionado (2026-07-14)** — pedido do usuário: o
+> resumo executivo gerado por IA (`narrative_text`, `ai-synthesis.md`)
+> deve diferenciar diário/semanal/mensal (já verdade por construção, já
+> que cada modo produz `period.start`/`end` distintos — cada um cai numa
+> chave própria em `page_narrative_synthesis`) e, "em caso de período
+> personalizado", só chamar a IA sob pedido explícito do usuário, nunca
+> sozinho. `period.mode` (`"daily" | "weekly" | "monthly" | "custom"`,
+> opcional, espelha `PeriodMode` do seletor do header —
+> `header-context.tsx`) é o campo que carrega essa informação até o
+> backend; nenhuma function SQL o lê, só `fetchNarrativeText()`
+> (`aggregated-metrics-service.ts`) — ver `ai-synthesis.md`.
 
 ## Objetivo
 
@@ -48,7 +63,8 @@ exibidos na UI ficam em português:
     "start": "2026-06-01",
     "end": "2026-06-30",
     "granularity": "day",
-    "comparison": "previous_period"
+    "comparison": "previous_period",
+    "mode": "monthly"
   },
   "filters_applied": {
     "narratives": [],

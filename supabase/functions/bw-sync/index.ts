@@ -792,6 +792,21 @@ const MAX_MENTIONS_PAGES_PER_INVOCATION = 10;
 // Queries com respostas mais lentas que o normal.
 const MENTIONS_LOOP_BUDGET_MS = 20_000;
 
+// ✅ 2026-08-06 — orçamento de tempo de parede pra invocação INTEIRA (todas
+// as fases que o dispatcher encadear numa única invocação, não só
+// mentions). Ver "Sincronismo entre fases" acima de runSyncInvocation()
+// pro racional completo: antes, o dispatcher parava sozinho na primeira
+// fase com trabalho real, o que já bastava como rede de segurança de
+// CPU — agora que ele pode encadear várias fases numa invocação só, esse
+// orçamento assume esse papel. Maior que MENTIONS_LOOP_BUDGET_MS de
+// propósito (a fase de mentions pode gastar os 20s dela inteiros e ainda
+// sobrar tempo pra outras fases leves depois) mas conservador o bastante
+// pra nunca chegar perto do teto que causou o CPU Time exceeded original
+// (ver "Execução em fases", `sync-brandwatch.md`) — checado só ENTRE
+// fases, nunca interrompe uma fase no meio (cada fase já tem seus
+// próprios orçamentos internos, ex: MENTIONS_LOOP_BUDGET_MS).
+const INVOCATION_TIME_BUDGET_MS = 45_000;
+
 async function fetchMentions(
   projectId: number,
   queryId: number,
@@ -2812,11 +2827,14 @@ function nextSyncStep(step: SyncStep): { next: SyncStep; cycleComplete: boolean 
 }
 
 interface StepResult {
-  // true = esta fase fez trabalho real (chamou a Brandwatch) — é o ponto
-  // onde a invocação para, pra limitar o CPU gasto por invocação. false =
-  // não havia nada "stale" pra fazer nesta fase — barato, a invocação
-  // continua direto pra próxima fase (não é isso que causa o estouro de
-  // CPU, só checagens de frescor no Postgres).
+  // true = esta fase fez trabalho real (chamou a Brandwatch). Até
+  // 2026-08-06 isso também era o ponto onde a invocação inteira parava —
+  // ver "Sincronismo entre fases" logo acima de runSyncInvocation() pro
+  // porquê disso ter sido trocado por um orçamento de tempo/chamadas
+  // compartilhado entre fases em vez de "para na primeira que trabalhar".
+  // false = não havia nada "stale" pra fazer nesta fase — barato, a
+  // invocação continua direto pra próxima fase (não é isso que causa o
+  // estouro de CPU, só checagens de frescor no Postgres).
   didWork: boolean;
   mentionsCount?: number;
   lastAddedCursor?: string | null;
@@ -3855,14 +3873,51 @@ async function runSyncInvocation(supabase: SupabaseClient, invocationStartedAt: 
       backfill_completed_at: cursor.backfill_completed_at as string | null,
     };
 
-    // Passo 3: dispatcher de fases. Uma invocação avança por quantas fases
-    // não tiverem trabalho real a fazer (checagem de frescor é barata —
-    // não é isso que estoura CPU), mas para assim que uma fase fizer
-    // alguma chamada à Brandwatch. Limite de iterações = número de fases,
-    // então mesmo um ciclo inteiro sem trabalho nenhum termina sozinho.
+    // Passo 3: dispatcher de fases.
+    //
+    // ✅ Sincronismo entre fases (2026-08-06) — achado real (usuário: "a
+    // execução está em apenas 1 step e os demais steps só são atualizados
+    // quando há intervenção manual... é importante rodar todo o ciclo no
+    // mesmo momento, pois entre uma execução e outra pode ocorrer
+    // discrepância entre os dados. Ex: SOV buscado num momento, volumetria
+    // buscada em outro"). Causa raiz: até esta correção, o loop abaixo
+    // parava assim que a PRIMEIRA fase fizesse trabalho real (`didWork:
+    // true`) — comportamento original de "Execução em fases" (2026-07-11,
+    // ver `sync-brandwatch.md`), pensado como rede de segurança de CPU.
+    // Na prática, `daily_metrics` (3ª fase) quase sempre tem trabalho
+    // pendente a cada heartbeat de 15min — então o cron parava ali quase
+    // toda vez, e `hourly_metrics`/`weekly_monthly`/`topics`/`x_insights`/
+    // `top_authors`/`demographics`/`sov` só avançavam quando alguém clicava
+    // "Invoke" manualmente várias vezes seguidas (cada clique = mais uma
+    // iteração comprimida no tempo). Resultado exatamente como descrito:
+    // métricas de fases diferentes refletem momentos de sincronização bem
+    // distantes entre si, gerando números "desencontrados" na mesma tela
+    // (SOV de um ciclo, total_mentions de outro).
+    //
+    // Corrigido: a invocação agora encadeia quantas fases o orçamento
+    // permitir, mesmo as que fizeram trabalho real — só para quando: (a) o
+    // ciclo inteiro fecha (`cycleComplete`); (b) uma fase pede
+    // `stayOnStep` (o burst de sentimento de `daily_metrics` continua
+    // espalhado entre heartbeats de propósito — existe especificamente
+    // pra não estourar o teto de 30 chamadas/10min da Brandwatch dentro de
+    // uma única invocação, não deve ser "atropelado" por este loop); (c)
+    // o orçamento de chamadas Brandwatch acaba (`hasBrandwatchCallBudget()`,
+    // já compartilhado por toda fase "stale-gated"); ou (d) o orçamento de
+    // tempo de parede da invocação inteira acaba
+    // (`INVOCATION_TIME_BUDGET_MS`, novo — mesma rede de segurança de CPU
+    // que a parada-na-primeira-fase cumpria antes, só que agora medida
+    // direto em vez de inferida de "uma fase só"). Cada fase "stale-gated"
+    // continua avançando no máximo 1 categoryTarget por passagem (trade-off
+    // inalterado, ver `sync-brandwatch.md`) — o que muda é que o dispatcher
+    // agora visita TODAS as fases dentro do orçamento, não só a primeira
+    // que tinha trabalho. Limite de iterações = número de fases, então
+    // mesmo um ciclo inteiro sem trabalho nenhum termina sozinho.
     let currentStep: SyncStep = startStep;
     let mentionsCount = 0;
+    let stepsRun = 0;
+    let lastStopReason: string | null = null;
     for (let i = 0; i < SYNC_STEPS.length; i++) {
+      stepsRun++;
       log("invocation:step_start", { projectId, queryId, step: currentStep });
 
       let result: StepResult;
@@ -3960,20 +4015,44 @@ async function runSyncInvocation(supabase: SupabaseClient, invocationStartedAt: 
         rows_processed: result.mentionsCount ?? 0,
       });
 
+      const outOfCallBudget = !hasBrandwatchCallBudget();
+      const outOfTimeBudget = Date.now() - invocationStartedAt > INVOCATION_TIME_BUDGET_MS;
+      const stopReason = cycleComplete
+        ? "cycle_complete"
+        : result.stayOnStep
+        ? "stay_on_step"
+        : outOfCallBudget
+        ? "call_budget_exhausted"
+        : outOfTimeBudget
+        ? "time_budget_exhausted"
+        : null;
+
       log("invocation:step_done", {
         projectId, queryId, step: currentStep, didWork: result.didWork, stayOnStep: result.stayOnStep ?? false,
-        nextStep: result.stayOnStep ? currentStep : next, cycleComplete,
+        nextStep: result.stayOnStep ? currentStep : next, cycleComplete, stopReason,
       });
 
-      if (result.didWork || cycleComplete) break;
+      // ✅ 2026-08-06: "Sincronismo entre fases" acima — não para mais só
+      // porque `result.didWork` foi true. Continua encadeando fases até um
+      // motivo real de parar (ver `stopReason`).
+      if (stopReason) {
+        lastStopReason = stopReason;
+        break;
+      }
       currentStep = next;
     }
 
-    log("invocation:done", { durationMs: Date.now() - invocationStartedAt, projectId, queryId, mentionsCount });
+    // stepsRun > 1 nos logs confirma, invocação a invocação, que a
+    // correção de "Sincronismo entre fases" está de fato encadeando mais
+    // de uma fase por vez — o que era impossível antes de 2026-08-06 (toda
+    // invocação com trabalho real parava em stepsRun === 1).
+    log("invocation:done", {
+      durationMs: Date.now() - invocationStartedAt, projectId, queryId, mentionsCount, stepsRun, lastStopReason,
+    });
 
     return new Response(
       JSON.stringify({
-        ok: true, projectId, queryId, mentionsCount, step: currentStep,
+        ok: true, projectId, queryId, mentionsCount, step: currentStep, stepsRun, stopReason: lastStopReason,
         tokenExpiresAt: brandwatchToken.expiresAt.toISOString(),
       }),
       { headers: { "Content-Type": "application/json" } },

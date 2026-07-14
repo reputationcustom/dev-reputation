@@ -257,13 +257,65 @@ de 30/10min). Duas correções, sem migration (mudança só na Edge Function):
 > passou a chamar essa function via `.rpc(...)` em vez do `select` bruto.
 > Ver `CLAUDE.md`, "Brandwatch sync model", pro relato completo.
 
+> ✅ **Sincronismo entre fases (2026-08-06)** — pedido do usuário: "a
+> execução está em apenas 1 step e os demais steps só são atualizados
+> quando há intervenção manual... é importante rodar todo o ciclo no
+> mesmo momento (ou mto próximos), pois entre uma execução e outra pode
+> ocorrer discrepância entre os dados. Exemplo: o SOV foi buscado em um
+> momento e a volumetria de menções em outra, vai gerar valores
+> desencontrados." Causa raiz real, distinta do bug de frescor logo acima
+> (esse já tinha sido corrigido antes deste pedido): o dispatcher de fases
+> (`runSyncInvocation()`) parava a invocação assim que a **primeira** fase
+> fazia trabalho real (`result.didWork === true`) — comportamento original
+> desta seção desde 2026-07-11, pensado como rede de segurança de CPU.
+> Como `daily_metrics` (3ª fase) quase sempre tem trabalho pendente a cada
+> heartbeat de 15min, o cron parava ali quase toda vez — `hourly_metrics`/
+> `weekly_monthly`/`topics`/`platform_by_narrative`/`x_insights`/
+> `top_authors`/`top_tweeters`/`author_enrichment`/`top_sites`/
+> `top_shared_sites`/`demographics`/`full_text_enrichment`/`sov` só
+> avançavam quando alguém clicava "Invoke" manualmente várias vezes
+> seguidas (cada clique comprimindo em minutos o que o cron levaria horas
+> pra alcançar) — exatamente o "1 step só, resto por intervenção manual"
+> relatado, e exatamente a causa do "SOV vs. volumetria desencontrados":
+> cada tipo de métrica podia ter sido sincronizado num ciclo de cron
+> completamente diferente do outro.
+>
+> **Corrigido** (`bw-sync/index.ts`, sem migration): o dispatcher agora
+> encadeia quantas fases o orçamento permitir dentro da MESMA invocação,
+> mesmo as que fizeram trabalho real — só para quando um `stopReason` real
+> ocorre: `cycle_complete` (as 16 fases fecharam), `stay_on_step` (o burst
+> de sentimento de `daily_metrics` continua espalhado entre heartbeats de
+> propósito — existe especificamente pra não estourar o teto de 30
+> chamadas/10min da Brandwatch dentro de uma invocação só, não é
+> "atropelado" por este loop), `call_budget_exhausted`
+> (`hasBrandwatchCallBudget()`, já compartilhado por toda fase
+> "stale-gated") ou `time_budget_exhausted` (novo `INVOCATION_TIME_BUDGET_MS
+> = 45_000`, checado só ENTRE fases — nunca interrompe uma fase no meio,
+> cada fase mantém seus próprios orçamentos internos como
+> `MENTIONS_LOOP_BUDGET_MS`). Cada fase "stale-gated" continua avançando
+> no máximo 1 `categoryTarget` por passagem (trade-off inalterado, ver
+> parágrafo logo abaixo) — o que muda é que o dispatcher agora VISITA
+> todas as fases dentro do orçamento por invocação, não só a primeira que
+> tinha trabalho, então o ciclo inteiro tende a fechar dentro da mesma
+> invocação (ou poucas, em sequência próxima) sempre que o orçamento
+> permitir, em vez de se espalhar por até 16 heartbeats de 15min cada.
+> Novo campo `stepsRun` nos logs `[bw-sync] invocation:done` — confirma,
+> invocação a invocação, quantas fases foram de fato encadeadas (`1` era o
+> máximo possível antes desta correção sempre que havia trabalho real;
+> agora pode ser bem maior). ⚠️ Não elimina o "Trade-off aceito" abaixo
+> (várias Narrativas na mesma fase "stale-gated" ainda cobrem 1
+> `categoryTarget`/invocação) — só elimina o desencontro **entre tipos de
+> métrica diferentes** dentro do mesmo ciclo, que era o problema relatado.
+
 **Estado vive inteiro no Postgres, nunca em memória do isolate** — por
 isso uma invocação **manual** (clique em "Invoke" no Dashboard do
 Supabase, útil durante testes) se comporta exatamente como um tick do
 heartbeat de 15min: lê `next_step` do par mais "devido", roda essa fase,
 grava o próximo passo. Não há modo de teste separado nem estado
 in-memory que se perca entre invocações — clicar várias vezes seguidas
-avança o ciclo normalmente, uma fase por clique.
+avança o ciclo normalmente, mas desde 2026-08-06 uma única invocação (manual
+ou via cron) já tende a percorrer várias fases sozinha, não mais uma por
+clique.
 
 **Complementar**: `syncCategoryDailyAggregate()` (reach/engagement, a
 chamada que devolveu 4825 linhas) também passou a fazer upsert em lotes de

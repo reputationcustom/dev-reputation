@@ -3,7 +3,7 @@ tipo: feature-spec
 módulo: aggregated-metrics
 funcionalidade: edge-functions-per-page
 status: implementado
-atualizado: 2026-07-25
+atualizado: 2026-07-14
 ---
 
 # Edge Functions por Página
@@ -40,6 +40,19 @@ atualizado: 2026-07-25
 > grava `page_cache`. Tabela/migration/RLS intactas, só não usadas;
 > reativar é restaurar o corpo original da function (ver histórico do
 > git). Ver `_pending.md`, gap #34.
+>
+> ✅ **8ª Edge Function, `compose-narrative-synthesis` (2026-07-14)** —
+> não é um `get-page-*` (não monta o envelope inteiro, não é chamada no
+> carregamento da página) — cobre só o bloco `narrative_text` sob pedido
+> explícito do usuário (botão "Analisar período com IA", só visível pra
+> período personalizado — ver `ai-synthesis.md`). Mesmo padrão de
+> autenticação/validação de membership dos `get-page-*` (client com a
+> chave publicável + JWT repassado), corpo `{ organization_id, page,
+> period, filters?, narrative_id?, pauta_id? }`, resposta `{
+> narrative_text, generated_by_ai }`. Cópia completa de
+> `aggregated-metrics-service.ts` (Princípio técnico 5), reaproveita
+> `composeNarrativeSynthesisOnDemand()` (nova function nesse arquivo) —
+> mesma tabela/chave `page_narrative_synthesis` que `get-page-*` já lê.
 
 ## Objetivo
 

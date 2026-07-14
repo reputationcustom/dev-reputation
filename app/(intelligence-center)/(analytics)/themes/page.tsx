@@ -108,7 +108,7 @@ export default function ThemesPage() {
 
         <WidgetCard title="Insights" status={status} onRetry={retry}>
           <div className="flex flex-col gap-4">
-            <NarrativeTextPanel text={envelope?.narrative_text ?? null} />
+            <NarrativeTextPanel text={envelope?.narrative_text ?? null} page="themes" onGenerated={retry} />
             <HighlightsPanel highlights={envelope?.highlights ?? []} />
           </div>
         </WidgetCard>

@@ -58,6 +58,14 @@ export interface EnvelopePeriod {
   end: string;
   granularity: string;
   comparison: string;
+  // ✅ Adicionado 2026-07-14 — espelha o PeriodMode do seletor do header
+  // (header-context.tsx: Diário/Semanal/Mensal/Personalizado). Opcional
+  // (period.start/end sempre bastam pra qualquer function SQL), usado só
+  // por fetchNarrativeText (ai-synthesis.md, Camada 1): a composição em
+  // background só dispara automaticamente pra "daily"/"weekly"/"monthly"
+  // — período "custom" nunca chama IA sozinho, só via o botão manual
+  // "Analisar com IA" (compose-narrative-synthesis).
+  mode?: "daily" | "weekly" | "monthly" | "custom";
 }
 
 export interface EnvelopeFilters {

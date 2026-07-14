@@ -30,7 +30,7 @@
 // packages/shared-types/src/envelope.ts. Mudou a forma de um bloco?
 // Atualize os dois arquivos juntos.
 
-import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2'
+import type { SupabaseClient } from 'npm:@supabase/supabase-js@2'
 // Só usado pela Camada 1 de ai-synthesis.md (composeLayer1NarrativeText,
 // abaixo) — mesmo pacote/import já usado por
 // event-radar-agent-orchestrator/index.ts, sem pin de versão pelo mesmo
@@ -236,7 +236,7 @@ export interface DisseminationGraph {
 
 // "X Themes" da Brandwatch (Top Hashtags/Emojis/Stories/Most Mentioned X
 // Posters) — bw_query_x_insights (foundation/data-model.md), só na página
-// `authors`. Ver get_x_insights em sql-aggregation.md.
+// `platforms`. Ver get_x_insights em sql-aggregation.md.
 export interface XInsightItem {
   insight_type: 'hashtag' | 'emoticon' | 'url' | 'mentioned_author'
   name: string
@@ -246,11 +246,6 @@ export interface XInsightItem {
   retweets: number | null
   impressions: number | null
   reach_estimate: number | null
-  // ✅ Adicionado 2026-08-03 — quando esse item foi sincronizado pela
-  // última vez (bw-sync só re-sincroniza X Insights a cada 7 dias por
-  // par, ver isXInsightsStale em bw-sync/index.ts). Nunca null — toda
-  // linha vem de uma sincronização real.
-  synced_at: string
 }
 
 export interface PageEnvelope {
@@ -1329,117 +1324,20 @@ export async function getPageEnvelopeWithCache(
   return assemblePageResponse(supabase, page, context)
 }
 
-
 // =========================================================================
-// Resumo da própria Narrativa (cabeçalho do detalhe) — bloco `narratives` do
-// envelope fica vazio em `narrative_detail` por desenho (PAGE_BLOCKS, ver
-// block-mapping-per-page.md: "narratives" = "—" nesta página, é uma lista,
-// não o resumo de uma linha só). Mas intelligence-center/narratives-exploration.md
-// pede exatamente esses campos no cabeçalho ("nome, badges de SOV/sentimento/
-// risco/momentum/velocidade — mesmos scores e faixas de executive-overview.md",
-// "Resumo executivo": narratives.description). Sem um bloco canônico do
-// envelope pra isso, anexado em `ui_meta.narrative` — ui_meta é
-// explicitamente "dado que serve só pra renderização" (standard-json-envelope.md),
-// nunca vai pra IA, exatamente o encaixe certo pra este extra específico
-// desta página.
-interface NarrativeSummary {
-  id: string
-  title: string
-  description: string | null
-  stage: string
-  risk_level: string
-  sov_pct: number | null
-  total_mentions: number
-  net_sentiment: number | null
-  sentiment_label: string | null
-  momentum_score: number | null
-  trend_score: number | null
-  trend_label: string | null
-  risk_score: number | null
-  risk_label: string | null
-  unique_authors: number | null
-  reach_estimated: number | null
-  engagement_total: number | null
-}
-
-async function fetchNarrativeSummary(
-  supabase: SupabaseClient,
-  ctx: PageContext,
-): Promise<NarrativeSummary | null> {
-  if (!ctx.narrativeId) return null
-
-  const { data: narrative, error: narrativeError } = await supabase
-    .from('narratives')
-    .select('id, title, description, stage, risk_level')
-    .eq('id', ctx.narrativeId)
-    .eq('organization_id', ctx.organizationId)
-    .maybeSingle()
-  if (narrativeError || !narrative) {
-    if (narrativeError) console.error('[get-narrative-detail] fetchNarrativeSummary narratives failed', narrativeError)
-    return null
-  }
-
-  const { data: scoreRows, error: scoreError } = await supabase.rpc('get_narratives_table', {
-    p_organization_id: ctx.organizationId,
-    p_period_start: ctx.period.start,
-    p_period_end: ctx.period.end,
-    p_filters: { ...ctx.filters, narratives: [ctx.narrativeId] },
-    p_pauta_id: null,
-  })
-  if (scoreError) {
-    console.error('[get-narrative-detail] fetchNarrativeSummary scores failed', scoreError)
-  }
-  const score = ((scoreRows ?? []) as NarrativeTableRow[])[0] ?? null
-
-  // Autores únicos/alcance/engajamento do período — narrative_metrics já é
-  // um agregado oficial por dia (foundation/data-model.md); somar/tirar
-  // média entre os dias do período pedido é o mesmo padrão já usado em
-  // get_narratives_table's period_agg, não uma soma sobre `mentions` cru.
-  const { data: periodRows, error: periodError } = await supabase
-    .from('narrative_metrics')
-    .select('unique_authors, reach_estimated, engagement_total')
-    .eq('narrative_id', ctx.narrativeId)
-    .eq('period', 'daily')
-    .gte('metric_date', ctx.period.start)
-    .lte('metric_date', ctx.period.end)
-  if (periodError) {
-    console.error('[get-narrative-detail] fetchNarrativeSummary period aggregates failed', periodError)
-  }
-  const rows = (periodRows ?? []) as { unique_authors: number | null; reach_estimated: number | null; engagement_total: number | null }[]
-  const authorsValues = rows.map((r) => r.unique_authors).filter((v): v is number => v !== null)
-  const uniqueAuthors = authorsValues.length > 0 ? Math.round(authorsValues.reduce((a, b) => a + b, 0) / authorsValues.length) : null
-  const reachValues = rows.map((r) => r.reach_estimated).filter((v): v is number => v !== null)
-  const reachEstimated = reachValues.length > 0 ? reachValues.reduce((a, b) => a + b, 0) : null
-  const engagementValues = rows.map((r) => r.engagement_total).filter((v): v is number => v !== null)
-  const engagementTotal = engagementValues.length > 0 ? engagementValues.reduce((a, b) => a + b, 0) : null
-
-  return {
-    id: narrative.id,
-    title: narrative.title,
-    description: narrative.description,
-    stage: narrative.stage,
-    risk_level: narrative.risk_level,
-    sov_pct: score?.sov_pct ?? null,
-    total_mentions: score?.total_mentions ?? 0,
-    net_sentiment: score?.net_sentiment ?? null,
-    sentiment_label: score?.sentiment_label ?? null,
-    momentum_score: score?.momentum_score ?? null,
-    trend_score: score?.trend_score ?? null,
-    trend_label: score?.trend_label ?? null,
-    risk_score: score?.risk_score ?? null,
-    risk_label: score?.risk_label ?? null,
-    unique_authors: uniqueAuthors,
-    reach_estimated: reachEstimated,
-    engagement_total: engagementTotal,
-  }
-}
-
-// =========================================================================
-
-// Handler HTTP — ver edge-functions-per-page.md, "Fluxo principal",
-// "Autenticação do client Supabase" e "Regras de negócio" ("get-narrative-detail
-// é a única Edge Function que recebe narrative_id como parâmetro obrigatório,
-// além do contexto padrão").
+// Handler HTTP — compose-narrative-synthesis (ai-synthesis.md, botão
+// "Analisar com IA" de NarrativeTextPanel). Diferente dos `get-page-*`
+// (que sempre montam o envelope inteiro), esta função só cobre o bloco
+// `narrative_text`: recebe a mesma organização/período/filtros/escopo já
+// resolvidos pelo header, monta um PageContext equivalente e chama
+// composeNarrativeSynthesisOnDemand (acima) — que compõe via IA de forma
+// SÍNCRONA (aguarda o resultado, ao contrário de fetchNarrativeText, que
+// só dispara em background) e persiste em page_narrative_synthesis, a
+// mesma tabela/chave que get-page-* já lê. Chamada explícita do usuário,
+// pensada sobretudo pra período "custom" (que nunca dispara a Camada 1
+// sozinha, ver fetchNarrativeText) — mas funciona pra qualquer período,
+// permitindo forçar uma nova composição mesmo quando uma linha antiga já
+// existir pra essa chave exata.
 // =========================================================================
 
 const corsHeaders = {
@@ -1456,9 +1354,11 @@ function jsonResponse(body: unknown, status = 200): Response {
 
 interface RequestBody {
   organization_id?: string
+  page?: PageKey
   period?: EnvelopePeriod
   filters?: Partial<EnvelopeFilters>
   narrative_id?: string
+  pauta_id?: string
 }
 
 function normalizeFilters(filters?: Partial<EnvelopeFilters>): EnvelopeFilters {
@@ -1484,11 +1384,6 @@ Deno.serve(async (req) => {
 
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL')!,
-      // SUPABASE_PUBLISHABLE_KEY só existe se alguém provisionou explicitamente
-      // (Princípio técnico 3) — SUPABASE_ANON_KEY é o auto-injetado pela
-      // plataforma Supabase em toda Edge Function, sem setup manual, mesmo
-      // valor. Mesmo padrão de fallback já usado por admin-*/update-my-timezone
-      // pro par SUPABASE_SECRET_KEY/SUPABASE_SERVICE_ROLE_KEY.
       Deno.env.get('SUPABASE_PUBLISHABLE_KEY') ?? Deno.env.get('SUPABASE_ANON_KEY')!,
       { global: { headers: { Authorization: authHeader } } },
     )
@@ -1510,9 +1405,13 @@ Deno.serve(async (req) => {
       return jsonResponse({ error: 'organization_id é obrigatório.' }, 400)
     }
 
-    const narrativeId = body.narrative_id
-    if (!narrativeId) {
-      return jsonResponse({ error: 'narrative_id é obrigatório.' }, 400)
+    const page = body.page
+    // PAGE_BLOCKS[page] undefined pra um page inválido, .includes(...) numa
+    // lista undefined lançaria — checar a existência primeiro cobre os dois
+    // casos (page ausente/desconhecido e página sem o bloco narrative_text)
+    // com a mesma mensagem, sem precisar hardcodar a lista de páginas aqui.
+    if (!page || !PAGE_BLOCKS[page]?.includes('narrative_text')) {
+      return jsonResponse({ error: 'page inválido — esta página não possui síntese de IA.' }, 400)
     }
 
     const period = body.period
@@ -1529,32 +1428,24 @@ Deno.serve(async (req) => {
       .eq('organization_id', organizationId)
       .maybeSingle()
     if (membershipError) {
-      console.error('[get-narrative-detail] membership check failed', membershipError)
+      console.error('[compose-narrative-synthesis] membership check failed', membershipError)
       return jsonResponse({ error: 'Não foi possível validar acesso à organização.' }, 503)
     }
     if (!membership) {
       return jsonResponse({ error: 'Você não tem acesso a esta organização.' }, 403)
     }
 
-    const context: PageContext = {
+    const result = await composeNarrativeSynthesisOnDemand(supabase, {
       organizationId,
       period,
       filters: normalizeFilters(body.filters),
-      narrativeId,
-    }
+      narrativeId: body.narrative_id,
+      pautaId: body.pauta_id,
+    }, page)
 
-    const summary = await fetchNarrativeSummary(supabase, context)
-    if (!summary) {
-      return jsonResponse({ error: 'Narrativa não encontrada.' }, 404)
-    }
-
-    const envelope = await getPageEnvelopeWithCache(supabase, 'narrative_detail', context)
-    envelope.ui_meta = { ...envelope.ui_meta, narrative: summary }
-
-    return jsonResponse(envelope, 200)
+    return jsonResponse(result, 200)
   } catch (err) {
-    console.error('[get-narrative-detail] unhandled error', err)
-    return jsonResponse({ error: 'Não foi possível carregar os dados.' }, 503)
+    console.error('[compose-narrative-synthesis] unhandled error', err)
+    return jsonResponse({ error: 'Não foi possível gerar a análise deste período.' }, 503)
   }
 })
-

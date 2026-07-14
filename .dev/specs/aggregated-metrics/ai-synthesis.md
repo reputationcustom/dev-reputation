@@ -3,7 +3,7 @@ tipo: feature-spec
 módulo: aggregated-metrics
 funcionalidade: ai-synthesis
 status: implementado
-atualizado: 2026-08-06
+atualizado: 2026-07-14
 ---
 
 # Síntese Narrativa da Página (`narrative_text`)
@@ -115,6 +115,44 @@ atualizado: 2026-08-06
 > reais da Narrativa como contexto qualitativo — não muda nada da Camada
 > 0/1 descritas aqui, que continuam só reescrevendo `summary`/`explanation`
 > de highlights já prontos, nunca mentions cruas.
+
+> ✅ **Diferenciação diário/semanal/mensal + gatilho manual pra período
+> personalizado (2026-07-14)** — pedido do usuário: "o resumo executivo
+> gerado pela IA deve ter a diferenciação, diário, semanal e mensal para
+> suportar a navegação do usuário. Em caso de período personalizado,
+> vamos colocar um botão no frontend para possibilitar o usuário final
+> chamar a IA para analisar caso ele queira." A diferenciação
+> diário/semanal/mensal já existia por construção (cada modo do header
+> produz `period.start`/`end` distintos, e a chave de
+> `page_narrative_synthesis` inclui esses dois campos — trocar de aba no
+> header naturalmente busca/gera uma composição própria por modo, nunca
+> reaproveita a de outro). O que faltava era a segunda parte: até esta
+> mudança, `fetchNarrativeText()` disparava a composição da Camada 1 em
+> background pra **qualquer** período com 2+ highlights, inclusive um
+> intervalo personalizado ainda sendo ajustado nos 2 campos de data do
+> header — cada combinação nova digitada podia disparar uma chamada de IA
+> descartada antes mesmo do usuário terminar de escolher o intervalo.
+> Fechado com um novo campo opcional `period.mode` (espelha `PeriodMode`
+> do header — `"daily" | "weekly" | "monthly" | "custom"`, ver
+> `standard-json-envelope.md`): `fetchNarrativeText()` só chama
+> `scheduleBackground(composeAndPersistLayer1(...))` quando
+> `ctx.period.mode !== 'custom'` — pra período personalizado, a página
+> carrega sempre com o fallback determinístico da Camada 0 (nunca chama
+> IA sozinha), e uma nova Edge Function dedicada,
+> `compose-narrative-synthesis`, expõe `composeNarrativeSynthesisOnDemand()`
+> pro botão "Analisar período com IA" (`NarrativeTextPanel`, só visível
+> quando `periodMode === "custom"`) — chamada explícita do usuário,
+> síncrona (aguarda o resultado, ao contrário do disparo em background da
+> Camada 1 automática), mesmo gate de 2+ highlights (com 0/1 a Camada 0 já
+> é suficiente e determinística, chamar IA seria custo sem benefício) e
+> mesma tabela/chave `page_narrative_synthesis` — depois de compor com
+> sucesso, o frontend só rechama `usePageEnvelope`'s `retry()`, que agora
+> encontra a linha recém-persistida na primeira tentativa. Uma linha já
+> persistida (ex: um período personalizado já analisado antes) continua
+> sendo devolvida direto pelo fluxo normal, mesmo em modo `custom` — só o
+> disparo *automático* fica condicionado a `daily`/`weekly`/`monthly`.
+> Nenhuma mudança de schema — reaproveita a `page_narrative_synthesis`
+> existente por inteiro.
 
 ## Objetivo
 

@@ -1,5 +1,11 @@
-import type { Highlight } from "@reputation/shared-types";
+"use client";
+
+import { useState } from "react";
+import type { Highlight, PageKey } from "@reputation/shared-types";
 import { EmptyState } from "@/components/ui/empty-state";
+import { Toast } from "@/components/ui/toast";
+import { callFunction } from "@/lib/supabase/call-function";
+import { useIntelligenceCenterHeader } from "@/components/intelligence-center/header-context";
 
 const SEVERITY_COLOR: Record<string, string> = {
   low: "border-risk-low bg-risk-low-bg",
@@ -41,9 +47,84 @@ export function HighlightsPanel({ highlights }: { highlights: Highlight[] }) {
 // sempre monta um template determinístico como fallback, ver
 // aggregated-metrics-service.ts) — texto genérico abaixo cobre esse caso
 // raro, não o caminho normal.
-export function NarrativeTextPanel({ text }: { text: string | null }) {
-  if (!text) {
-    return <p className="text-sm text-text-tertiary">Síntese automática indisponível no momento.</p>;
+//
+// ✅ Botão "Analisar com IA" adicionado 2026-07-14 (pedido do usuário: pra
+// período personalizado, a composição via IA não deve disparar sozinha —
+// ver fetchNarrativeText, ctx.period.mode — só sob pedido explícito).
+// `page`/`narrativeId`/`pautaId` espelham exatamente o que
+// usePageEnvelope já manda pra get-page-*, pra que
+// compose-narrative-synthesis resolva a mesma chave de
+// page_narrative_synthesis; `onGenerated` é o `retry()` de
+// usePageEnvelope — depois de compor com sucesso, a forma mais simples de
+// mostrar o texto novo é reler o envelope inteiro (que agora encontra a
+// linha recém-persistida na primeira tentativa), em vez de duplicar
+// estado de narrative_text nesta página e na de cima.
+export function NarrativeTextPanel({
+  text,
+  page,
+  onGenerated,
+  narrativeId,
+  pautaId,
+}: {
+  text: string | null;
+  page: PageKey;
+  onGenerated?: () => void;
+  narrativeId?: string;
+  pautaId?: string;
+}) {
+  const { organizationId, period, periodMode } = useIntelligenceCenterHeader();
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [toast, setToast] = useState<{ type: "success" | "error"; message: string } | null>(null);
+
+  async function handleGenerate() {
+    if (!organizationId) return;
+    setIsGenerating(true);
+    try {
+      const result = await callFunction<{ narrative_text: string; generated_by_ai: boolean }>(
+        "compose-narrative-synthesis",
+        {
+          organization_id: organizationId,
+          page,
+          period,
+          ...(narrativeId ? { narrative_id: narrativeId } : {}),
+          ...(pautaId ? { pauta_id: pautaId } : {}),
+        },
+      );
+      setToast({
+        type: "success",
+        message: result.generated_by_ai
+          ? "Análise gerada pela IA."
+          : "Sem eventos suficientes para uma análise via IA — mostrando resumo básico do período.",
+      });
+      onGenerated?.();
+    } catch (err) {
+      setToast({ type: "error", message: err instanceof Error ? err.message : "Não foi possível gerar a análise." });
+    } finally {
+      setIsGenerating(false);
+      setTimeout(() => setToast(null), 4000);
+    }
   }
-  return <p className="text-sm leading-relaxed text-text-primary">{text}</p>;
+
+  return (
+    <div className="flex flex-col gap-3">
+      {text ? (
+        <p className="text-sm leading-relaxed text-text-primary">{text}</p>
+      ) : (
+        <p className="text-sm text-text-tertiary">Síntese automática indisponível no momento.</p>
+      )}
+      {periodMode === "custom" && (
+        <div>
+          <button
+            type="button"
+            onClick={handleGenerate}
+            disabled={isGenerating}
+            className="inline-flex items-center gap-2 rounded-md bg-accent-blue px-3 py-1.5 text-xs font-semibold text-white hover:opacity-90 disabled:opacity-60"
+          >
+            {isGenerating ? "Analisando…" : "Analisar período com IA"}
+          </button>
+        </div>
+      )}
+      {toast && <Toast type={toast.type} message={toast.message} />}
+    </div>
+  );
 }

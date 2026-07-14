@@ -62,7 +62,7 @@ export default function OverviewPage() {
               — não há mais uma cópia separada dele na página). Mesmo
               `narrative_text` de sempre, só reposicionado. */}
           <WidgetCard title="O que os gráficos mostram?" status={status} onRetry={retry}>
-            <NarrativeTextPanel text={envelope?.narrative_text ?? null} />
+            <NarrativeTextPanel text={envelope?.narrative_text ?? null} page="overview" onGenerated={retry} />
           </WidgetCard>
         </div>
 

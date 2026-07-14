@@ -79,7 +79,7 @@ export default function PlatformsPage() {
         </div>
 
         <WidgetCard title="Insights" status={status} onRetry={retry}>
-          <NarrativeTextPanel text={envelope?.narrative_text ?? null} />
+          <NarrativeTextPanel text={envelope?.narrative_text ?? null} page="platforms" onGenerated={retry} />
         </WidgetCard>
       </div>
     </>
