@@ -7,7 +7,7 @@ import { PautaCardGrid } from "@/components/intelligence-center/pauta-cards";
 import { TrendLineChart } from "@/components/intelligence-center/charts/trend-line-chart";
 import { NarrativesTable } from "@/components/intelligence-center/narratives-table";
 import { AuthorsList } from "@/components/intelligence-center/authors-list";
-import { TermSignalsList, PositiveDriversList, NegativeDriversList } from "@/components/intelligence-center/term-signals-list";
+import { TermSignalsList, TopicSentimentList } from "@/components/intelligence-center/term-signals-list";
 import { HighlightsPanel, NarrativeTextPanel } from "@/components/intelligence-center/insights-panel";
 import { EmptyState } from "@/components/ui/empty-state";
 
@@ -88,15 +88,12 @@ export default function ThemesPage() {
         {/* ✅ Adicionado 2026-07-14 (pedido do usuário: "em todas as
             páginas é importante existir os principais tópicos positivos e
             negativos") — mesmo `term_signals` de "Termos emergentes"
-            acima, só separado por polaridade. */}
-        <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
-          <WidgetCard title="Tópicos positivos por pauta" status={status} onRetry={retry}>
-            <PositiveDriversList signals={envelope?.term_signals ?? []} />
-          </WidgetCard>
-          <WidgetCard title="Tópicos negativos por pauta" status={status} onRetry={retry}>
-            <NegativeDriversList signals={envelope?.term_signals ?? []} />
-          </WidgetCard>
-        </div>
+            acima, só separado por polaridade. Unificado no mesmo frame na
+            mesma data (pedido seguinte: "no mesmo frente mudando apenas a
+            cor"). */}
+        <WidgetCard title="Tópicos positivos e negativos por pauta" status={status} onRetry={retry}>
+          <TopicSentimentList signals={envelope?.term_signals ?? []} />
+        </WidgetCard>
 
         {/* "Comparação entre períodos" (protótipo: callout textual, ex.
             "Segurança perdeu 4 pontos..."). Depende de síntese narrativa

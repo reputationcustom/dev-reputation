@@ -8,6 +8,23 @@ atualizado: 2026-08-02
 
 # Radar de Eventos — Feed das Últimas 72h (frontend)
 
+> ✅ **Duas visualizações alternáveis (2026-07-14)** — pedido do usuário:
+> "Radar de Eventos deve ter duas possibilidades (a lista dos eventos
+> como está hoje e o resumo executivo) o usuário pode alternar entre
+> essas visualizações." `RecentEventsPanel` ganhou um toggle "Lista"/
+> "Resumo executivo" no topo (mesmo estilo visual do toggle de período do
+> header global) — implementado uma única vez no próprio componente
+> compartilhado, não em cada página que o renderiza, já que tanto o
+> widget de `/overview` quanto a página dedicada `/radar` consomem o
+> mesmo `RecentEventsPanel`. "Resumo executivo"
+> (`RecentEventsExecutiveSummary`) não faz nenhuma chamada de rede nova —
+> é inteiramente derivado dos mesmos `highlights` já buscados por
+> `useRecentHighlights` (contagem por severidade, contagem por
+> `event_type`, os 5 eventos de maior `severity_score` em destaque) —
+> agrupamento pra exibição, não um recálculo de score (mesma regra de
+> "Nunca recalcula severidade/detecção" abaixo). Ver "Fluxo principal"
+> item 3 e "Interface (UI)" pra detalhamento completo.
+>
 > ✅ **Implementado (2026-08-02)**, pedido do usuário: "reveja a
 > documentação do frontend do event-radar, se estiver coerente e conciso
 > com o que está desenvolvido, pode seguir com o desenvolvimento do
@@ -113,6 +130,13 @@ própria UI, não só na documentação.
    como modal — mesmo padrão de clique já usado em
    `NarrativeCard`/`NarrativesTable`).
 5. Cada card tem um menu de feedback (ver "Feedback do analista" abaixo).
+6. ✅ Um toggle "Lista"/"Resumo executivo" no topo do widget alterna entre
+   a visualização de cards (itens 3-5 acima) e um resumo agregado dos
+   mesmos eventos já buscados: total de eventos + contagem por
+   severidade (Críticos/Altos/Médios/Baixos), contagem por `event_type`
+   (chips), e os 5 eventos de maior `severity_score` em destaque
+   (título/explicação/tempo relativo). Nenhuma chamada nova — mesmo
+   dado, só reagrupado no client para exibição.
 
 ## Interface (UI)
 
@@ -125,6 +149,21 @@ própria UI, não só na documentação.
 - **Cabeçalho do widget**: título "Radar de Eventos" (`font-bold
   text-text-primary`, mesma convenção de todo título de widget — regra
   transversal #7 do `CLAUDE.md`) + subtítulo pequeno "Últimas 72 horas".
+- **Toggle "Lista"/"Resumo executivo"** (dentro do próprio
+  `RecentEventsPanel`, acima do conteúdo — mesmo estilo visual do
+  segmented control de período do header global,
+  `bg-accent-blue text-white` no item ativo): alterna qual das duas
+  visualizações abaixo é renderizada. Estado local (`useState`), não
+  persiste entre navegações (mesmo padrão de `filtrosOpen` no header).
+  - **Lista** (default): os cards individuais, exatamente como descrito
+    nos itens 3-5 do "Fluxo principal".
+  - **Resumo executivo** (`RecentEventsExecutiveSummary`): 4 estatísticas
+    (Total de eventos, Críticos, Altos, Médios+Baixos), uma linha de
+    chips "Eventos por tipo" (contagem por `event_type`), e uma lista
+    "Principais eventos" com os 5 eventos de maior `severity_score`
+    (`RiskBadge` + `title` + `explanation`/`summary` + tempo relativo).
+    Nenhuma chamada de rede adicional — deriva do mesmo array
+    `highlights` já carregado pela visualização de lista.
 - **Cada card** (reaproveita o padrão visual de borda colorida por
   severidade já existente em `HighlightsPanel`, não reinventa):
   - Ícone por `event_type`: `volume_spike` (↑), `volume_drop` (↓),
@@ -251,6 +290,8 @@ usuário autenticado da organização (RLS já implementada,
 - ✅ `formatRelativeTime` — nova função em `lib/date/format.ts`
   (granularidade de hora/minuto, cai pra `formatRelativeDate` a partir de
   24h) — a função existente sozinha não bastava, ver blockquote de topo.
+- ✅ Toggle "Lista"/"Resumo executivo" (2026-07-14) —
+  `RecentEventsExecutiveSummary`, mesmo arquivo, sem dependência nova.
 
 ## Gaps conhecidos (fora de escopo deste spec)
 

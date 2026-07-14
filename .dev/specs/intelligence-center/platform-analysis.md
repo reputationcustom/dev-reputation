@@ -40,10 +40,14 @@ atualizado: 2026-07-18
 > ✅ **"Principais tópicos positivos"/"Principais tópicos negativos"
 > adicionados (2026-07-14)** — pedido do usuário: "em todas as páginas é
 > importante existir os principais tópicos positivos e negativos".
-> `PAGE_BLOCKS.platforms` ganhou `term_signals`; novo par de widgets logo
-> antes do painel "Insights", reusando `PositiveDriversList`/
-> `NegativeDriversList` (mesmos componentes de `/sentiment`,
-> `get_term_signals` sem filtro de Narrativa — cobre a Query inteira).
+> `PAGE_BLOCKS.platforms` ganhou `term_signals`; novo widget logo antes do
+> painel "Insights" (`get_term_signals` sem filtro de Narrativa — cobre a
+> Query inteira). ✅ **Unificado num único frame (2026-07-14, mesma
+> sessão)** — pedido seguinte: "no mesmo frame mudando apenas a cor".
+> Passou de 2 `WidgetCard`s lado a lado (`PositiveDriversList`/
+> `NegativeDriversList`) para um único "Principais tópicos positivos e
+> negativos" (`TopicSentimentList`), pills coloridas por sentimento
+> (verde/vermelho/neutro) na mesma lista.
 
 > Cobre "Página 4 — Análise por Plataforma" / item "10. Visualizações
 > recomendadas" do documento de estrutura do protótipo. Sem protótipo

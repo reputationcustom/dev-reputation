@@ -757,6 +757,12 @@ used to apply to `bw-sync`.)
   yet for the current week (`isGrainStale()`/`isQueryGroupSovStale()`/
   `isTopicsStale()`/`isTopAuthorsStale()`) — this throttle is what keeps
   steady-state invocations cheap despite covering 6+ aggregate types.
+  ⚠️ "For the current week" is stale phrasing as of 2026-07-14 — see
+  "Every 'stale-gated' phase's staleness window unified under
+  `BW_SYNC_INTERVAL_HOURS`" further below: every one of these staleness
+  checks now shares the single `BW_SYNC_INTERVAL_HOURS`-derived window,
+  not a fixed week, so this throttle's actual cadence is whatever that
+  secret is currently set to.
 - **Brandwatch auth**: no long-lived pre-generated token, so `bw-sync` mints
   one at runtime via `grant_type=api-password` (`mintBrandwatchAccessToken()`)
   using Edge Function secrets `BRANDWATCH_USERNAME`/`BRANDWATCH_PASSWORD`/
@@ -1754,6 +1760,74 @@ this project depends on catching corrections that old today; revisit the
 window size (via the secret, no migration needed) if that changes. No
 migration and no envelope/frontend change — this is purely an Edge
 Function fetch-range optimization, upsert keys/shapes are unchanged.
+
+### Every "stale-gated" phase's staleness window unified under `BW_SYNC_INTERVAL_HOURS`
+
+User request, follow-up to the ai-synthesis period-mode work above: "isso
+deve ser alterado por execução tb, senão os dados ficam desencontrados...
+o que eu quero é ter a opção de configurar atualização total com a
+Brandwatch a cada 15min ou 30min ou 1h e assim por diante" — after being
+told `BW_SYNC_INTERVAL_HOURS` only gates when a *new cycle* starts, the
+user correctly flagged that this alone wasn't enough: 10 of `bw-sync`'s
+15 phases (`weekly_monthly`'s weekly+monthly grains, `topics`,
+`platform_by_narrative`, `x_insights`, `top_authors`, `top_tweeters`,
+`top_sites`, `top_shared_sites`, `demographics`, `sov`) each had their own
+staleness window hardcoded as a literal (`7 * 24 * 60 * 60 * 1000`, 30
+days for the monthly grain) — completely decoupled from
+`BW_SYNC_INTERVAL_HOURS`. Lowering the interval to get fresher data would
+only have sped up `daily_metrics`/`hourly_metrics`/`mentions`, while
+those 10 phases stayed stuck on their week-old snapshot — reproducing,
+one layer up, the exact "dados desencontrados" symptom (SOV computed at
+one moment, volume at another) that the 2026-08-06 "phase chaining" fix
+had just solved at the single-invocation level.
+
+Confirmed the design with the user before implementing (`AskUserQuestion`,
+given the real production risk — this project has a documented history of
+Brandwatch rate-limit incidents): reuse the single existing secret,
+`BW_SYNC_INTERVAL_HOURS`, as the *only* staleness window for every
+"stale-gated" phase, rather than adding a second, independent secret
+(which would just reopen the mismatch risk if the two were ever set to
+different values). New `getSyncStalenessWindowMs()`
+(`bw-sync/index.ts`, right after `getSyncIntervalHours()`) —
+`getSyncIntervalHours() * 3_600_000` — is now the sole source of the
+window passed to all 11 call sites that used to hardcode
+`7 * 24 * 60 * 60 * 1000`/`30 * 24 * 60 * 60 * 1000`. `getSyncIntervalHours()`
+already parsed via bare `Number(raw)` with no rounding, so it already
+accepted fractional hours (`0.25` = 15min, `0.5` = 30min) — no format
+change needed, just a wider blast radius for the same value.
+`HOURLY_METRICS_WINDOW_MS` (the *fetch range* for the rolling 30-day
+hourly window, a different concept — not a staleness gate, deliberately
+never throttled) and `needsMetadataRefresh()`'s 1h throttle (categories/
+subcategories bootstrap, not a "score" that can look desencontrado next
+to another) were both deliberately left untouched — out of scope for this
+unification, different failure mode each.
+
+User then asked directly: "mas como podemos fazer para não estourar as
+chamadas com a brandwatch?" (how do we avoid exceeding Brandwatch's rate
+limit with this). Answered without needing a code change — the existing
+safety net already covers it: `hasBrandwatchCallBudget()` (local
+25-call/invocation budget plus the real `x-rate-limit-used` header) still
+guards every single call regardless of how low the interval is set, and
+`SYNC_STEPS`' fixed order (`metadata → mentions → daily_metrics →
+hourly_metrics → weekly_monthly → topics → ... → sov`) already means the
+time-critical phases are always attempted first in every cycle — if the
+call budget runs out, only the phases at the end of the list (the ones
+this change makes stale more often) get deferred to the next heartbeat,
+never `mentions`/`daily_metrics`/`hourly_metrics`. So a very low interval
+for an organization with many Narrativas doesn't produce a 429 — it just
+means the cycle takes more heartbeats to close (never idle), same
+degradation already accepted for the 2026-08-06 fix. Recommended starting
+conservative (e.g. 1h) and watching `[bw-sync]` logs/`lastRateLimitUsed`
+before going lower, rather than guessing a value blind.
+
+No migration — Edge-Function-only change (`bw-sync/index.ts`), same
+`BW_SYNC_INTERVAL_HOURS` secret already provisioned. Not tested against a
+live Brandwatch/Supabase environment this session (no credentials) — same
+recurring caveat as every session in this file without deploy access;
+`git push` to `develop` is the next step, and the signal to check
+afterward is `[bw-sync]` logs showing `topics`/`top_authors`/`sov`/etc.
+phases doing real work (`didWork: true`) far more often than once a week
+once `BW_SYNC_INTERVAL_HOURS` is lowered.
 
 ### `narratives.description` finally gets a producer + a real silent regression found and fixed (2026-07-14)
 
@@ -5831,6 +5905,90 @@ limitação recorrente de toda sessão sem credenciais de deploy neste
 ambiente) — `git push` para `develop` (fluxo já estabelecido) é o próximo
 passo para isso rodar de verdade.
 
+### `/overview` — Top N configurável, tópicos unificados num único frame, Radar de Eventos com resumo executivo (2026-07-14)
+
+User request, 5 itens na mesma mensagem, só frontend + documentação (sem
+mudança de backend/envelope): (1) retirar a tabela "Narrativas" de
+`/overview` e subir "Top 3 Narrativas por Menções" pro lugar dela; (2)
+permitir escolher Top 3/5/10; (3) botão de acesso a todas as Narrativas
+nesse mesmo widget; (4) "Principais tópicos positivos"/"negativos" no
+mesmo frame, só variando a cor (vermelho/verde/neutro); (5) "Radar de
+Eventos" ganha 2 visualizações alternáveis — lista (como já era) e resumo
+executivo.
+
+- **Item 1**: a tabela "Narrativas" (`NarrativesTable` + `ScoreLegend`,
+  10 primeiras linhas) foi removida de `/overview` — a lista completa
+  continua em `/narratives` (agora com um link explícito, ver item 3). O
+  widget de Top N passou a ocupar exatamente essa posição, entre "O que
+  os gráficos mostram?" e "Principais tópicos".
+- **Item 2**: `overview/page.tsx` ganhou `useState<3|5|10>` (`topCount`,
+  default 3) e um segmented control no cabeçalho do próprio widget
+  (`WidgetCard`'s novo prop `headerAction`, ver abaixo) — mesmo estilo
+  visual do toggle de período do header global (`bg-accent-blue
+  text-white` no ativo). `TopThreeNarrativeCards` virou `TopNarrativeCards`
+  (recebe `count`), grid ganhou um passo `sm:grid-cols-2` (antes só
+  `md:grid-cols-3`, fixo em 3 itens) pra acomodar 5/10 itens sem forçar
+  tudo numa única linha ou coluna.
+- **Item 3**: link "Ver todas as Narrativas →" (`next/link` pra
+  `/narratives`) ao lado do seletor de Top N, no mesmo `headerAction`.
+- **Item 4**: `WidgetCard` (`components/intelligence-center/widget-card.tsx`)
+  ganhou um prop opcional `headerAction?: React.ReactNode` (renderizado ao
+  lado do título, `flex justify-between`) — usado tanto pelo seletor de
+  Top N quanto, futuramente, por qualquer outro widget que precise de um
+  controle no cabeçalho; nenhum dos ~40 usos existentes de `WidgetCard`
+  precisou mudar (prop opcional).
+- **Item 5**: `PositiveDriversList`/`NegativeDriversList`
+  (`term-signals-list.tsx`) — 2 componentes/`WidgetCard`s separados desde
+  2026-07-17 — foram substituídos por um único `TopicSentimentList`, que
+  mistura positivo/neutro/negativo na mesma lista de pills, cada um só
+  com a cor correspondente (`bg-sentiment-positive-bg`/`-neutral-bg`/
+  `-negative-bg`, tokens já existentes em `tailwind.config.ts`, nenhuma
+  cor nova). O bucket `neutral` — antes descartado ("termos neutros não
+  aparecem em nenhuma das duas") — passou a ser exibido (até 4 itens,
+  contra 8 de cada lado positivo/negativo) já que o próprio pedido do
+  usuário cita "vermelho, verde **ou neutro**" como as 3 cores esperadas.
+  Aplicado nos 6 lugares que usavam o par antigo (mesmo padrão de
+  componente compartilhado já estabelecido pra esse par desde
+  2026-07-14/25): `overview`, `narratives`, `sentiment` ("Drivers de
+  sentimento"), `platforms`, `themes` ("Tópicos positivos e negativos por
+  pauta") e `narrative-detail-content.tsx` ("Tópicos positivos e
+  negativos da narrativa") — cada página tinha 2 `WidgetCard`s lado a
+  lado, agora é 1 só. `DriverChip`/`DRIVER_COLOR` (helpers antigos)
+  removidos junto — sem mais nenhum consumidor.
+- **Item 5 (Radar de Eventos)**: o toggle "Lista"/"Resumo executivo" foi
+  implementado dentro do próprio `RecentEventsPanel`
+  (`components/intelligence-center/recent-events-panel.tsx`), não em cada
+  página que o renderiza — o componente já é compartilhado entre
+  `/overview` (widget) e `/radar` (página dedicada, 2026-08-02), então um
+  único ponto de mudança cobre as duas. "Resumo executivo"
+  (`RecentEventsExecutiveSummary`) é inteiramente derivado dos mesmos
+  `highlights` já buscados por `useRecentHighlights` (nenhuma chamada de
+  rede nova) — contagem por severidade (crítico/alto/médio/baixo),
+  contagem por `event_type` (rótulos em `EVENT_TYPE_LABEL`, incl.
+  `momentum_spike`, adicionado em 2026-08-07 e antes ausente de
+  `EVENT_ICON`/labels deste arquivo) e os 5 eventos de maior
+  `severity_score` com título/explicação/tempo relativo — nenhum cálculo
+  de score novo (Princípio técnico 2), só agrupamento pra exibição, igual
+  ao já aceito em `dominantSentiment()` (`author-color.ts`).
+
+**Especificações atualizadas**: `intelligence-center/executive-overview.md`,
+`sentiment-analysis.md`, `platform-analysis.md`, `electoral-themes.md`,
+`narratives-exploration.md` (menções ao par "Principais tópicos
+positivos"/"negativos" e à tabela de Narrativas em `/overview`),
+`event-radar/frontend-highlights-feed.md` (widget "Radar de Eventos"
+ganha as 2 visualizações).
+
+**Verificação**: `npx tsc --noEmit` e `npm run build` (com `rm -rf .next`
+antes) passam limpos — 21 rotas, mesma contagem de antes (só mudança de
+conteúdo dentro de páginas já existentes, nenhuma rota nova/removida).
+Sem mudança de backend/migration nesta sessão — item puramente
+frontend, então não se aplica a limitação recorrente de "não executado
+contra um banco real". Sem automação de browser disponível neste
+ambiente — o layout do seletor de Top N, o frame único de tópicos e o
+toggle do Radar de Eventos não foram confirmados visualmente num
+navegador real, mesma limitação já registrada em toda sessão anterior de
+`intelligence-center` neste arquivo.
+
 ### FinOps não mostrava consumo de IA — terceira função de IA nunca foi instrumentada (2026-07-14)
 
 User report: "FinOps não está mostrando o cálculo do consumo de IA até o
@@ -6343,6 +6501,76 @@ real nesta sessão — `git push` para `develop` é o próximo passo; o sinal
 de que funcionou é o botão "Analisar período com IA" voltando a responder
 200 em vez de 503, sem `ReferenceError: createClient is not defined` nos
 logs.
+
+### Cards do Radar de Eventos com Momentum alto não ficavam vermelhos — fator "Velocidade" da severidade desconectado do sinal real (2026-08-08)
+
+User report, com screenshot de um card real do Radar de Eventos: badge
+"Alto 78" (laranja, não vermelho), título "Explosão de menções sobre
+Interferência do Judiciário", texto "registrou crescimento de mais de
+1.000% em volume de menções nos últimos 3 dias", tags incluindo
+`momentum_crescente`. Pedido: "reveja a cor dos cards do radar... tenho
+um event é critico momentum alto e não ficou vermelho. Documento e
+implemente."
+
+**Investigação — não era bug de mapeamento cor↔label no frontend**:
+`RiskBadge`/`SEVERITY_BORDER` (`score-badges.tsx`/`recent-events-panel.tsx`)
+só leem `severity`/`severity_score` já gravados em `feed_events` — "Alto"
+(60-84) renderiza laranja e só "Crítico" (≥85) renderiza vermelho, por
+desenho, sem divergência entre o rótulo mostrado e a cor aplicada. A causa
+real estava em **como `severity_score` é calculado** pra um evento
+`momentum_spike` (a regra adicionada no dia anterior, ver "`event-radar`
+nunca considerava Momentum..." acima): o fator "Velocidade" (20% do peso,
+`event_radar_velocity_severity()`) sempre recalculava uma janela **fixa de
+3h-vs-3h** — totalmente desconectada da janela "3d"/do sinal que
+`momentum_spike` de fato detecta (que já tem seu próprio score 0-100,
+`momentum_score`, gravado em `radar_staging_events.metric_value` no
+momento da detecção). Se o crescimento explosivo já tinha acontecido mais
+cedo dentro da janela de 3 dias e o volume já estabilizou num platô alto
+nas últimas 3h, a comparação 3h-vs-3h pode ler perto de zero de variação —
+o fator "Velocidade" despenca pra perto de **0** (não neutro/50 — o
+cálculo roda de verdade, só que sobre um sinal sem relação nenhuma com "o
+evento é sobre Momentum"), justamente no fator de 20% de peso que deveria
+refletir a força do sinal do evento. Reconstituindo com números plausíveis
+do card do usuário (volume=100 capado pelo `least`, sentimento~50,
+velocidade~0 nesse cenário de platô, alcance~50-70, autores~30, risco da
+narrativa relacionada~60, persistência~0 — evento com "27 min" de vida): a
+soma ponderada fecha bem perto de 78, exatamente o valor reportado —
+consistente com o diagnóstico.
+
+**Fix** (migration
+`20260808000000_event_radar_severity_velocity_momentum_alignment.sql`):
+`event_radar_velocity_severity()` ganhou 2 parâmetros novos
+(`p_event_type`, `p_metric_value`, precisou de `drop function` — mudança
+de aridade) — quando o evento é `momentum_spike`, o fator "Velocidade"
+passa a ser o próprio `momentum_score` já calculado na detecção
+(`metric_value`, já 0-100, mesma escala do fator — só clampado
+defensivamente com `least(100, greatest(0, ...))`), em vez de recalcular
+um 3h-vs-3h sem relação com o que gerou o evento. Para todo outro
+`event_type` (`volume_spike`/`volume_drop`/`sentiment_change`/etc.), o
+comportamento é idêntico ao de antes — nenhuma mudança de severidade fora
+de `momentum_spike`. Efeito esperado no exemplo do usuário: 0.20 *
+(velocidade 0 → `momentum_score`, tipicamente ≥80 já que é o próprio
+limiar de disparo da regra) adiciona ~16 pontos ao score ponderado — o
+suficiente pra cruzar 85 (Crítico) num caso como o relatado, sem tocar em
+nenhum outro peso/fórmula da severidade. `severity.md` atualizado — a nota
+de 2026-08-07 dizia (incorretamente, corrigido no dia seguinte) que a
+regra `momentum_spike` "não muda a fórmula de severidade".
+
+**Também corrigido, mesmo pedido**: `EVENT_ICON`
+(`recent-events-panel.tsx`) não tinha entrada pra `momentum_spike` (caía
+no fallback genérico "•") — ganhou "⚡", distinto do "↑" de
+`volume_spike`.
+
+**Verificação**: migration revisada manualmente (só 1 função com mudança
+de aridade + `run_event_detection()` idêntico a `20260807000000` exceto
+pela chamada atualizada). `npx tsc --noEmit` limpo (mudança de frontend é
+só `EVENT_ICON`, sem impacto de tipos). Sem acesso a um Supabase real
+nesta sessão — mesma limitação recorrente de toda sessão sem credenciais
+de deploy; `git push` para `develop` é o próximo passo, e o sinal a
+acompanhar é um evento `momentum_spike` cujo `severity` sobe de `high`
+pra `critical` no próximo ciclo do `pg_cron` (15min) sem que
+`momentum_score`/`metric_value` tenham mudado — confirma que o fator
+"Velocidade" está lendo o valor certo.
 
 ## Directory structure
 

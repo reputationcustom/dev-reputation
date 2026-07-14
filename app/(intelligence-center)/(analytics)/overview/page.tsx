@@ -1,18 +1,20 @@
 "use client";
 
+import { useState } from "react";
+import Link from "next/link";
 import type { NarrativeRow } from "@reputation/shared-types";
 import { usePageEnvelope } from "@/hooks/use-page-envelope";
 import { PageHeaderBar } from "@/components/intelligence-center/page-header-bar";
 import { WidgetCard } from "@/components/intelligence-center/widget-card";
 import { MetricCard, SentimentMetricCard } from "@/components/intelligence-center/metric-card";
 import { TrendLineChart } from "@/components/intelligence-center/charts/trend-line-chart";
-import { NarrativesTable } from "@/components/intelligence-center/narratives-table";
 import { NarrativeCard } from "@/components/intelligence-center/narrative-card";
 import { NarrativeTextPanel } from "@/components/intelligence-center/insights-panel";
 import { RecentEventsPanel } from "@/components/intelligence-center/recent-events-panel";
-import { PositiveDriversList, NegativeDriversList } from "@/components/intelligence-center/term-signals-list";
-import { ScoreLegend } from "@/components/intelligence-center/score-badges";
+import { TopicSentimentList } from "@/components/intelligence-center/term-signals-list";
 import { EmptyState } from "@/components/ui/empty-state";
+
+const TOP_COUNT_OPTIONS = [3, 5, 10] as const;
 
 // Visão Geral (`/overview`, intelligence-center/executive-overview.md) —
 // página de entrada pós-login. Consome o envelope de get-page-overview
@@ -21,6 +23,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 // já devolve pronto.
 export default function OverviewPage() {
   const { status, envelope, retry } = usePageEnvelope("get-page-overview");
+  const [topCount, setTopCount] = useState<(typeof TOP_COUNT_OPTIONS)[number]>(3);
 
   return (
     <>
@@ -66,36 +69,56 @@ export default function OverviewPage() {
           </WidgetCard>
         </div>
 
-        {/* Narrativas acima de Insights (pedido do usuário 2026-07-12) —
-            prioriza a tabela acionável antes do painel de insights, que
-            hoje sempre renderiza vazio (event-radar/ai-synthesis ainda não
-            implementados, ver _pending.md). Legenda logo abaixo da própria
-            tabela (pedido do usuário 2026-07-13) — antes ficava solta no
-            fim da página, depois do Insights, longe dos badges que ela
-            explica. */}
-        <WidgetCard title="Narrativas" status={status} onRetry={retry}>
-          <div className="flex flex-col gap-4">
-            <NarrativesTable rows={(envelope?.narratives ?? []).slice(0, 10)} />
-            <div className="border-t border-border-subtle pt-4">
-              <ScoreLegend />
+        {/* ✅ Reestruturado 2026-07-14 (pedido do usuário: "Retirar a tabela
+            de Narrativas e subir a parte de Top 3 Narrativas por Menções
+            para o lugar da tabela") — a tabela "Narrativas" (lista
+            genérica das 10 primeiras) foi removida desta página; a lista
+            completa continua acessível em `/narrativas` (link explícito no
+            próprio widget abaixo). "Top 3 Narrativas por Menções" ocupa
+            agora esta posição, entre o gráfico de tendência e os tópicos
+            positivos/negativos. */}
+        <WidgetCard
+          title={`Top ${topCount} Narrativas por Menções`}
+          status={status}
+          onRetry={retry}
+          headerAction={
+            <div className="flex items-center gap-2">
+              <div className="flex rounded-md border border-border-default p-0.5">
+                {TOP_COUNT_OPTIONS.map((count) => (
+                  <button
+                    key={count}
+                    type="button"
+                    onClick={() => setTopCount(count)}
+                    className={`rounded px-2 py-1 text-xs font-medium transition-colors ${
+                      topCount === count ? "bg-accent-blue text-white" : "text-text-secondary hover:bg-bg-page"
+                    }`}
+                  >
+                    Top {count}
+                  </button>
+                ))}
+              </div>
+              <Link
+                href="/narratives"
+                className="whitespace-nowrap text-xs font-medium text-accent-blue hover:underline"
+              >
+                Ver todas as Narrativas →
+              </Link>
             </div>
-          </div>
+          }
+        >
+          <TopNarrativeCards narratives={envelope?.narratives ?? []} count={topCount} />
         </WidgetCard>
 
         {/* ✅ Adicionado 2026-07-14 (pedido do usuário: "em todas as
             páginas é importante existir os principais tópicos positivos e
-            negativos") — mesmo dado/componentes já usados em /sentiment
-            (get_term_signals, sem filtro de Narrativa aqui: cobre a Query
-            inteira da organização, mesmo escopo das outras métricas desta
-            página). */}
-        <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
-          <WidgetCard title="Principais tópicos positivos" status={status} onRetry={retry}>
-            <PositiveDriversList signals={envelope?.term_signals ?? []} />
-          </WidgetCard>
-          <WidgetCard title="Principais tópicos negativos" status={status} onRetry={retry}>
-            <NegativeDriversList signals={envelope?.term_signals ?? []} />
-          </WidgetCard>
-        </div>
+            negativos"), unificado no mesmo frame 2026-07-14 (mesma sessão,
+            pedido seguinte: "no mesmo frente mudando apenas a cor") — mesmo
+            dado/componente já usado em /sentiment (get_term_signals, sem
+            filtro de Narrativa aqui: cobre a Query inteira da organização,
+            mesmo escopo das outras métricas desta página). */}
+        <WidgetCard title="Principais tópicos positivos e negativos" status={status} onRetry={retry}>
+          <TopicSentimentList signals={envelope?.term_signals ?? []} />
+        </WidgetCard>
 
         {/* event-radar/frontend-highlights-feed.md — janela FIXA de 72h,
             independente do período selecionado no header acima (por isso
@@ -111,41 +134,31 @@ export default function OverviewPage() {
             <RecentEventsPanel />
           </div>
         </div>
-
-        {/* "Top 3 Narrativas por Menções" (protótipo original `topThreeCards`)
-            — renomeado 2026-07-25 (pedido do usuário) de "Top 3 Narrativas"
-            pra deixar explícito o critério de ordenação; o título anterior
-            era ambíguo (o card já não mostrava SOV como métrica isolada de
-            destaque) — o critério agora é literalmente o que o título diz:
-            as 3 Narrativas com mais `total_mentions` no período, não mais
-            `sov_pct` (SOV pondera pela Query, então uma Narrativa pequena
-            numa Query pequena podia superar uma Narrativa com muito mais
-            menções absolutas — não é isso que "por Menções" comunica).
-            ✅ Simplificado 2026-07-21: o split positivo/neutro/negativo já
-            vem direto em NarrativeRow.sentiment_positive_pct/neutral_pct/
-            negative_pct (get_narratives_table, migration 20260721010000) —
-            não precisa mais casar por título com a breakdown type='narrative'
-            separada (frágil: dependia de NarrativeRow.title === Breakdown.label).
-            Mesmo NarrativeCard reusado pela lista de Narrativas (pedido do
-            usuário: todo card de Narrativa segue o mesmo layout). */}
-        <WidgetCard title="Top 3 Narrativas por Menções" status={status} onRetry={retry}>
-          <TopThreeNarrativeCards narratives={envelope?.narratives ?? []} />
-        </WidgetCard>
       </div>
     </>
   );
 }
 
-function TopThreeNarrativeCards({ narratives }: { narratives: NarrativeRow[] }) {
-  const top3 = [...narratives].sort((a, b) => b.total_mentions - a.total_mentions).slice(0, 3);
+// "Top N Narrativas por Menções" (protótipo original `topThreeCards`) —
+// renomeado 2026-07-25 (pedido do usuário) de "Top 3 Narrativas" pra deixar
+// explícito o critério de ordenação; o critério é literalmente o que o
+// título diz: as N Narrativas com mais `total_mentions` no período, não
+// `sov_pct` (SOV pondera pela Query, então uma Narrativa pequena numa Query
+// pequena podia superar uma Narrativa com muito mais menções absolutas —
+// não é isso que "por Menções" comunica). ✅ N passou a ser escolhido pelo
+// usuário (3/5/10) em 2026-07-14 — antes fixo em 3. Mesmo NarrativeCard
+// reusado pela lista de Narrativas (pedido do usuário: todo card de
+// Narrativa segue o mesmo layout).
+function TopNarrativeCards({ narratives, count }: { narratives: NarrativeRow[]; count: number }) {
+  const top = [...narratives].sort((a, b) => b.total_mentions - a.total_mentions).slice(0, count);
 
-  if (top3.length === 0) {
+  if (top.length === 0) {
     return <EmptyState message="Nenhuma Narrativa em monitoramento ainda." />;
   }
 
   return (
-    <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-      {top3.map((narrative) => (
+    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      {top.map((narrative) => (
         <NarrativeCard key={narrative.id} narrative={narrative} />
       ))}
     </div>

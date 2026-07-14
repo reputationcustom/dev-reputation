@@ -16,6 +16,40 @@ atualizado: 2026-08-06
 > gap real restante é não-bloqueante: cache do token em Vault, ver
 > `_pending.md` "Gaps técnicos" #5.
 
+> ✅ **Staleness de toda fase "stale-gated" unificada em
+> `BW_SYNC_INTERVAL_HOURS` (2026-07-14)** — pedido do usuário: "ter a
+> opção de configurar atualização total com a Brandwatch a cada 15min ou
+> 30min ou 1h... isso deve ser alterado por execução também, senão os
+> dados ficam desencontrados." Toda referência abaixo a "throttle
+> 7 dias"/"linha 'fresca' (7 dias)"/"throttle semanal"/"30 dias" pro grão
+> mensal descreve o comportamento **histórico** — desde esta mudança, o
+> literal fixo (`7 * 24 * 60 * 60 * 1000`/`30 * 24 * 60 * 60 * 1000`) foi
+> substituído por uma única function nova, `getSyncStalenessWindowMs()`
+> (`bw-sync/index.ts`, logo abaixo de `getSyncIntervalHours()`), usada nos
+> 11 pontos que antes tinham o literal: `weekly_monthly` (semanal e
+> mensal), `topics`, `platform_by_narrative`, `x_insights`, `top_authors`,
+> `top_tweeters`, `top_sites`, `top_shared_sites`, `demographics`, `sov`.
+> Motivo real: baixar `BW_SYNC_INTERVAL_HOURS` só deixava
+> `daily_metrics`/`hourly_metrics`/`mentions` mais frescos — as fases
+> acima continuavam presas à janela semanal antiga, produzindo "dados
+> desencontrados" na mesma tela (SOV de uma semana atrás ao lado de
+> volumetria de poucos minutos atrás). Um único valor agora governa tanto
+> "par devido pra novo ciclo" quanto a staleness de toda fase — impossível
+> ficar desencontrado por definição. `BW_SYNC_INTERVAL_HOURS` já aceitava
+> fração (`Number(raw)`, sem arredondamento) — `0.25` = 15min, `0.5` =
+> 30min, `1` = 1h, sem precisar de nova migration. Trade-off aceito e
+> confirmado pelo usuário: baixar o intervalo aumenta MUITO o custo de
+> chamadas dessas fases (de 1x/semana pra 1x/intervalo); isso não estoura
+> o teto real da Brandwatch (30 chamadas/10min — `hasBrandwatchCallBudget()`
+> + a ordem fixa de `SYNC_STEPS` já garantem que `mentions`/`daily_metrics`/
+> `hourly_metrics` são sempre tentados primeiro, nunca starvados pelas
+> fases pesadas), só faz o ciclo levar mais heartbeats pra fechar quando
+> uma organização tem muitas Narrativas. `needsMetadataRefresh()` (throttle
+> de 1h pra categorias/subcategorias) foi deixado fora desta unificação de
+> propósito — não é uma "fase" de score, é um bootstrap estrutural
+> (lista de Narrativas), sem o mesmo risco de "desencontro" entre 2 scores
+> na mesma tela.
+
 > ⚠️ **Dois bugs de produção reais corrigidos (2026-08-06)**, reportados
 > pelo usuário via log colado do Supabase ("os dados não estão sendo
 > atualizados completamente, o pipeline da bw_sync não executa

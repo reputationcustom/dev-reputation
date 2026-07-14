@@ -8,6 +8,25 @@ atualizado: 2026-07-25
 
 # Executive Overview
 
+> ✅ **Reestruturado (2026-07-14)**, pedido do usuário, 3 itens: (1)
+> retirar a tabela "Narrativas" desta página e subir "Top 3 Narrativas por
+> Menções" pro lugar dela; (2) permitir escolher Top 3/5/10 (não mais fixo
+> em 3); (3) botão "Ver todas as Narrativas →" nesse mesmo widget, levando
+> a `/narratives`. A tabela "Narrativas" (`NarrativesTable`/`ScoreLegend`)
+> não existe mais nesta página — a lista completa vive só em
+> `/narratives`. O widget de Top N (`TopNarrativeCards`, antes
+> `TopThreeNarrativeCards`) ganhou um seletor Top 3/5/10 no cabeçalho
+> (`WidgetCard`'s novo prop `headerAction`) e ocupa a posição onde a
+> tabela ficava, entre "O que os gráficos mostram?" e "Principais
+> tópicos". "Principais tópicos positivos"/"Principais tópicos negativos"
+> (ver blockquote logo abaixo) também deixaram de ser 2 widgets separados
+> — mesma sessão, pedido seguinte: "no mesmo frame mudando apenas a cor".
+> Ver `CLAUDE.md`, "`/overview` — Top N configurável, tópicos unificados
+> num único frame, Radar de Eventos com resumo executivo", para o
+> detalhamento completo (afeta também `/narratives`/`/sentiment`/
+> `/platforms`/`/themes`/detalhe de Narrativa, mesmo componente
+> compartilhado).
+
 > ✅ **"Top 3 Narrativas" renomeado (2026-07-25)**, pedido do usuário:
 > "renomeie no frontend: Top 3 Narrativas para Top 3 Narrativas por
 > Menções." `TopThreeNarrativeCards` (`overview/page.tsx`) também trocou o
@@ -142,14 +161,17 @@ atualizado: 2026-07-25
 > adicionados (2026-07-14)** — pedido do usuário: "em todas as páginas é
 > importante existir os principais tópicos positivos e negativos".
 > `PAGE_BLOCKS.overview` ganhou `term_signals` (antes só `sentiment`/
-> `themes`/`narrative_detail`); novo par de widgets logo abaixo da tabela
-> de Narrativas, reusando `PositiveDriversList`/`NegativeDriversList`
-> (`get_term_signals`, sem filtro de Narrativa — cobre a Query inteira da
-> organização, mesmo escopo do resto da página). Ver
+> `themes`/`narrative_detail`); novo widget logo abaixo do Top N de
+> Narrativas, reusando `get_term_signals` (sem filtro de Narrativa — cobre
+> a Query inteira da organização, mesmo escopo do resto da página). Ver
 > `aggregated-metrics/sql-aggregation.md`, "Mapeamento tópico↔Narrativa por
 > polaridade", para o campo irmão por Narrativa (`positive_topics`/
 > `negative_topics` em `get_narratives_table`, usado pelo card de
-> Narrativa e por "Top 3 Narrativas" desta mesma página).
+> Narrativa e por "Top N Narrativas" desta mesma página). ✅ **Unificado
+> num único frame (2026-07-14, mesma sessão)** — antes 2 `WidgetCard`s
+> lado a lado (`PositiveDriversList`/`NegativeDriversList`); agora um só
+> "Principais tópicos positivos e negativos" (`TopicSentimentList`),
+> pills coloridas por sentimento (verde/vermelho/neutro) na mesma lista.
 
 > ✅ **Movida de `foundation/executive-overview.md` para cá (2026-07-12)** —
 > era a única página de UI especificada dentro de um módulo que, por
@@ -239,9 +261,20 @@ Qualquer usuário autenticado, membro de ao menos uma organização (ver
      > Category, ver `brandwatch-setup.md` §5), esta tabela mostrava só a
      > Category de topo (`p_scope => 'roots'`) — inversão completa do que
      > está em vigor hoje (agora é sempre `'leaves'`).
-5. Usuário pode clicar "Ver" numa linha da tabela de Narrativas → navega
-   para o detalhe (`/narratives/[id]`, ver
+5. Usuário pode clicar "Ver todas as Narrativas →" no widget de Top N
+   (ver nota abaixo) → navega para `/narratives`, cuja tabela interativa
+   permite abrir o detalhe de qualquer Narrativa (`/narratives/[id]`, ver
    [narratives-exploration.md](narratives-exploration.md)).
+
+   > ✅ **Tabela substituída por "Top N Narrativas por Menções" nesta
+   > página (2026-07-14)**, pedido do usuário: "retirar a tabela de
+   > Narrativas [de `/overview`] e subir a parte de Top 3 Narrativas por
+   > Menções para o lugar da tabela" + permitir escolher 3/5/10 + um
+   > botão de acesso a todas as Narrativas. A tabela interativa completa
+   > continua existindo — só não mais em `/overview`; vive em
+   > `/narratives`, pra onde o novo botão leva. `/overview` mostra só as
+   > N Narrativas (3/5/10, escolha do usuário) com mais `total_mentions`
+   > no período, via `NarrativeCard`.
 
 ## Fluxos alternativos e erros
 
@@ -250,9 +283,9 @@ Qualquer usuário autenticado, membro de ao menos uma organização (ver
 | Usuário sem nenhuma organização em `organization_members` | Tela de estado vazio: "Você ainda não tem acesso a nenhuma organização" — sem crash, sem redirecionar para login (sessão é válida, só falta associação) |
 | Organização sem nenhuma `bw_queries` cadastrada | Mesmo estado vazio acima ("Nenhum dado sincronizado ainda") |
 | Organização sem nenhum `bw_project`/sync ainda rodado | `<EmptyState />` no gráfico de volume: "Nenhum dado sincronizado ainda" |
-| Nenhuma Narrativa cadastrada | `<EmptyState />` na tabela: "Nenhuma Narrativa em monitoramento" |
+| Nenhuma Narrativa cadastrada | `<EmptyState />` no widget de Top N: "Nenhuma Narrativa em monitoramento ainda" |
 | Falha ao carregar (erro de rede/Supabase) | `<ErrorMessage retry />` por widget — um widget falhar não derruba os outros (cada card busca seus dados independentemente) |
-| Narrativa sem linha em `narrative_metrics` para o dia selecionado, **ou** com `narrative_metrics.query_id` nulo (Category sem Query associada, ou associada a mais de uma — ver `../foundation/data-model.md` "Camada de reporting", correção 2026-07-11) | Linha aparece na tabela com SOV/Tendência/Sentimento/Momentum vazios ("—"), não some da lista (Risco e Narrativa continuam vindo de `narratives`, que sempre existe) |
+| Narrativa sem linha em `narrative_metrics` para o dia selecionado, **ou** com `narrative_metrics.query_id` nulo (Category sem Query associada, ou associada a mais de uma — ver `../foundation/data-model.md` "Camada de reporting", correção 2026-07-11) | Card aparece com SOV/Tendência/Sentimento/Momentum vazios ("—"), não some da lista (Risco e Narrativa continuam vindo de `narratives`, que sempre existe) |
 
 > ✅ **Cards de topo revalidados contra o protótipo de frontend (2026-07-12,
 > "Comunicação Inteligente" — claude.ai/design)**: o protótipo desenha 5
@@ -405,6 +438,15 @@ Qualquer usuário autenticado, membro de ao menos uma organização (ver
   (12px) de propósito, é um ajuste explícito, não uma nova escolha de
   hierarquia visual.
 - **Tabela interativa de Narrativas** (ver imagem de referência do usuário):
+
+  > ✅ **Removida de `/overview` (2026-07-14)**, pedido do usuário — ver
+  > "Fluxo principal" item 4 acima. A definição de colunas/bandas/cores
+  > abaixo permanece como a especificação canônica de `NarrativesTable`
+  > (componente compartilhado, ver
+  > [narratives-exploration.md](narratives-exploration.md), que é onde a
+  > tabela de fato aparece hoje) — `/overview` mostra em seu lugar o
+  > widget "Top N Narrativas por Menções" (`NarrativeCard`, sem colunas).
+
   uma linha por Narrativa ativa **de qualquer Query da organização** —
   lista única, sem agrupar/expor de qual Query cada uma vem (ver "Fluxo
   principal" acima sobre como o SOV de cada linha continua correto mesmo

@@ -3,7 +3,7 @@ tipo: feature-spec
 módulo: event-radar
 funcionalidade: severity
 status: implementado
-atualizado: 2026-08-07
+atualizado: 2026-08-08
 ---
 
 # Severidade (SQL, sem IA)
@@ -90,14 +90,34 @@ evento ativo) — essa combinação fica registrada em
 [aggregated-metrics-integration.md](aggregated-metrics-integration.md),
 não aqui, pra não duplicar a mesma decisão em dois arquivos.
 
-> ✅ **Nota (2026-08-07)** — a nova regra de detecção `momentum_spike`
-> (`detection-engine.md`) não muda esta fórmula de severidade: os 7 pesos
-> acima continuam idênticos para todo evento, independente do
-> `event_type` que o gerou. O fator "Risco da narrativa relacionada" (10%)
-> continua sendo o único ponto onde Momentum influencia a severidade —
-> indiretamente, via `risk_score` (que já embute Momentum a 25%). Um
-> evento `momentum_spike` é severidade-calculado exatamente como qualquer
-> outro; o que mudou foi só a 1.1 (detecção), não a 1.3.
+> ⚠️ **Nota (2026-08-07), corrigida no dia seguinte** — dizia aqui que a
+> regra `momentum_spike` "não muda esta fórmula de severidade... um evento
+> `momentum_spike` é severidade-calculado exatamente como qualquer outro".
+> Isso se revelou um problema real, não uma decisão neutra: o fator
+> "Velocidade" (20% do peso) sempre recalcula uma janela **fixa de
+> 3h-vs-3h**, totalmente desconectada da janela "3d"/do sinal que
+> `momentum_spike` de fato detecta. Um card de Momentum "Explosivo" cujo
+> crescimento já tinha acontecido mais cedo na janela de 3 dias (volume já
+> estabilizado num platô alto nas últimas 3h) recomputava "Velocidade"
+> perto de **zero** — não neutro (50), um valor real e baixo — no exato
+> fator de 20% que deveria refletir a força do sinal do evento. Achado via
+> screenshot real do usuário: card com "crescimento de mais de 1.000% em
+> volume de menções nos últimos 3 dias" e tag "momentum_crescente"
+> renderizando `severity = 'high'` (78), não `'critical'` — "tenho um
+> event é critico momentum alto e não ficou vermelho".
+>
+> ✅ **Corrigido (2026-08-08, migration
+> `20260808000000_event_radar_severity_velocity_momentum_alignment.sql`)**:
+> `event_radar_velocity_severity()` ganhou `p_event_type`/`p_metric_value`
+> — quando o evento é `momentum_spike`, o fator "Velocidade" passa a ser o
+> próprio `momentum_score` já calculado na detecção (`radar_staging_events.
+> metric_value`, já 0-100, escala idêntica à do fator) em vez de
+> recalcular um 3h-vs-3h sem relação com o sinal real. Para todo outro
+> `event_type`, o comportamento é idêntico a antes — nenhuma mudança de
+> severidade fora de `momentum_spike`. O fator "Risco da narrativa
+> relacionada" (10%, via `risk_score`, que embute Momentum a 25%
+> amortecido) continua sendo um caminho indireto adicional, agora somado a
+> este caminho direto e muito mais forte.
 
 ## Regras de negócio
 

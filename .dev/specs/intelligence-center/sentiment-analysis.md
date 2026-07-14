@@ -144,15 +144,23 @@ Mesmo público das demais páginas deste módulo.
   frases), mas fica registrado caso o produto queira restringir no futuro.
   ✅ **Deixou de ser exclusividade desta página (2026-07-14)** — pedido do
   usuário: "em todas as páginas é importante existir os principais
-  tópicos positivos e negativos". Os mesmos `PositiveDriversList`/
-  `NegativeDriversList` desta página agora também renderizam em
-  `overview`/`narratives`/`platforms`/`themes`/`narrative_detail` (ver
-  `aggregated-metrics/block-mapping-per-page.md`) — nada mudou aqui, só
-  deixou de ser a única página com esse widget. Para o mapeamento
-  tópico↔Narrativa individual (não a visão agregada deste widget), ver
-  `narratives-exploration.md` e `aggregated-metrics/sql-aggregation.md`,
-  "Mapeamento tópico↔Narrativa por polaridade" (`NarrativeRow.positive_topics`/
-  `negative_topics`, campo novo separado deste bloco `term_signals`).
+  tópicos positivos e negativos". O mesmo widget desta página agora
+  também renderiza em `overview`/`narratives`/`platforms`/`themes`/
+  `narrative_detail` (ver `aggregated-metrics/block-mapping-per-page.md`)
+  — nada mudou aqui, só deixou de ser a única página com esse widget.
+  Para o mapeamento tópico↔Narrativa individual (não a visão agregada
+  deste widget), ver `narratives-exploration.md` e
+  `aggregated-metrics/sql-aggregation.md`, "Mapeamento tópico↔Narrativa
+  por polaridade" (`NarrativeRow.positive_topics`/`negative_topics`,
+  campo novo separado deste bloco `term_signals`).
+  ✅ **Unificado num único frame (2026-07-14, mesma sessão)** — pedido do
+  usuário: "no mesmo frame mudando apenas a cor (vermelho, verde ou
+  neutro)". `PositiveDriversList`/`NegativeDriversList` (2 `WidgetCard`s
+  separados, "Drivers positivos"/"Drivers negativos") foram substituídos
+  por um único `TopicSentimentList` ("Drivers de sentimento") — mesmas
+  pills, mesmas cores por sentimento (`bg-sentiment-*-bg`/
+  `text-sentiment-*`), agora incluindo também o bucket `neutral` (antes
+  descartado) na mesma lista.
   ✅ **Bug real corrigido (2026-07-25, migration `20260726030000`)**:
   usuário reportou "Drivers positivos não aparecem". Causa raiz —
   `get_term_signals` ordenava TODOS os termos (de qualquer sentimento) por

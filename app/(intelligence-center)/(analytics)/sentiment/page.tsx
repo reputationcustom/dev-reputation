@@ -6,7 +6,7 @@ import { WidgetCard } from "@/components/intelligence-center/widget-card";
 import { BreakdownPanel } from "@/components/intelligence-center/charts/breakdown-panel";
 import { BrazilSentimentMap } from "@/components/intelligence-center/charts/brazil-sentiment-map";
 import { TrendLineChart } from "@/components/intelligence-center/charts/trend-line-chart";
-import { PositiveDriversList, NegativeDriversList } from "@/components/intelligence-center/term-signals-list";
+import { TopicSentimentList } from "@/components/intelligence-center/term-signals-list";
 import { HighlightsPanel, NarrativeTextPanel } from "@/components/intelligence-center/insights-panel";
 import { EmptyState } from "@/components/ui/empty-state";
 
@@ -96,14 +96,12 @@ export default function SentimentPage() {
           </div>
         </WidgetCard>
 
-        <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
-          <WidgetCard title="Drivers positivos" status={status} onRetry={retry}>
-            <PositiveDriversList signals={envelope?.term_signals ?? []} />
-          </WidgetCard>
-          <WidgetCard title="Drivers negativos" status={status} onRetry={retry}>
-            <NegativeDriversList signals={envelope?.term_signals ?? []} />
-          </WidgetCard>
-        </div>
+        {/* ✅ Unificado 2026-07-14 (pedido do usuário: "no mesmo frente
+            mudando apenas a cor") — antes "Drivers positivos"/"Drivers
+            negativos" em 2 WidgetCards separados. */}
+        <WidgetCard title="Drivers de sentimento" status={status} onRetry={retry}>
+          <TopicSentimentList signals={envelope?.term_signals ?? []} />
+        </WidgetCard>
 
         <WidgetCard title="Menções que mais influenciaram o sentimento" status={status} onRetry={retry}>
           <EmptyState message="Lista de menções em destaque ainda não implementada — sem bloco correspondente no envelope atual." />

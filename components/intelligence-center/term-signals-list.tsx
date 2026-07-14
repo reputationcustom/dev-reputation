@@ -28,16 +28,17 @@ export function TermSignalsList({ signals, emptyMessage = "Nenhum termo emergent
   );
 }
 
-const DRIVER_COLOR: Record<string, string> = {
+const SENTIMENT_CHIP_COLOR: Record<string, string> = {
   positive: "bg-sentiment-positive-bg text-sentiment-positive",
+  neutral: "bg-sentiment-neutral-bg text-sentiment-neutral",
   negative: "bg-sentiment-negative-bg text-sentiment-negative",
 };
 
-function DriverChip({ signal }: { signal: TermSignal }) {
+function SentimentChip({ signal }: { signal: TermSignal }) {
   return (
     <span
       className={`inline-flex items-center rounded-full px-3 py-1.5 text-xs font-semibold ${
-        DRIVER_COLOR[signal.sentiment_associated] ?? "bg-bg-page text-text-secondary"
+        SENTIMENT_CHIP_COLOR[signal.sentiment_associated] ?? "bg-bg-page text-text-secondary"
       }`}
     >
       {signal.term}
@@ -45,37 +46,36 @@ function DriverChip({ signal }: { signal: TermSignal }) {
   );
 }
 
-// "Drivers positivos" / "Drivers negativos" — 2 caixas separadas
-// (`WidgetCard`s próprios na página, ver sentiment/page.tsx), espelhando
-// exatamente o protótipo original (2 cards lado a lado, cada um com seu
-// próprio título, pills preenchidas — `background:#eafaf1 color:#1a9d5c`
-// pro positivo, `#fdecea`/`#e0483e` pro negativo — não bordas com texto
-// colorido). Mesmo dado de `get_term_signals`, só filtrado por
-// `sentiment_associated`. Termos neutros não aparecem em nenhuma das duas
-// (o protótipo só mostra positivo/negativo pra "drivers").
-export function PositiveDriversList({ signals }: { signals: TermSignal[] }) {
-  const positive = signals.filter((s) => s.sentiment_associated === "positive");
-  if (positive.length === 0) {
-    return <EmptyState message="Nenhum driver positivo neste período." />;
-  }
-  return (
-    <div className="flex flex-wrap gap-2">
-      {positive.slice(0, 10).map((signal) => (
-        <DriverChip key={signal.term} signal={signal} />
-      ))}
-    </div>
-  );
-}
+// ✅ Unificado 2026-07-14 (pedido do usuário: "Principais tópicos positivos
+// e negativos estarem no mesmo frame mudando apenas a cor") — antes eram 2
+// componentes/`WidgetCard`s separados (PositiveDriversList/NegativeDriversList,
+// espelhando o protótipo original de 2 cards lado a lado); agora é uma única
+// lista de pills, mesma cor que já existia por sentimento
+// (`bg-sentiment-*-bg`/`text-sentiment-*`), só que dentro do mesmo frame —
+// inclui a faixa neutra (antes descartada, "termos neutros não aparecem em
+// nenhuma das duas") já que o pedido do usuário cita "vermelho, verde ou
+// neutro" como as 3 cores esperadas. Mesmo dado de `get_term_signals`, só
+// reagrupado por `sentiment_associated`.
+export function TopicSentimentList({
+  signals,
+  emptyMessage = "Nenhum tópico relevante neste período.",
+}: {
+  signals: TermSignal[];
+  emptyMessage?: string;
+}) {
+  const positive = signals.filter((s) => s.sentiment_associated === "positive").slice(0, 8);
+  const neutral = signals.filter((s) => s.sentiment_associated === "neutral").slice(0, 4);
+  const negative = signals.filter((s) => s.sentiment_associated === "negative").slice(0, 8);
+  const items = [...positive, ...neutral, ...negative];
 
-export function NegativeDriversList({ signals }: { signals: TermSignal[] }) {
-  const negative = signals.filter((s) => s.sentiment_associated === "negative");
-  if (negative.length === 0) {
-    return <EmptyState message="Nenhum driver negativo neste período." />;
+  if (items.length === 0) {
+    return <EmptyState message={emptyMessage} />;
   }
+
   return (
     <div className="flex flex-wrap gap-2">
-      {negative.slice(0, 10).map((signal) => (
-        <DriverChip key={signal.term} signal={signal} />
+      {items.map((signal) => (
+        <SentimentChip key={`${signal.sentiment_associated}-${signal.term}`} signal={signal} />
       ))}
     </div>
   );

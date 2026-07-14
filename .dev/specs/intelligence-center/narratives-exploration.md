@@ -288,11 +288,15 @@ já aceito para `filtrosOpen` no header.
   registrada em `_pending.md` gap #24 para as demais páginas que usam
   este bloco). ✅ **Ganhou também "Tópicos positivos"/"Tópicos negativos"
   (2026-07-14, mesma sessão)** — mesmo `term_signals` já escopado à
-  Narrativa, só separado por polaridade (`PositiveDriversList`/
-  `NegativeDriversList`, mesmos componentes de `/sentiment`) — pedido do
-  usuário de "importantíssimo esse mapeamento dos tópicos com a
-  narrativa" aplicado também ao detalhe, ao lado da nuvem de palavras
-  (que mistura todo `topic_type` sem indicar sentimento).
+  Narrativa, só separado por polaridade — pedido do usuário de
+  "importantíssimo esse mapeamento dos tópicos com a narrativa" aplicado
+  também ao detalhe, ao lado da nuvem de palavras (que mistura todo
+  `topic_type` sem indicar sentimento). ✅ **Unificado num único frame
+  (2026-07-14, mesma sessão)** — pedido seguinte: "no mesmo frame mudando
+  apenas a cor". "Tópicos positivos da narrativa"/"Tópicos negativos da
+  narrativa" (2 `WidgetCard`s separados) viraram um único "Tópicos
+  positivos e negativos da narrativa" (`TopicSentimentList`), pills
+  coloridas por sentimento (verde/vermelho/neutro) na mesma lista.
 - **Menções relevantes**: lista via `narrative_matched_mentions(narrative_id)`
   (função já definida em `foundation/data-model.md`) ordenada por
   `reach_estimate`/`impact` — uso de dado por mention individual (não

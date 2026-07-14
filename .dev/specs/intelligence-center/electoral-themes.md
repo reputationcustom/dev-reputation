@@ -169,9 +169,13 @@ Mesmo público das demais páginas deste módulo.
   positivos por pauta"/"Tópicos negativos por pauta" (2026-07-14)** —
   pedido do usuário ("em todas as páginas é importante existir os
   principais tópicos positivos e negativos"), mesmo `term_signals` já
-  buscado para "Termos emergentes", só separado por polaridade
-  (`PositiveDriversList`/`NegativeDriversList`, mesmos componentes de
-  `/sentiment`) — sem chamada adicional.
+  buscado para "Termos emergentes", só separado por polaridade — sem
+  chamada adicional. ✅ **Unificado num único frame (2026-07-14, mesma
+  sessão)** — pedido seguinte: "no mesmo frame mudando apenas a cor".
+  "Tópicos positivos por pauta"/"Tópicos negativos por pauta" (2
+  `WidgetCard`s separados) viraram um único "Tópicos positivos e
+  negativos por pauta" (`TopicSentimentList`), pills coloridas por
+  sentimento (verde/vermelho/neutro) na mesma lista.
 - **Comparação entre períodos**: ver "Fluxo principal" item 5.
 
 ## Regras de negócio

@@ -7,7 +7,7 @@ import { WidgetCard } from "@/components/intelligence-center/widget-card";
 import { NarrativesTable } from "@/components/intelligence-center/narratives-table";
 import { NarrativeCard } from "@/components/intelligence-center/narrative-card";
 import { NarrativeCategoryLanes } from "@/components/intelligence-center/narrative-category-lanes";
-import { PositiveDriversList, NegativeDriversList } from "@/components/intelligence-center/term-signals-list";
+import { TopicSentimentList } from "@/components/intelligence-center/term-signals-list";
 
 // Exploração de Narrativas — lista (`/narratives`,
 // intelligence-center/narratives-exploration.md). Clique numa linha abre um
@@ -54,17 +54,14 @@ export default function NarrativesListPage() {
 
         {/* ✅ Adicionado 2026-07-14 (pedido do usuário: "em todas as
             páginas é importante existir os principais tópicos positivos e
-            negativos") — visão agregada de todas as Narrativas listadas
-            acima; o mapeamento tópico↔Narrativa individual já aparece em
-            cada NarrativeCard (positive_topics/negative_topics). */}
-        <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
-          <WidgetCard title="Principais tópicos positivos" status={status} onRetry={retry}>
-            <PositiveDriversList signals={envelope?.term_signals ?? []} />
-          </WidgetCard>
-          <WidgetCard title="Principais tópicos negativos" status={status} onRetry={retry}>
-            <NegativeDriversList signals={envelope?.term_signals ?? []} />
-          </WidgetCard>
-        </div>
+            negativos"), unificado no mesmo frame na mesma data (pedido
+            seguinte: "no mesmo frente mudando apenas a cor") — visão
+            agregada de todas as Narrativas listadas acima; o mapeamento
+            tópico↔Narrativa individual já aparece em cada NarrativeCard
+            (positive_topics/negative_topics). */}
+        <WidgetCard title="Principais tópicos positivos e negativos" status={status} onRetry={retry}>
+          <TopicSentimentList signals={envelope?.term_signals ?? []} />
+        </WidgetCard>
       </div>
     </>
   );

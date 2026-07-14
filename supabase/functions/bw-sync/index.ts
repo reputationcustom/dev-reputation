@@ -275,6 +275,42 @@ function getSyncIntervalHours(): number {
   return 3;
 }
 
+// ✅ 2026-07-14 (pedido do usuário: "ter a opção de configurar atualização
+// total com a Brandwatch a cada 15min ou 30min ou 1h e assim por diante" —
+// e "isso deve ser alterado por execução também, senão os dados ficam
+// desencontrados") — até esta mudança, `getSyncIntervalHours()` só
+// controlava quando um par (project_id, query_id) fica "devido" pra um
+// NOVO ciclo; cada fase "stale-gated" (topics/top_authors/top_tweeters/
+// SOV/x_insights/top_sites/top_shared_sites/demographics/
+// platform_by_narrative/weekly_monthly) tinha seu próprio literal fixo (7
+// dias, 30 dias pro grão mensal) — completamente desacoplado do intervalo
+// geral. Resultado real: baixar `BW_SYNC_INTERVAL_HOURS` deixava só
+// `daily_metrics`/`hourly_metrics`/`mentions` mais frescos, enquanto
+// SOV/topics/top authors continuavam presos à janela semanal antiga —
+// "dados desencontrados" na mesma tela (SOV de uma semana atrás ao lado de
+// volumetria de 15min atrás). Esta function é agora a ÚNICA fonte da
+// janela de staleness de toda fase "stale-gated" — um único valor
+// (`BW_SYNC_INTERVAL_HOURS`, já aceita fração: `0.25` = 15min, `0.5` =
+// 30min), impossível ficar desencontrado por definição.
+//
+// ⚠️ Trade-off aceito e confirmado pelo usuário (2026-07-14): baixar este
+// valor também aumenta MUITO o custo de chamadas dessas fases (de 1x/
+// semana pra 1x/intervalo) — pra uma organização com várias Narrativas
+// isso pode facilmente ultrapassar o que cabe num único heartbeat. Isso
+// NÃO estoura o teto real da Brandwatch (30 chamadas/10min) — cada fase já
+// respeita `hasBrandwatchCallBudget()` (orçamento local + header real
+// `x-rate-limit-used`) e o dispatcher sempre processa `SYNC_STEPS` na
+// mesma ordem fixa (`metadata → mentions → daily_metrics →
+// hourly_metrics → weekly_monthly → topics → ... → sov`), então
+// volumetria/sentimento diário e mentions sempre são tentados antes de
+// qualquer fase pesada — se o orçamento acabar, só as fases do fim da
+// lista ficam pra próxima invocação, nunca as críticas. Na prática, um
+// valor muito baixo pra uma organização com muitas Narrativas só faz o
+// ciclo levar mais heartbeats pra fechar (nunca ocioso), não gera erro.
+function getSyncStalenessWindowMs(): number {
+  return getSyncIntervalHours() * 3_600_000;
+}
+
 // Janela móvel (dias) usada pelas chamadas de métricas (data/volume/...,
 // topics, top-authors, SOV etc.) depois que o backfill histórico de um par
 // já terminou (sync_cursors.backfill_completed_at != null) — parametrizável
@@ -2205,7 +2241,7 @@ async function runXInsightsStep(
   }
   for (const categoryId of categoryTargets) {
     if (!hasBrandwatchCallBudget()) break;
-    if (await isXInsightsStale(supabase, projectId, queryId, categoryId, 7 * 24 * 60 * 60 * 1000)) {
+    if (await isXInsightsStale(supabase, projectId, queryId, categoryId, getSyncStalenessWindowMs())) {
       await syncXInsights(supabase, token, projectId, queryId, categoryId, metricsStartDate, now);
       return { didWork: true };
     }
@@ -2324,7 +2360,7 @@ async function runTopSitesStep(
 ): Promise<StepResult> {
   for (const categoryId of categoryTargets) {
     if (!hasBrandwatchCallBudget()) break;
-    if (await isTopSitesStale(supabase, projectId, queryId, categoryId, 7 * 24 * 60 * 60 * 1000)) {
+    if (await isTopSitesStale(supabase, projectId, queryId, categoryId, getSyncStalenessWindowMs())) {
       await syncTopSites(supabase, token, projectId, queryId, categoryId, metricsStartDate, now);
       return { didWork: true };
     }
@@ -2433,7 +2469,7 @@ async function runTopSharedSitesStep(
 ): Promise<StepResult> {
   for (const categoryId of categoryTargets) {
     if (!hasBrandwatchCallBudget()) break;
-    if (await isTopSharedSitesStale(supabase, projectId, queryId, categoryId, 7 * 24 * 60 * 60 * 1000)) {
+    if (await isTopSharedSitesStale(supabase, projectId, queryId, categoryId, getSyncStalenessWindowMs())) {
       await syncTopSharedSites(supabase, token, projectId, queryId, categoryId, metricsStartDate, now);
       return { didWork: true };
     }
@@ -2612,7 +2648,7 @@ async function runDemographicsStep(
   for (const { type, path, xOnly, sentiment } of DEMOGRAPHIC_DIMENSIONS) {
     if (xOnly && !hasTwitter) continue;
     if (!hasBrandwatchCallBudget()) break;
-    if (await isDemographicDimensionStale(supabase, projectId, queryId, type, 7 * 24 * 60 * 60 * 1000)) {
+    if (await isDemographicDimensionStale(supabase, projectId, queryId, type, getSyncStalenessWindowMs())) {
       await syncDemographicDimension(supabase, token, projectId, queryId, type, path, metricsStartDate, now);
       if (sentiment && hasBrandwatchCallBudget()) {
         await syncDemographicNetSentiment(supabase, token, projectId, queryId, type, path, metricsStartDate, now);
@@ -3428,11 +3464,11 @@ async function runWeeklyMonthlyStep(
   for (const categoryId of categoryTargets) {
     if (!hasBrandwatchCallBudget()) break;
     let didWork = false;
-    if (await isGrainStale(supabase, "weeks", projectId, queryId, categoryId, 7 * 24 * 60 * 60 * 1000)) {
+    if (await isGrainStale(supabase, "weeks", projectId, queryId, categoryId, getSyncStalenessWindowMs())) {
       await syncSentimentMetrics(supabase, token, "weeks", projectId, queryId, categoryId, metricsStartDate, now);
       didWork = true;
     }
-    if (await isGrainStale(supabase, "months", projectId, queryId, categoryId, 30 * 24 * 60 * 60 * 1000)) {
+    if (await isGrainStale(supabase, "months", projectId, queryId, categoryId, getSyncStalenessWindowMs())) {
       await syncSentimentMetrics(supabase, token, "months", projectId, queryId, categoryId, metricsStartDate, now);
       didWork = true;
     }
@@ -3452,7 +3488,7 @@ async function runTopicsStep(
 ): Promise<StepResult> {
   for (const categoryId of categoryTargets) {
     if (!hasBrandwatchCallBudget()) break;
-    if (await isTopicsStale(supabase, projectId, queryId, categoryId, 7 * 24 * 60 * 60 * 1000)) {
+    if (await isTopicsStale(supabase, projectId, queryId, categoryId, getSyncStalenessWindowMs())) {
       await syncTopicsData(supabase, token, projectId, queryId, categoryId, metricsStartDate, now);
       // Mesmo categoryId, mesma janela de frescor de bw_query_topics —
       // captura complementar do endpoint legado (ver syncLegacyTopicsData()
@@ -3515,7 +3551,7 @@ async function runPlatformByNarrativeStep(
   const narrativeCategoryTargets = categoryTargets.filter((c) => c !== null);
   for (const categoryId of narrativeCategoryTargets) {
     if (!hasBrandwatchCallBudget()) break;
-    if (await isPlatformByNarrativeStale(supabase, projectId, queryId, categoryId, 7 * 24 * 60 * 60 * 1000)) {
+    if (await isPlatformByNarrativeStale(supabase, projectId, queryId, categoryId, getSyncStalenessWindowMs())) {
       await syncPlatformMetrics(supabase, token, projectId, queryId, categoryId, metricsStartDate, now);
       return { didWork: true };
     }
@@ -3534,7 +3570,7 @@ async function runTopAuthorsStep(
 ): Promise<StepResult> {
   for (const categoryId of categoryTargets) {
     if (!hasBrandwatchCallBudget()) break;
-    if (await isTopAuthorsStale(supabase, projectId, queryId, categoryId, 7 * 24 * 60 * 60 * 1000)) {
+    if (await isTopAuthorsStale(supabase, projectId, queryId, categoryId, getSyncStalenessWindowMs())) {
       await syncTopAuthors(supabase, token, projectId, queryId, categoryId, metricsStartDate, now);
       return { didWork: true };
     }
@@ -3664,7 +3700,7 @@ async function runTopTweetersStep(
 ): Promise<StepResult> {
   for (const categoryId of categoryTargets) {
     if (!hasBrandwatchCallBudget()) break;
-    if (await isTopTweetersStale(supabase, projectId, queryId, categoryId, 7 * 24 * 60 * 60 * 1000)) {
+    if (await isTopTweetersStale(supabase, projectId, queryId, categoryId, getSyncStalenessWindowMs())) {
       await syncTopTweeters(supabase, token, projectId, queryId, categoryId, metricsStartDate, now);
       return { didWork: true };
     }
@@ -3740,7 +3776,7 @@ async function runSovStep(
   for (const group of queryGroups ?? []) {
     if (!hasBrandwatchCallBudget()) break;
     const queryGroupId = (group as { id: number }).id;
-    if (await isQueryGroupSovStale(supabase, queryGroupId, 7 * 24 * 60 * 60 * 1000)) {
+    if (await isQueryGroupSovStale(supabase, queryGroupId, getSyncStalenessWindowMs())) {
       await syncQueryGroupSov(supabase, token, projectId, queryGroupId, metricsStartDate, now);
       return { didWork: true };
     }

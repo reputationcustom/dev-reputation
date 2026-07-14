@@ -13,16 +13,21 @@ export function WidgetCard({
   title,
   status,
   onRetry,
+  headerAction,
   children,
 }: {
   title: string;
   status: "loading" | "error" | "loaded";
   onRetry: () => void;
+  headerAction?: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
     <div className="rounded-xl border border-border-default bg-bg-card p-5">
-      <h2 className="text-sm font-bold text-text-primary">{title}</h2>
+      <div className="flex items-center justify-between gap-3">
+        <h2 className="text-sm font-bold text-text-primary">{title}</h2>
+        {headerAction}
+      </div>
       <div className="mt-4">
         {status === "loading" && (
           <div className="flex flex-col gap-2">
