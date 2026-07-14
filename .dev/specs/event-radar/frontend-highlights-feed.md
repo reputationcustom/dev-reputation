@@ -72,10 +72,19 @@ descreve. Renomeado de "Insights"/genérico para **"Radar de Eventos"**
 com o subtítulo "Últimas 72 horas" deixando o escopo temporal explícito na
 própria UI, não só na documentação.
 
-> Fora de escopo deste spec: réplica do widget em outras páginas, ou uma
-> página dedicada tipo `/eventos` com histórico completo/paginado. Se o
-> uso real mostrar que 72h fixas na Visão Geral não bastam, isso é uma
-> extensão natural — não decidida aqui.
+> ✅ **Extensão natural aplicada (2026-08-02)** — pedido do usuário: "a
+> opção do radar no Menu principal não está aparecendo" (esperava um item
+> de menu próprio, não só o widget embutido em `/overview`), seguido de
+> "nessa página nova será possível acompanhar o que ocorreu nas últimas
+> 72h, quais foram as tendências, etc. Basicamente o feed do que foi
+> identificado nas últimas 72h." Nova rota **`/radar`** (item "Radar de
+> Eventos" em `ANALYSIS_ITEMS`, `sidebar.tsx`) — mesmo `RecentEventsPanel`/
+> janela fixa de 72h do widget de `/overview`, reaproveitado como página
+> dedicada, não uma segunda fonte de dado. Os dois convivem: o widget em
+> `/overview` continua sendo o resumo rápido da tela de entrada, `/radar`
+> é o destino completo alcançável pelo menu. `PageHeaderBar` usado por
+> consistência de navegação (organização visível), mas o seletor de
+> período não afeta esta página — a janela permanece sempre fixa.
 
 ## Fluxo principal
 

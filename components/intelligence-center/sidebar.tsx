@@ -15,6 +15,11 @@ const ANALYSIS_ITEMS = [
   // Módulo `communications` (Sprint 2.1) — pedido explícito do usuário de
   // nomear o item de menu "Comunicação", ver .dev/specs/communications/overview.md.
   { href: "/communications", label: "Comunicação" },
+  // Módulo `event-radar` — pedido do usuário (2026-08-02): página dedicada
+  // além do widget de /overview, mesmo feed fixo de 72h ("o que ocorreu,
+  // quais foram as tendências"), só que como destino próprio no menu, não
+  // só embutido na Visão Geral. Ver event-radar/frontend-highlights-feed.md.
+  { href: "/radar", label: "Radar de Eventos" },
 ];
 
 // Mesmos rótulos da seção "CONFIGURAÇÕES" do protótipo

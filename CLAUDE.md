@@ -4669,6 +4669,24 @@ descrevia `get_active_highlights`/Camada 1 de `ai-synthesis` como
 pendentes, e a tabela de módulos ainda listava `event-radar` como
 `rascunho`), `_pending.md` gap #35.
 
+**Follow-up, mesmo dia**: usuário reportou "a opção do radar no Menu
+principal não está aparecendo" — a expectativa era um item de menu
+próprio, não só o widget embutido em `/overview` (que era de fato tudo
+que o spec original previa — "Fora de escopo: réplica do widget em outras
+páginas, ou uma página dedicada"). Confirmado via `AskUserQuestion`: o
+usuário queria uma opção **nova** no menu (não reaproveitar "Alertas",
+que segue como `ComingSoonPage`), com sua própria rota, mostrando "o que
+ocorreu nas últimas 72h, quais foram as tendências... basicamente o feed
+do que foi identificado." Implementado: item "Radar de Eventos" em
+`ANALYSIS_ITEMS` (`sidebar.tsx`) apontando pra nova rota `/radar`
+(`app/(intelligence-center)/(analytics)/radar/page.tsx`) — reaproveita o
+mesmo `RecentEventsPanel`/janela fixa de 72h já construído pro widget de
+`/overview`, não uma segunda fonte de dado; os dois convivem (resumo
+rápido na Visão Geral, destino dedicado no menu). `PageHeaderBar` usado
+por consistência de navegação, mas seu seletor de período não afeta esta
+página (janela sempre fixa). `npx tsc --noEmit`/`npm run build`
+confirmados limpos (20 rotas).
+
 ### Módulo `entities` — spec completa + `data-model.md` implementado + seed real de partidos/parlamentares (2026-07-13)
 
 Duas sessões na mesma data. **Primeira**: usuário pediu a spec do módulo de
