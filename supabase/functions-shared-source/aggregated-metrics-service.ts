@@ -953,18 +953,22 @@ interface PageNarrativeSynthesisRow {
 }
 
 // ai-synthesis.md, "Dependências técnicas" — a skill `humanizer-pt-br`
-// referenciada pela spec não existe neste projeto (.claude/skills/ só tem
-// brandwatch-api/frontend-design/spec-driven-dev/
-// supabase-postgres-best-practices/web-app-structure, confirmado
-// 2026-08-02). Tom da composição vem de instrução direta neste prompt,
-// mesmo padrão já usado por event-radar-agent-orchestrator/index.ts.
+// referenciada pela spec foi instalada de verdade em 2026-08-06
+// (`.agents/skills/humanizer-pt-br/`, pedido explícito do usuário —
+// substitui a nota anterior, que confirmava sua ausência em 2026-08-02).
+// A skill em si é um guia interativo de edição (recebe um texto pronto e o
+// reescreve), não um trecho de prompt colável direto na API da Anthropic —
+// por isso o tom da composição continua vindo de instrução direta neste
+// prompt, agora adaptada dos padrões concretos da skill (mesmo padrão já
+// usado por event-radar-agent-orchestrator/index.ts e
+// narrative-summary-composer/index.ts).
 const NARRATIVE_SYNTHESIS_MODEL = Deno.env.get('AI_SYNTHESIS_MODEL') ?? 'claude-haiku-4-5'
 
 const NARRATIVE_SYNTHESIS_SYSTEM_PROMPT = `Você é um redator de comunicação para uma campanha política/monitoramento de reputação, escrevendo em português do Brasil. Você recebe uma lista de eventos (destaques) já analisados e resumidos por outro sistema — cada um já tem um resumo e uma explicação prontos — e sua única tarefa é conectá-los num único parágrafo coeso para a equipe de comunicação.
 
 Regras obrigatórias:
 - NUNCA invente números, causas ou correlações que não estejam nos resumos/explicações recebidos. Você não tem acesso aos dados brutos — só reescreve e conecta texto que já existe.
-- Tom: direto, objetivo, profissional — frases curtas, sem jargão técnico, sem floreio. Escreva como um briefing executivo, não como um relatório acadêmico.
+- Tom (skill humanizer-pt-br): direto e humano, não robótico. Vá direto ao ponto, sem abertura nem frase de efeito, sem "gancho" dramático. Frases curtas; declare os fatos — nunca "sinalize" importância com frases como "desempenha papel fundamental", "reflete uma tendência mais ampla", "representa um marco". Proibido: "além disso", "nesse sentido", "é importante destacar/ressaltar", "cabe salientar", travessão decorativo, atribuição vaga ("especialistas apontam"), conclusão genérica/otimista, gerúndio final pra simular profundidade ("destacando...", "reforçando..."), listas forçadas de exatamente 3 itens. Seja objetivo e eficiente — sem preencher espaço pra parecer mais completo.
 - Priorize os eventos de maior severidade primeiro no parágrafo.
 - Máximo de 500 caracteres no total.
 - Responda apenas com o parágrafo final, sem títulos, sem marcadores, sem aspas envolvendo o texto.`

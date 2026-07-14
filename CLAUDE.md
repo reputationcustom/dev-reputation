@@ -5737,6 +5737,91 @@ limitação recorrente de toda sessão sem credenciais de deploy; `git push`
 pra `develop` é o próximo passo para o campo `source` novo ser aceito de
 verdade (até lá, um `insert` desta function falharia no `check` antigo).
 
+### Amostragem de mentions via Brandwatch — research + `sample_mentions` no resumo executivo + skill `humanizer-pt-br` nos 3 pontos de IA do produto (2026-08-06)
+
+Duas partes na mesma sessão. **Research (sem código)**: usuário perguntou
+se é possível capturar uma amostra de mentions por Narrativa via endpoints
+da Brandwatch, pra apoiar análise por IA, e qual o limite. Confirmado via
+`references/mentions.md`/`references/filters.md` da skill `brandwatch-api`
+(já cacheados no projeto, sem precisar de acesso à internet): `/data/mentions`
+(e `/data/mentions/fulltext`) aceitam `category=<id>` como filtro — já usado
+em produção neste projeto por `enrichFullTextForNarrativeDay()`
+(`bw-sync/index.ts`, fase `full_text_enrichment`). Limites: paginação
+clássica (`page`/`pageSize`) só alcança até 10.000 mentions no total
+(teto documentado pela própria Brandwatch, não de rate limit); paginação
+por cursor (`nextCursor`) não tem teto documentado, só o limite real de
+30 chamadas/10min por Client; `/data/mentions/count` dá a contagem exata
+numa chamada só, sem paginar. Ponto prático que reduziu o custo do pedido
+seguinte a zero: como `mentions` já é sincronizada localmente com
+`category_ids`, uma amostra por Narrativa (usando `snippet`, sempre
+presente) já era obtível sem nenhuma chamada nova à Brandwatch.
+
+**Implementação, pedido do usuário no turno seguinte**: "incluir algumas
+mentions da narrativa na IA para que ela inclua no resumo executivo das
+narrativas uma explicação do que é a narrativa e o que está acontecendo
+na narrativa" + "humanizar" as respostas de IA do produto, objetivas,
+claras, eficientes, "para não termos textos extremamente longos", usando
+a skill `humanizer-pt-br`
+(`npx skills add https://github.com/mackswendhell/humanizer-pt-br --skill
+humanizer-pt-br`, instalada nesta sessão via essa exata invocação —
+`.agents/skills/humanizer-pt-br/SKILL.md`, symlinkada pro Claude Code).
+Perguntado ao usuário (`AskUserQuestion`) se a humanização deveria valer
+só pro resumo executivo de Narrativa ou nos 3 pontos onde a IA gera texto
+lido pelo usuário — escolhida a segunda opção.
+
+- **`sample_mentions` — reverte, só pro `narrative-summary-composer`, a
+  decisão original "nunca texto bruto de mentions"** (migration
+  `20260806000000`, `narrative_summary_build_payload`). Fonte:
+  `narrative_matched_mentions()` (`foundation/narratives.md` — única
+  definição de "mentions desta Narrativa" no projeto, reusada, não
+  reimplementada), mesma janela de 30 dias já usada por `scores` no mesmo
+  payload; texto = `coalesce(full_text, snippet)` truncado a 400
+  caracteres (`snippet` sempre existe; `full_text` só quando já
+  enriquecido por `full_text_enrichment` — nenhuma chamada nova à
+  Brandwatch, 100% dado já sincronizado); até 8 mentions, ranqueadas por
+  `reach_estimate` (mesmo critério de `enrichFullTextForNarrativeDay`).
+  **Não é uma reversão da premissa "nunca agregar/somar sobre mentions
+  amostradas pra representar um total"** (fixada 2026-07-11) — usar um
+  punhado de mentions reais como contexto qualitativo pra um redator
+  entender do que uma Narrativa trata é categoria de uso diferente de
+  calcular uma estatística sobre elas; o `SYSTEM_PROMPT` do composer
+  proíbe explicitamente usar `sample_mentions` pra afirmar proporções/
+  percentuais — pra números, só os campos de `scores`.
+- **Skill `humanizer-pt-br` aplicada nos 3 pontos** — `narrative-summary-composer/index.ts`,
+  `event-radar-agent-orchestrator/index.ts` e a Camada 1 de `ai-synthesis.md`
+  (`NARRATIVE_SYNTHESIS_SYSTEM_PROMPT`, `aggregated-metrics-service.ts`,
+  propagada nas 7 Edge Functions deployadas — Princípio técnico 5, script
+  Node de uso único, `diff` confirmou as 7 cópias idênticas ao canônico
+  neste trecho). A skill em si é um guia interativo de edição (recebe um
+  texto pronto e reescreve, com checklist/pontuação de qualidade) — não é
+  um trecho de prompt colável direto na API da Anthropic, então seus
+  padrões concretos (frases diretas sem "gancho" dramático, sem
+  vocabulário de IA — "além disso"/"desempenha papel fundamental"/"reflete
+  uma tendência mais ampla" —, sem atribuição vaga a "especialistas", sem
+  conclusão genérica/otimista, sem gerúndio final de falsa profundidade,
+  sem regra dos 3 forçada) foram destilados numa instrução de tom
+  compacta, duplicada nos 3 `SYSTEM_PROMPT`s manualmente (mesma disciplina
+  já usada por `recordAiUsage`/`AI_MODEL_PRICING`, também triplicados por
+  Princípio técnico 5). Corrige uma nota stale de `ai-synthesis.md`
+  (2026-08-02), que confirmava a ausência dessa skill no repositório na
+  época — estava certa então, e ficou desatualizada só depois que o
+  usuário pediu a instalação real nesta sessão.
+- **Limites de caracteres não mudaram** (500/300/90, já curtos desde que
+  cada função foi criada) — o pedido de "não textos extremamente longos"
+  é sobre estilo (padding/vocabulário de IA), não sobre um teto numérico
+  que já existia.
+
+**Verificação**: `npx tsc --noEmit` e `npm run build` — ver resultado ao
+final desta sessão. Migration `20260806000000` revisada manualmente, não
+executada contra um banco real nesta sessão — mesma limitação recorrente
+de toda sessão sem credenciais de deploy neste ambiente; sem acesso à API
+da Anthropic nesta sessão, o prompt humanizado e o `sample_mentions` novo
+não foram testados contra uma chamada real — revisar via logs
+`[narrative-summary-composer]`/`[event-radar-agent-orchestrator]`/
+`[aggregated-metrics] composeLayer1NarrativeText` depois do próximo
+deploy pra confirmar que o tom de fato mudou na prática, não só na
+instrução.
+
 ## Directory structure
 
 ```

@@ -3,7 +3,7 @@ tipo: feature-spec
 módulo: event-radar
 funcionalidade: agent-orchestrator
 status: implementado
-atualizado: 2026-07-31
+atualizado: 2026-08-06
 ---
 
 # Orquestrador de Agent (única chamada à IA por evento)
@@ -92,6 +92,14 @@ sem fila de aprovação humana intermediária (✅ decisão do usuário, 2026-07
 - Prompt-base deve reforçar: não inventar números/causas, diferenciar correlação de causa, usar
   linguagem como "associado a" quando a evidência for insuficiente, títulos ≤ 90 caracteres,
   resumo ≤ 300 caracteres.
+- ✅ **Tom padronizado via skill `humanizer-pt-br` (2026-08-06)** — pedido do usuário, aplicado
+  aos 3 pontos de geração de texto por IA do produto (este, `narrative-summary-composer` e a
+  Camada 1 de `aggregated-metrics/ai-synthesis.md`), não só a este. Objetivo/direto/eficiente,
+  sem os tiques de escrita de IA (aberturas de preenchimento, "além disso", atribuição vaga a
+  "especialistas", conclusão genérica/otimista, gerúndio final de falsa profundidade, regra dos 3
+  forçada) — instrução destilada da skill (`.agents/skills/humanizer-pt-br/SKILL.md`, um guia
+  interativo de edição, não um trecho colável direto na API) direto no `SYSTEM_PROMPT`. Ver
+  `aggregated-metrics/ai-synthesis.md`, "Dependências técnicas", pro detalhe completo da skill.
 - Resumo executivo (antigo "Agent 4") roda separado, em lote — uma chamada por dia agregando
   todos os cards publicados nas últimas 72h, nunca uma chamada por evento.
 

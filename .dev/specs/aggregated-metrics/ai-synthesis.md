@@ -3,7 +3,7 @@ tipo: feature-spec
 módulo: aggregated-metrics
 funcionalidade: ai-synthesis
 status: implementado
-atualizado: 2026-08-03
+atualizado: 2026-08-06
 ---
 
 # Síntese Narrativa da Página (`narrative_text`)
@@ -90,6 +90,31 @@ atualizado: 2026-08-03
 > justificativa por página antes de ser construído, "As três camadas"
 > abaixo) — nenhuma página registrou essa justificativa ainda, então não
 > há nada a construir por enquanto.
+
+> ✅ **Skill `humanizer-pt-br` instalada + tom padronizado nos 3 pontos de
+> geração de texto por IA (2026-08-06)** — pedido do usuário: humanizar as
+> respostas da IA em todo o produto, objetivas/claras/eficientes, sem
+> textos longos, usando a skill `humanizer-pt-br`
+> (`npx skills add https://github.com/mackswendhell/humanizer-pt-br --skill
+> humanizer-pt-br`). Corrige a nota anterior deste arquivo (2026-08-02),
+> que confirmava a ausência dessa skill no repositório — ela existe agora
+> em `.agents/skills/humanizer-pt-br/SKILL.md`. Como a skill é um guia
+> interativo de edição (recebe texto pronto e reescreve, não um trecho
+> colável na API), seus padrões concretos (frases diretas, sem "gancho"
+> dramático, sem vocabulário de IA, sem atribuição vaga, sem conclusão
+> genérica) foram destilados numa instrução de tom compacta, duplicada
+> (Princípio técnico 5) em `NARRATIVE_SYNTHESIS_SYSTEM_PROMPT`
+> (`aggregated-metrics-service.ts`, Camada 1 — este arquivo),
+> `event-radar-agent-orchestrator/index.ts`'s `SYSTEM_PROMPT` e
+> `narrative-summary-composer/index.ts`'s `SYSTEM_PROMPT` (ver
+> `foundation/narratives.md`, "Resumo executivo (produtor)") — os 3 únicos
+> pontos do produto onde a IA gera texto lido pelo usuário. Ver
+> "Dependências técnicas" abaixo pro detalhe completo da skill. Mesma
+> sessão também estendeu `narrative_summary_build_payload` (não este
+> arquivo — `foundation/narratives.md`) com `sample_mentions`, mentions
+> reais da Narrativa como contexto qualitativo — não muda nada da Camada
+> 0/1 descritas aqui, que continuam só reescrevendo `summary`/`explanation`
+> de highlights já prontos, nunca mentions cruas.
 
 ## Objetivo
 
@@ -270,15 +295,19 @@ só-leitura pra `authenticated`).
   mecanismo de cache do envelope (`edge-functions-per-page.md`, TTL 5min); são independentes de
   propósito (um é persistência de texto por período, o outro é cache de resposta HTTP). ✅
   **Implementada (2026-08-02, migration `20260802020000`)**.
-- ⚠️ **Skill `humanizer-pt-br` não existe** neste projeto (`.claude/skills/` só tem
-  `brandwatch-api`, `frontend-design`, `spec-driven-dev`,
-  `supabase-postgres-best-practices`, `web-app-structure` — confirmado 2026-08-02). Nunca existiu
-  no repositório — este texto descrevia uma dependência aspiracional desde que a spec foi escrita,
-  nunca verificada contra o diretório real de skills. ✅ **Substituído (2026-08-02)**: o tom da
-  composição (Camada 1) vem de instrução direta em `NARRATIVE_SYNTHESIS_SYSTEM_PROMPT`
-  (`aggregated-metrics-service.ts`), mesmo padrão já usado por
-  `event-radar/agent-orchestrator.md`'s `SYSTEM_PROMPT` — atualizar esta linha se uma skill
-  `humanizer-pt-br` real vier a existir depois.
+- ✅ **Skill `humanizer-pt-br` instalada (2026-08-06)** — pedido explícito do usuário
+  (`npx skills add https://github.com/mackswendhell/humanizer-pt-br --skill humanizer-pt-br`),
+  vive em `.agents/skills/humanizer-pt-br/SKILL.md`, symlinkada pro Claude Code. Corrige a nota
+  anterior (2026-08-02), que confirmava a ausência da skill no repositório na época. A skill em si
+  é um guia interativo de edição (recebe um texto pronto e o reescreve, com checklist/pontuação de
+  qualidade) — não é um trecho de prompt colável direto na API da Anthropic. Por isso o tom da
+  composição (Camada 1) continua vindo de instrução direta em `NARRATIVE_SYNTHESIS_SYSTEM_PROMPT`
+  (`aggregated-metrics-service.ts`), agora **adaptada dos padrões concretos da skill** (frases
+  diretas, sem "gancho" dramático, sem vocabulário de IA tipo "além disso"/"desempenha papel
+  fundamental", sem atribuição vaga, sem conclusão genérica/otimista, sem gerúndio final de falsa
+  profundidade, sem regra dos 3 forçada) — mesmo padrão replicado em
+  `event-radar/agent-orchestrator.md`'s `SYSTEM_PROMPT` e em `narrative-summary-composer` (ver
+  `foundation/narratives.md`, "Resumo executivo (produtor)").
 
 ## Referências relacionadas
 

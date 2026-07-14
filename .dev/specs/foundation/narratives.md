@@ -3,7 +3,7 @@ tipo: feature-spec
 módulo: foundation
 funcionalidade: narratives
 status: implementado
-atualizado: 2026-07-14
+atualizado: 2026-08-06
 ---
 
 # Narratives
@@ -187,19 +187,41 @@ resto desta spec (dados 100% derivados da Brandwatch, sem escrita fora de
    `feed_events` (evento do `event-radar`) novo desde o último resumo; ou
    tem uma Comunicação/Decisão nova (`communications`) desde o último
    resumo.
-2. `narrative_summary_build_payload(id)` (SQL) monta o payload agregado —
-   nunca texto bruto de `mentions` (mesmo princípio de
-   `event_radar_build_agent_payload`, `event-radar/agent-orchestrator.md`):
-   os scores da própria Narrativa via `get_narratives_table` (mesma fonte
-   que a tabela/cards já mostram — o resumo tem que concordar com os
-   números ao lado dele), até 5 eventos recentes do radar e até 5
-   Comunicações/Decisões recentes.
+2. `narrative_summary_build_payload(id)` (SQL) monta o payload agregado: os
+   scores da própria Narrativa via `get_narratives_table` (mesma fonte que
+   a tabela/cards já mostram — o resumo tem que concordar com os números
+   ao lado dele), até 5 eventos recentes do radar, até 5 Comunicações/
+   Decisões recentes e, desde 2026-08-06 (migration `20260806000000`),
+   `sample_mentions` — até 8 mentions reais da Narrativa
+   (`narrative_matched_mentions()`, mesma janela de 30 dias dos scores,
+   texto = `coalesce(full_text, snippet)` truncado a 400 caracteres,
+   ranqueadas por `reach_estimate`). **Reverte, só pra este produtor**, a
+   decisão original "nunca texto bruto de mentions" (mesmo princípio de
+   `event_radar_build_agent_payload`, `event-radar/agent-orchestrator.md`,
+   que continua sem ler mentions cruas) — pedido explícito do usuário pra a
+   IA explicar do que a Narrativa trata e o que está acontecendo nela, não
+   só repetir os scores. Uso é **qualitativo** (contexto de conteúdo real),
+   nunca estatístico: o `SYSTEM_PROMPT` proíbe explicitamente usar
+   `sample_mentions` pra afirmar proporções/percentuais — para números, só
+   `scores`. Nenhuma chamada nova à Brandwatch (100% dado já sincronizado
+   por `bw-sync`); ver "Amostragem de mentions via Brandwatch" em
+   `_pending.md`/histórico de research desta mesma sessão pro porquê disso
+   ser tecnicamente possível também via API (`category=<id>` em
+   `/data/mentions`), mas resolvido aqui com o dado local, sem custo extra
+   de rate limit.
 3. Uma chamada ao Claude Haiku 4.5 por Narrativa, texto livre (3-5 frases,
    até 500 caracteres, guardado por truncamento defensivo no código, nunca
    só confiado ao prompt) — mesmo padrão da Camada 1 de
    `aggregated-metrics/ai-synthesis.md` (`composeLayer1NarrativeText`),
    não o schema JSON estruturado do `event-radar-agent-orchestrator`
-   (aqui a saída é só prosa, não dado estruturado).
+   (aqui a saída é só prosa, não dado estruturado). Tom segue a skill
+   `humanizer-pt-br` (instalada 2026-08-06, pedido explícito do usuário) —
+   reforçada como instrução direta no `SYSTEM_PROMPT` (a skill em si é um
+   guia interativo de edição, não um trecho colável na API), mesmo padrão
+   agora replicado em `event-radar-agent-orchestrator` e na Camada 1 de
+   `ai-synthesis.md`. Objetivo: texto objetivo, direto, sem os tiques de
+   escrita de IA (aberturas de preenchimento, atribuição vaga, conclusão
+   genérica etc.) e sem textos longos.
 4. `update narratives set description = ..., description_generated_at =
    now()` só em caso de sucesso — uma falha de composição (recusa, erro de
    rede, resposta vazia) não escreve nada; a Narrativa continua elegível
@@ -287,6 +309,14 @@ fora deste escopo.
 - `bw_query_metrics_daily` e `sync-brandwatch` (fonte dos agregados oficiais).
 - Skill `brandwatch-api`: `references/data-restrictions-compliance.md` (por
   que sinais de texto são best-effort em X/Reddit/LinkedIn/News).
+- `narrative_matched_mentions()` (ver "Regras de negócio" acima) — fonte de
+  `sample_mentions` no payload do `narrative-summary-composer` (ver "Resumo
+  executivo (produtor)"). Nenhuma chamada nova à Brandwatch: usa `mentions`
+  já sincronizada localmente.
+- Skill `humanizer-pt-br` (`.agents/skills/humanizer-pt-br/SKILL.md`,
+  instalada 2026-08-06) — padrões de tom destilados no `SYSTEM_PROMPT` do
+  `narrative-summary-composer`. Ver `aggregated-metrics/ai-synthesis.md`,
+  "Dependências técnicas", pro detalhe completo.
 
 ## Referências relacionadas
 

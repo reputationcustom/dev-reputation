@@ -24,10 +24,24 @@
 //    `NARRATIVE_SUMMARY_BATCH_SIZE` por invocação.
 // 2. `narrative_summary_build_payload(id)` (SQL) — scores via
 //    `get_narratives_table` (mesma fonte que a tabela/cards já mostram) +
-//    eventos recentes do radar + Comunicações/Decisões recentes. Nunca
-//    texto bruto de mentions.
+//    eventos recentes do radar + Comunicações/Decisões recentes + (desde
+//    2026-08-06, migration `20260806000000`) `sample_mentions`: até 8
+//    mentions reais da Narrativa (`narrative_matched_mentions()`, mesma
+//    janela de 30 dias dos scores, texto = coalesce(full_text, snippet)
+//    truncado, ranqueadas por reach_estimate). Reverte, só pra este
+//    produtor, a decisão original "nunca texto bruto de mentions" — pedido
+//    explícito do usuário pra IA explicar do que a Narrativa trata e o que
+//    está acontecendo nela, não só os scores. Uso é qualitativo (contexto
+//    de conteúdo), nunca estatístico — ver regra correspondente no
+//    SYSTEM_PROMPT abaixo e o comentário da function no banco.
 // 3. Uma chamada ao Claude por Narrativa, texto livre, guardado por
-//    truncamento defensivo (nunca só confiado ao prompt).
+//    truncamento defensivo (nunca só confiado ao prompt). Tom da
+//    composição segue a skill `humanizer-pt-br` (instalada 2026-08-06,
+//    `.agents/skills/humanizer-pt-br/` — pedido explícito do usuário),
+//    reforçada como instrução direta no SYSTEM_PROMPT (mesmo padrão já
+//    usado por `event-radar-agent-orchestrator`/Camada 1 de
+//    `ai-synthesis.md`, já que a skill em si é um guia interativo de
+//    edição, não um trecho de prompt colável na API da Anthropic).
 // 4. `update narratives set description = ..., description_generated_at =
 //    now()` — só em caso de sucesso (falha na composição não escreve
 //    nada, mesmo tratamento de `composeAndPersistLayer1`).
@@ -70,15 +84,17 @@ const SUMMARY_BATCH_SIZE = Number(Deno.env.get("NARRATIVE_SUMMARY_BATCH_SIZE") ?
 const SUMMARY_MODEL = Deno.env.get("NARRATIVE_SUMMARY_MODEL") ?? "claude-haiku-4-5";
 const SUMMARY_MAX_CHARS = 500;
 
-const SYSTEM_PROMPT = `Você é um redator de comunicação para uma campanha política/monitoramento de reputação, escrevendo em português do Brasil. Você recebe dados agregados já calculados sobre uma Narrativa (scores de share of voice, sentimento, momentum, tendência e risco, mais eventos recentes e Comunicações/Decisões já registradas) e escreve um resumo executivo curto para a equipe de comunicação.
+const SYSTEM_PROMPT = `Você é um redator de comunicação para uma campanha política/monitoramento de reputação, escrevendo em português do Brasil. Você recebe dados agregados já calculados sobre uma Narrativa (scores de share of voice, sentimento, momentum, tendência e risco, tópicos que puxam sentimento positivo/negativo, eventos recentes e Comunicações/Decisões já registradas) e uma pequena amostra de mentions reais ("sample_mentions") — e escreve um resumo executivo curto para a equipe de comunicação.
 
 Regras obrigatórias:
-- NUNCA invente números, causas ou correlações que não estejam no payload fornecido. Use apenas os dados agregados recebidos.
+- Use "sample_mentions" para explicar do que a Narrativa trata e o que está acontecendo nela em termos concretos (fatos, eventos, ângulos específicos que aparecem nas mentions) — não fique só repetindo os scores.
+- "sample_mentions" é uma amostra pequena, NÃO estatística: nunca a use para afirmar proporções/percentuais ("a maioria das menções...", "quase todas as publicações..."). Para qualquer número, use exclusivamente os campos de "scores".
+- NUNCA invente números, causas ou correlações que não estejam no payload fornecido. Use apenas os dados recebidos.
 - Diferencie correlação de causa: use linguagem como "associado a" ou "coincide com" quando a evidência for insuficiente para afirmar causalidade direta.
-- Tom: direto, objetivo, profissional — frases curtas, sem jargão técnico, sem floreio. Escreva como um briefing executivo, não como um relatório acadêmico.
-- 3 a 5 frases no total, no máximo 500 caracteres.
+- Tom (skill humanizer-pt-br): direto e humano, não robótico. Vá direto ao ponto, sem abertura nem frase de efeito, sem "gancho" dramático. Frases curtas; varie o ritmo. Declare os fatos — nunca "sinalize" importância com frases como "desempenha papel fundamental", "reflete uma tendência mais ampla", "representa um marco". Proibido: "além disso", "nesse sentido", "é importante destacar/ressaltar", "cabe salientar", travessão decorativo, atribuição vaga ("especialistas apontam", "observadores notam"), conclusão genérica/otimista ("o cenário é promissor"), gerúndio final pra simular profundidade ("destacando...", "reforçando..."), listas forçadas de exatamente 3 itens.
+- 3 a 5 frases no total, no máximo 500 caracteres — seja objetivo e eficiente, não preencha espaço.
 - Mencione o sentimento predominante e o nível de risco quando relevantes, mas não repita os números crus (a tela já mostra os números ao lado do texto) — descreva o que eles significam.
-- Se "recent_events" ou "recent_communications" estiverem vazios, não mencione a ausência deles — apenas descreva o estado atual da Narrativa a partir dos scores.
+- Se "recent_events", "recent_communications" ou "sample_mentions" estiverem vazios, não mencione a ausência deles — apenas descreva o estado atual da Narrativa a partir do que estiver disponível.
 - Responda apenas com o parágrafo final, sem títulos, sem marcadores, sem aspas envolvendo o texto.`;
 
 interface DueNarrative {
