@@ -264,6 +264,27 @@ Mesmo público das demais páginas deste módulo.
   classificação de papel do autor"). Mostrar só o que já existe
   (`account_type` nativo da Brandwatch, quando presente), sem inventar a
   taxonomia própria.
+  ✅ **Sentimento por autor corrigido (2026-08-09)** — usuário reportou:
+  "a tabela só aparece sentimento para um author, pq não aparece para os
+  demais?" Causa raiz: sentimento por autor só existe pra quem já foi
+  enriquecido via `bw_query_author_topics`, e o único pool de
+  enriquecimento sempre foi "top 10 autores por volume da QUERY INTEIRA"
+  (`bw-sync`'s `runAuthorEnrichmentStep`) — nunca escopado por Pauta. Como
+  Pautas é um subconjunto pequeno do que a Query inteira rastreia, o pool
+  global e "autores ativos em Pautas" são majoritariamente disjuntos; só
+  quem cai nos dois (coincidência) mostrava sentimento aqui. Fix: segundo
+  pool de candidatos — top 10 autores por volume somado entre as
+  Subcategories de "Pautas" (`bw_pautas_top_author_candidates`, migration
+  `20260809030000`) — ver `foundation/sync-brandwatch.md`/
+  `aggregated-metrics/sql-aggregation.md` pro detalhamento completo.
+  ✅ **Colunas ajustadas (2026-08-09)** — pedido do usuário: "substitua a
+  coluna Partido por tipo de entidade... Retire da tabela o campo
+  ideologia." `AuthorsList`'s variant `full` (único consumidor: esta
+  página) trocou de Autor/Partido/Ideologia/Menções/Alcance/Engaj./
+  Sentimento pra Autor/Tipo/Menções/Alcance/Engaj./Sentimento — "Tipo"
+  (`entity_type`) só preenche quando o autor tem vínculo real com uma
+  Entity, `—` sem vínculo (mesmo padrão já usado pela guia "Por Entidade"
+  de `/authors`).
 - **Termos emergentes**: de `bw_query_topics` filtrado por `category_id` da
   pauta, ordenado por `trending` desc — sem gap. ✅ **Ganhou "Tópicos
   positivos por pauta"/"Tópicos negativos por pauta" (2026-07-14)** —

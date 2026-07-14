@@ -231,6 +231,11 @@ export interface Highlight {
   tags: string[]
   related_narrative_id: string | null
   related_entity_id: string | null
+  // ✅ 2026-07-14 — feed_events.created_at, sempre presente. Permite
+  // detectar um evento mais novo que a última composição salva de
+  // narrative_text (ai-synthesis Camada 1), sem depender só de um TTL de
+  // tempo (highlightsNewerThan()).
+  created_at: string
 }
 
 export interface TermSignal {
@@ -807,6 +812,7 @@ interface ActiveHighlightRow {
   tags: string[] | null
   related_narrative_id: string | null
   related_entity_id: string | null
+  created_at: string
 }
 
 // ✅ Implementado (2026-08-02, event-radar/fluxo-aggregated-metrics.md
@@ -834,6 +840,7 @@ async function fetchHighlights(supabase: SupabaseClient, ctx: PageContext): Prom
       tags: row.tags ?? [],
       related_narrative_id: row.related_narrative_id,
       related_entity_id: row.related_entity_id,
+      created_at: row.created_at,
     }))
   } catch (err) {
     console.error('[aggregated-metrics] fetchHighlights failed', err)
@@ -986,18 +993,32 @@ interface PageNarrativeSynthesisRow {
 const NARRATIVE_SYNTHESIS_MODEL = Deno.env.get('AI_SYNTHESIS_MODEL') ?? 'claude-haiku-4-5'
 
 // ai-synthesis.md — recomposição periódica de um período aberto (2026-07-14,
-// pedido do usuário: "vamos definir atualização a cada 3h"). Antes desta
-// mudança, uma linha já existente em page_narrative_synthesis era sempre
-// devolvida como está, pra sempre, mesmo num período aberto ("Semanal"/
-// "Mensal" ainda em andamento) — gap documentado desde 2026-08-02 (ver
-// "Fluxo principal" abaixo). Configurável (mesmo padrão de
-// BW_SYNC_INTERVAL_HOURS), default 3h — só se aplica a `is_final = false`;
+// pedido do usuário: "vamos definir atualização a cada 3h", depois "atualiza
+// automaticamente de hora em hora" — reduzido pra 1h no mesmo dia). Antes
+// desta mudança, uma linha já existente em page_narrative_synthesis era
+// sempre devolvida como está, pra sempre, mesmo num período aberto
+// ("Semanal"/"Mensal" ainda em andamento) — gap documentado desde
+// 2026-08-02 (ver "Fluxo principal" abaixo). Configurável (mesmo padrão de
+// BW_SYNC_INTERVAL_HOURS), default 1h — só se aplica a `is_final = false`;
 // período fechado continua permanente por definição.
-const AI_SYNTHESIS_REFRESH_HOURS = Number(Deno.env.get('AI_SYNTHESIS_REFRESH_HOURS') ?? '3')
+const AI_SYNTHESIS_REFRESH_HOURS = Number(Deno.env.get('AI_SYNTHESIS_REFRESH_HOURS') ?? '1')
 
 function isNarrativeTextStale(generatedAt: string): boolean {
   const refreshMs = AI_SYNTHESIS_REFRESH_HOURS * 60 * 60 * 1000
   return Date.now() - new Date(generatedAt).getTime() >= refreshMs
+}
+
+// ai-synthesis.md — recomposição acompanhando o radar (2026-07-14, pedido
+// do usuário: "esse resumo executivo precisa acompanhar o radar, se
+// aparecer algo novo no radar, refaz o resumo executivo"). Um evento
+// (`feed_events`, via get_active_highlights) mais novo que a última
+// composição salva conta como "algo novo no radar" — dispara recomposição
+// mesmo que a janela de tempo (AI_SYNTHESIS_REFRESH_HOURS) ainda não tenha
+// vencido. `highlights` aqui já é o mesmo array buscado pra esta mesma
+// requisição (fetchHighlights), nunca uma chamada extra.
+function highlightsNewerThan(highlights: Highlight[], generatedAt: string): boolean {
+  const generatedMs = new Date(generatedAt).getTime()
+  return highlights.some((h) => new Date(h.created_at).getTime() > generatedMs)
 }
 
 const NARRATIVE_SYNTHESIS_SYSTEM_PROMPT = `Você é um redator de comunicação para uma campanha política/monitoramento de reputação, escrevendo em português do Brasil. Você recebe uma lista de eventos (destaques) já analisados e resumidos por outro sistema — cada um já tem um resumo e uma explicação prontos — e sua única tarefa é conectá-los num único parágrafo coeso para a equipe de comunicação.
@@ -1130,7 +1151,19 @@ async function composeAndPersistLayer1(
     },
     { onConflict: 'organization_id,page,period_start,period_end,filters_hash' },
   )
-  if (error) console.error('[aggregated-metrics] composeAndPersistLayer1 upsert failed', error)
+  if (error) {
+    console.error('[aggregated-metrics] composeAndPersistLayer1 upsert failed', error)
+  } else {
+    // Único log de sucesso desta rotina — sem ele, "rodou e funcionou" e
+    // "nunca chegou a rodar" eram indistinguíveis nos logs (achado real,
+    // 2026-07-14, durante um teste manual do refresh de 3h).
+    console.log('[aggregated-metrics] composeAndPersistLayer1:success', {
+      page,
+      organizationId: ctx.organizationId,
+      periodStart: ctx.period.start,
+      periodEnd: ctx.period.end,
+    })
+  }
 }
 
 // ai-synthesis.md "Fluxo principal" — 0/1 highlight: Camada 0 direto. 2+:
@@ -1182,13 +1215,29 @@ async function fetchNarrativeText(
     if (error) throw error
     const row = data as PageNarrativeSynthesisRow | null
     if (row) {
-      if (!row.is_final && ctx.period.mode !== 'custom' && isNarrativeTextStale(row.generated_at)) {
+      const timeStale = isNarrativeTextStale(row.generated_at)
+      const hasNewHighlight = highlightsNewerThan(highlights, row.generated_at)
+      if (!row.is_final && ctx.period.mode !== 'custom' && (timeStale || hasNewHighlight)) {
+        console.log('[aggregated-metrics] fetchNarrativeText:stale_refresh_scheduled', {
+          page,
+          organizationId: ctx.organizationId,
+          periodStart: ctx.period.start,
+          periodEnd: ctx.period.end,
+          generatedAt: row.generated_at,
+          reason: hasNewHighlight ? 'new_highlight' : 'time_window',
+        })
         scheduleBackground(composeAndPersistLayer1(supabase, ctx, page, hash, highlights))
       }
       return row.narrative_text
     }
     const fallback = await fetchLayer0NarrativeText(supabase, ctx, highlights)
     if (ctx.period.mode !== 'custom') {
+      console.log('[aggregated-metrics] fetchNarrativeText:initial_compose_scheduled', {
+        page,
+        organizationId: ctx.organizationId,
+        periodStart: ctx.period.start,
+        periodEnd: ctx.period.end,
+      })
       scheduleBackground(composeAndPersistLayer1(supabase, ctx, page, hash, highlights))
     }
     return fallback

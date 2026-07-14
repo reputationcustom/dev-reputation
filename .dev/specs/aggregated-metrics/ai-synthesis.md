@@ -8,6 +8,51 @@ atualizado: 2026-07-14
 
 # Síntese Narrativa da Página (`narrative_text`)
 
+> ✅ **Recomposição acompanha o radar + janela reduzida pra 1h (2026-07-14,
+> mesmo dia da mudança acima)** — pedido do usuário: "esse resumo
+> executivo precisa acompanhar o radar, se aparecer algo novo no radar,
+> refaz o resumo executivo. Além disso, atualiza automaticamente de hora
+> em hora", esclarecido com um exemplo concreto: "gerou-se um novo evento
+> no radar, mas o resumo executivo do radar... acaba ficando desatualizado."
+> Duas mudanças, ambas em `fetchNarrativeText()`:
+> 1. **`AI_SYNTHESIS_REFRESH_HOURS` default 3h → 1h** — mesma constante,
+>    só o valor padrão muda (ainda configurável via secret). ⚠️ Se o
+>    secret já estiver definido explicitamente em produção (`supabase
+>    secrets set AI_SYNTHESIS_REFRESH_HOURS=3`, feito ao testar a mudança
+>    anterior), ele **não** é sobrescrito por este novo default — é
+>    preciso `supabase secrets set AI_SYNTHESIS_REFRESH_HOURS=1` (ou
+>    `unset` pra herdar o novo default do código) pra isso valer de fato
+>    em produção.
+> 2. **Gatilho por evento novo, independente da janela de tempo** — nova
+>    `highlightsNewerThan(highlights, generatedAt)`: se qualquer highlight
+>    do array já buscado nesta mesma requisição (`fetchHighlights`, sem
+>    chamada extra) tem `created_at` mais recente que
+>    `page_narrative_synthesis.generated_at`, conta como "algo novo
+>    apareceu no radar desde a última composição" e dispara recomposição
+>    em background — mesmo que a janela de 1h ainda não tenha vencido.
+>    `get_active_highlights` (migration `20260809040000`) ganhou
+>    `created_at` (`feed_events.created_at`, já existia na tabela, nunca
+>    exposto por esta function) — é o dado que faltava pra essa
+>    comparação. `Highlight` (`@reputation/shared-types` + a cópia inline
+>    em `aggregated-metrics-service.ts`, Princípio técnico 5) ganhou
+>    `created_at: string`. O gate de "mesmo condições de sempre" continua
+>    valendo por cima dos dois gatilhos: só dispara quando `is_final =
+>    false` e o período não é `custom`.
+>
+> Sobre o "e as narrativas" do exemplo do usuário: o resumo executivo
+> **por Narrativa** (`narratives.description`, produzido por
+> `narrative-summary-composer` — ver `foundation/narratives.md`, "Resumo
+> executivo (produtor)") é um mecanismo **diferente** deste arquivo, e já
+> reage a eventos novos do radar desde que foi criado (2026-07-14/
+> 2026-08-04) — `narrative_summary_due_ids()` já marca uma Narrativa como
+> "devida" quando "surgiu um `feed_events` novo pra ela desde o último
+> resumo" (uma das 4 condições, junto com nunca-gerado/7-dias/Comunicação
+> nova), avaliado a cada 30min via `pg_cron`. Não alterado nesta sessão —
+> se ainda parecer desatualizado na prática depois do deploy de ambas as
+> mudanças, é um sintoma a investigar separadamente (ex: o cron não está
+> rodando, ou o batch de 5/invocação não dá conta do volume), não a mesma
+> causa corrigida aqui.
+
 > ✅ **Recomposição periódica de período aberto — a cada 3h (2026-07-14)**
 > — pedido do usuário: "na funcionalidade ai-synthesis.md os resumos não
 > estão atualizando até o momento. a atualização das
@@ -282,13 +327,21 @@ Esta chamada:
     intenção original era permitir regeneração pelos mesmos gatilhos que invalidariam o cache do
     envelope (sync da Brandwatch concluiu um ciclo, ou usuário clicou "Atualizar dados") — nenhum
     dos dois existe no produto hoje, e não é mais o caminho escolhido pra este gap (ver abaixo).
-    ✅ **Resolvido por um caminho mais simples (2026-07-14)**: em vez de esperar por um gatilho
-    "empurrado" que o produto não tem, `fetchNarrativeText()` recompõe periodicamente — a cada
-    `AI_SYNTHESIS_REFRESH_HOURS` (configurável, default **3h**) desde `generated_at`, puxado no
-    próximo carregamento de página que encontrar a linha já vencida (nunca um cron dedicado). Uma
-    linha de período **fechado** continua sendo a única verdadeiramente permanente. `is_final`
+    ✅ **Resolvido por dois gatilhos mais simples que o produto já tem (2026-07-14, ajustado no
+    mesmo dia)**: em vez de esperar pelos 2 gatilhos "empurrados" que o produto não tem,
+    `fetchNarrativeText()` recompõe quando **qualquer um** dos dois vale:
+    1. **Tempo** — `AI_SYNTHESIS_REFRESH_HOURS` (configurável, default **1h**) já passou desde
+       `generated_at`, puxado no próximo carregamento de página que encontrar a linha já vencida
+       (nunca um cron dedicado).
+    2. **Radar** — algum highlight já buscado nesta mesma requisição
+       (`get_active_highlights`/`feed_events`) tem `created_at` mais recente que `generated_at`
+       (`highlightsNewerThan()`) — "algo novo apareceu no radar" recompõe mesmo que a janela de
+       tempo ainda não tenha vencido.
+
+    Uma linha de período **fechado** continua sendo a única verdadeiramente permanente. `is_final`
     continua sendo gravado corretamente (`period_end < hoje` no momento da geração) e agora tem um
-    consumidor real: só uma linha com `is_final = false` é candidata a recompor.
+    consumidor real: só uma linha com `is_final = false` é candidata a recompor, por qualquer um
+    dos dois gatilhos.
 
 ### Camada 2 — Nova análise via IA (exceção, precisa de justificativa)
 
@@ -309,10 +362,11 @@ deve registrar no spec da página por que a Camada 0 ou 1 não foram suficientes
      `(organization_id, page, period_start, period_end, filters_hash)`.
      - Linha existe → retorna o texto armazenado direto **nesta mesma resposta, sem esperar por
        IA nenhuma**. ✅ **2026-07-14**: se `is_final = false` (período ainda aberto), o período não
-       é `custom`, e `generated_at` já tem `AI_SYNTHESIS_REFRESH_HOURS` (default 3h) ou mais,
-       também dispara uma recomposição em background pra essa mesma chave (mesmo mecanismo
-       fire-and-forget do próximo item) — a resposta atual usa o texto antigo, a próxima já
-       encontra o novo. `is_final = true` nunca recompõe (permanente por definição); `custom`
+       é `custom`, e (`generated_at` já tem `AI_SYNTHESIS_REFRESH_HOURS` — default 1h — de idade
+       **OU** algum highlight tem `created_at` mais recente que `generated_at`, "algo novo no
+       radar"), também dispara uma recomposição em background pra essa mesma chave (mesmo
+       mecanismo fire-and-forget do próximo item) — a resposta atual usa o texto antigo, a próxima
+       já encontra o novo. `is_final = true` nunca recompõe (permanente por definição); `custom`
        nunca dispara IA sozinho (só pelo botão "Analisar com IA").
      - Linha não existe → fallback imediato é a Camada 0 (enquanto a composição não termina),
        dispara a composição assíncrona em background (`scheduleBackground`), grava o resultado
@@ -328,7 +382,7 @@ deve registrar no spec da página por que a Camada 0 ou 1 não foram suficientes
 | Situação                                          | Comportamento esperado                                         |
 |-----------------------------------------------------|--------------------------------------------------------------------|
 | Chamada de composição (Camada 1) falha              | `narrative_text` permanece com o fallback da Camada 0, nunca `null` sem explicação; nada é gravado em `page_narrative_synthesis` (só grava em caso de sucesso) — a linha antiga (se houver) continua servindo até uma recomposição bem-sucedida |
-| Highlights mudam pra um período **aberto** já com linha em `page_narrative_synthesis` | ✅ **Recompõe a cada `AI_SYNTHESIS_REFRESH_HOURS` (default 3h, 2026-07-14)** — a próxima página carregada depois desse intervalo dispara uma recomposição em background (não bloqueia a resposta atual, que ainda usa o texto antigo); período `custom` fica de fora (só via botão "Analisar com IA") |
+| Highlights mudam pra um período **aberto** já com linha em `page_narrative_synthesis` | ✅ **Recompõe por tempo OU por evento novo (2026-07-14)** — a próxima página carregada depois de `AI_SYNTHESIS_REFRESH_HOURS` (default 1h) **ou** que encontre um highlight com `created_at` mais recente que `generated_at` ("algo novo no radar") dispara uma recomposição em background (não bloqueia a resposta atual, que ainda usa o texto antigo); período `custom` fica de fora (só via botão "Analisar com IA") |
 | Highlights mudam pra um período **fechado** já com `is_final = true` | Nunca regenera — período fechado é permanente por definição, mesmo que dado novo chegasse atrasado (caso raro, mesma aceitação de lag já usada em outras partes do produto) |
 | Página sem highlights e sem dado suficiente (ex: organização nova) | Template da Camada 0 deve indicar claramente ausência de dados, nunca inventar tendência |
 
@@ -339,8 +393,9 @@ deve registrar no spec da página por que a Camada 0 ou 1 não foram suficientes
   é o que torna a chamada barata: ela compõe texto, não analisa números.
 - Nenhuma página deve gerar uma chamada de IA por carregamento — Camadas 1/2 só chamam IA quando
   não existe linha aproveitável em `page_narrative_synthesis` pra aquela chave exata, ou (✅
-  2026-07-14) quando a linha existente é de período aberto e já passou de
-  `AI_SYNTHESIS_REFRESH_HOURS` (default 3h) desde `generated_at` (ver "Fluxo principal"). Isso não
+  2026-07-14) quando a linha existente é de período aberto e (já passou de
+  `AI_SYNTHESIS_REFRESH_HOURS`, default 1h, desde `generated_at` **ou** um highlight novo apareceu
+  no radar desde então — ver "Fluxo principal"). Isso não
   é um TTL de cache genérico expirando sozinho (o `page_cache` de `edge-functions-per-page.md`
   continua um mecanismo independente, hoje desabilitado) — é uma janela de frescor específica
   desta tabela, só avaliada quando alguém de fato carrega a página, nunca por um cron dedicado.

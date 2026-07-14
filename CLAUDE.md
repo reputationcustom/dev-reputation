@@ -7315,6 +7315,119 @@ log `[aggregated-metrics] composeAndPersistLayer1`) depois de 3h da
 composição anterior, na próxima vez que a página correspondente for
 carregada.
 
+**Follow-up, mesmo dia** — usuário testou manualmente (baixando
+`AI_SYNTHESIS_REFRESH_HOURS` pra forçar staleness) e reportou "mesmo
+alterando a secret nada está sendo atualizado", e perguntou onde checar o
+log. Achado real ao revisar: **não existia nenhum log de sucesso** nesta
+rotina — `composeAndPersistLayer1`/`fetchNarrativeText` só logavam erro
+(`console.error`), nunca confirmavam via `console.log` que o gate passou
+ou que a recomposição terminou. Sem isso, "rodou e funcionou" e "nunca
+chegou a ser disparado" eram indistinguíveis nos logs — exatamente o que
+impedia o usuário de diagnosticar o próprio teste. Adicionados 3 pontos de
+log (`aggregated-metrics-service.ts` + as 8 cópias deployadas, mesmo
+script de propagação verificado por contagem de ocorrências):
+`fetchNarrativeText:stale_refresh_scheduled` (confirma que o gate de 3h
+passou e a recomposição foi agendada), `fetchNarrativeText:initial_compose_scheduled`
+(mesmo sinal pro caso "linha não existe ainda", que também nunca tinha
+log de disparo), e `composeAndPersistLayer1:success` (confirma que a
+composição terminou e a linha foi gravada). Combinados com os logs de erro
+já existentes (`composeLayer1NarrativeText: ANTHROPIC_API_KEY não
+configurada`, `composeLayer1NarrativeText failed`,
+`composeAndPersistLayer1 upsert failed`, `fetchNarrativeText (Camada 1)
+failed`), agora dá pra ler a trilha completa em Dashboard → Edge Functions
+→ Logs (função `get-page-<página>` correspondente, filtrar por
+`[aggregated-metrics]`): se `stale_refresh_scheduled`/
+`initial_compose_scheduled` nunca aparece, o gate não passou (verificar
+`is_final`/`period.mode`/quantidade de highlights — Camada 1 só é
+alcançável com 2+, ver "Camada 1" em `ai-synthesis.md`); se aparece mas
+`composeAndPersistLayer1:success` não vem em seguida, o erro
+correspondente (`ANTHROPIC_API_KEY`/`composeLayer1NarrativeText
+failed`/`upsert failed`) explica a causa. `npx tsc --noEmit` limpo.
+
+### Resumo executivo passa a acompanhar o radar + janela reduzida pra 1h (2026-07-14)
+
+User request, mesmo dia/mesma sessão do fix do refresh de 3h acima: "esse
+resumo executivo precisa acompanhar o radar, se aparecer algo novo no
+radar, refaz o resumo executivo. Além disso, atualiza automaticamente de
+hora em hora" — esclarecido com um exemplo concreto: "gerou-se um novo
+evento no radar, mas o resumo executivo do radar e as narrativas acabam
+ficando desatualizadas."
+
+**Duas mudanças em `fetchNarrativeText()`** (`aggregated-metrics-service.ts`):
+
+1. **`AI_SYNTHESIS_REFRESH_HOURS` default 3h → 1h** — mesma constante do
+   fix anterior, só o valor padrão muda. ⚠️ Se o secret já foi setado
+   explicitamente em produção (`supabase secrets set
+   AI_SYNTHESIS_REFRESH_HOURS=3`, ao testar a mudança anterior), esse
+   valor **não** é sobrescrito pelo novo default — é preciso `supabase
+   secrets set AI_SYNTHESIS_REFRESH_HOURS=1` (ou remover o secret pra
+   herdar o novo default do código).
+2. **Gatilho por evento novo, independente da janela de tempo** — nova
+   `highlightsNewerThan(highlights, generatedAt)`: se qualquer highlight
+   do array já buscado nesta mesma requisição (`fetchHighlights`, sem
+   chamada de rede extra) tem `created_at` mais recente que
+   `page_narrative_synthesis.generated_at`, conta como "algo novo
+   apareceu no radar desde a última composição" e dispara recomposição em
+   background mesmo que a janela de 1h ainda não tenha vencido. Precisou
+   de um dado que a function SQL não expunha: `get_active_highlights`
+   ganhou `created_at` (migration `20260809040000`, `feed_events.created_at`
+   — já existia na tabela desde sempre, nunca exposto por esta function;
+   `drop function` necessário, mesma regra de sempre pra adicionar coluna
+   de saída a uma `RETURNS TABLE`). `Highlight` ganhou `created_at:
+   string` — em **dois** lugares (Princípio técnico 5, são tipos
+   independentes): `packages/shared-types/src/envelope.ts` (lado Next.js)
+   e a interface `Highlight` inline dentro de
+   `aggregated-metrics-service.ts` (lado Deno, self-sufficient — achado
+   real ao implementar: a primeira rodada de edição só tocou o tipo do
+   pacote npm, e o `tsc` do Next.js não acusa nada de errado porque os
+   arquivos `supabase/functions*` ficam fora do `tsconfig.json` — só uma
+   segunda checagem manual encontrou a interface duplicada faltando o
+   campo). `fetchHighlights`/`ActiveHighlightRow` também precisaram
+   passar o campo adiante.
+
+Os dois gatilhos (tempo OU evento novo) continuam sob o mesmo gate de
+sempre: só disparam quando `is_final = false` (período aberto) e o
+período não é `custom` (nunca dispara IA sozinho pra um intervalo
+personalizado, só pelo botão "Analisar com IA"). Propagado (Princípio
+técnico 5) na cópia canônica e nas 8 Edge Functions deployadas
+(`get-page-{overview,narratives,sentiment,platforms,themes,authors}`,
+`get-narrative-detail`, `compose-narrative-synthesis`) via o mesmo padrão
+de script Node verificado por contagem de ocorrências das sessões
+anteriores.
+
+**Sobre "e as narrativas" do exemplo do usuário**: o resumo executivo
+**por Narrativa** (`narratives.description`, produzido por
+`narrative-summary-composer`, ver "`narratives.description` finally gets
+a producer" acima) é um mecanismo **diferente** deste — e já reage a
+`feed_events` novos desde que foi criado: `narrative_summary_due_ids()`
+já marca uma Narrativa como "devida" quando "surgiu um `feed_events` novo
+pra ela desde o último resumo" (uma de 4 condições, avaliada a cada 30min
+via `pg_cron`). Não alterado nesta sessão — explicado ao usuário na
+resposta em vez de presumido corrigido; se ainda parecer desatualizado na
+prática depois do deploy, é um sintoma a investigar separadamente (cron
+não rodando, batch de 5/invocação insuficiente pro volume), não a mesma
+causa fechada aqui.
+
+**Especificações atualizadas**: `aggregated-metrics/ai-synthesis.md` (novo
+blockquote de topo + "Camada 1"/"Fluxo principal"/"Fluxos alternativos e
+erros"/"Regras de negócio" revisados pra descrever os 2 gatilhos, não só
+o de tempo), `aggregated-metrics/standard-json-envelope.md` (bloco
+`highlights` ganha `created_at` na lista de campos),
+`aggregated-metrics/sql-aggregation.md` (linha de `get_active_highlights`
+na tabela principal), `_pending.md` (follow-up na mesma nota "✅
+Resolvida" da sessão anterior).
+
+**Verificação**: `npx tsc --noEmit` e `npm run build` (com `rm -rf .next`
+antes) passam limpos — 21 rotas, mesma contagem de antes. Sem ambiente
+Deno/Supabase real disponível nesta sessão — migration `20260809040000`
+revisada manualmente, não executada contra um banco real, mesma
+limitação recorrente de toda sessão sem credenciais de deploy neste
+ambiente; `git push` para `develop` é o próximo passo, e o sinal a
+acompanhar é o log `fetchNarrativeText:stale_refresh_scheduled` trazendo
+`"reason":"new_highlight"` (em vez de só `"time_window"`) na próxima vez
+que um evento novo do radar aparecer antes de 1h se passar desde a última
+composição.
+
 ### SOV da tabela/gráfico de Pautas estava calculado contra a Query inteira, não só Pautas — segundo bug real na mesma sessão (2026-08-09)
 
 User follow-up, mesma sessão do fix de "Insights" acima, com screenshot:
@@ -7478,6 +7591,89 @@ próximo passo, e o sinal a acompanhar é `bw_query_metrics_hourly` ganhando
 linhas com `category_id` preenchido e `total_mentions > 0` nos logs
 `[bw-sync] syncHourlySentimentMetrics:done`, seguido do gráfico "SOV por
 pauta ao longo do tempo" mostrando uma série real no modo "Diário".
+
+### Sentimento de autor em Pautas, colunas de `AuthorsList`, e mensagem morta em "Por Entidade" (2026-08-09)
+
+User request, 4 itens na mesma mensagem, ainda em Pautas Eleitorais/
+Autores e Influenciadores:
+
+1. **"Na tabela [Autores e comunidades por pauta] só aparece sentimento
+   para um author, pq não aparece para os demais?"** — bug real. Sentimento
+   por autor (`AuthorRow.sentiment_positive/neutral/negative`) só existe
+   pra quem já foi enriquecido via `bw_query_author_topics`
+   (`get_authors_ranking`'s `author_sentiment`), e o único pool de
+   candidatos a enriquecer sempre foi "top 10 autores por volume da QUERY
+   INTEIRA" (`bw-sync`'s `runAuthorEnrichmentStep`, `bw_query_top_authors`
+   com `category_id is null`) — nunca escopado por Narrativa/Pauta. Como
+   Pautas é um subconjunto pequeno do que a Query inteira rastreia (mesma
+   observação já confirmada pelo bug de SOV corrigido nesta mesma sessão,
+   ver acima), o pool global e "autores ativos em Pautas" são
+   majoritariamente disjuntos — só quem cai nos dois por coincidência
+   mostrava sentimento na tabela de Pautas. **Fix**: novo pool de
+   candidatos via `bw_pautas_top_author_candidates` (migration
+   `20260809030000` — top 10 autores por volume somado entre todas as
+   Subcategories ativas de "Pautas"), processado em
+   `runAuthorEnrichmentStep` só depois que o pool global já estiver
+   totalmente enriquecido na semana (prioridade preservada, sem mudança
+   de comportamento pra quem não usa Pautas). Só chama `syncAuthorTopics`
+   pra este pool, não `syncAuthorImpressions` — `impressions` é gravado
+   numa linha `category_id is null` de `bw_query_top_authors`, que um
+   autor só ativo em Pautas pode não ter; `bw_query_author_topics` (o que
+   `get_authors_ranking` de fato lê pra sentimento) não depende disso.
+   `runAuthorEnrichmentStep` ganhou um parâmetro `organizationId` (já
+   disponível no escopo do dispatcher, só precisou ser repassado).
+2-3. **Colunas de "Autores e comunidades por pauta"**: pedido do usuário
+   ("substitua a coluna Partido por tipo de entidade... Retire da tabela o
+   campo ideologia"). `AuthorsList`'s variant `full`
+   (`components/intelligence-center/authors-list.tsx`) — confirmado como
+   único consumidor real desta variante (`/themes`, sem `variant` explícito
+   no call site = default `"full"`; detalhe de Narrativa usa
+   `"disseminators"`, não `"full"` — um comentário antigo do arquivo dizia o
+   contrário, corrigido de passagem) — trocou de Autor/Partido/Ideologia/
+   Menções/Alcance/Engaj./Sentimento pra Autor/Tipo/Menções/Alcance/Engaj./
+   Sentimento. "Tipo" (`entity_type`) reusa a mesma célula/render já usada
+   pela variant `entity` (`—` sem vínculo de Entity, nunca inventado); a
+   cor do avatar circular também passou a usar `entity_type` em vez de
+   `ideologia` pra esta variant (evita colorir por uma dimensão que a
+   tabela não mostra mais). Único consumidor afetado — `general`/`entity`/
+   `disseminators` (usados por `/authors` e pelo detalhe de Narrativa)
+   ficam inalterados.
+4. **"Autores Por Entities a página está vazia sem gráficos"** — investigado
+   sem acesso a dado real de produção. O estado vazio (guia "Por Entidade"
+   de `/authors`, quando `linkedAuthors.length === 0`) já é o comportamento
+   correto por design quando nenhum autor do escopo bate com uma conta já
+   semeada no Cadastro Nacional de Entidades — mas a mensagem em si tinha
+   um **link morto real**: instruía o usuário a cadastrar em
+   `/admin/entities`, uma rota que **não existe**
+   (`entity-registration.md` — CRUD do módulo `entities` — está com
+   `status: pronto`, nunca implementada; confirmado que
+   `app/(intelligence-center)/admin/` só tem `users`/`finops`). Mensagem
+   reescrita pra explicar honestamente que o vínculo é automático por
+   handle contra o que já foi semeado (deputados/senadores/partidos/
+   imprensa/institutos de pesquisa), sem prometer uma tela que ainda não
+   existe. Perguntado ao usuário via `AskUserQuestion` se deveria
+   implementar `/admin/entities` agora (resolveria a causa raiz de "sem
+   dado pra mostrar" pra quem quiser cadastrar contas fora do seed) —
+   resposta: não nesta sessão, só a correção da mensagem.
+
+**Especificações atualizadas**: `foundation/sync-brandwatch.md` (linha
+`author_enrichment`), `aggregated-metrics/sql-aggregation.md`
+(`get_authors_ranking`), `intelligence-center/electoral-themes.md` (nova
+seção sobre o fix de sentimento + colunas), `intelligence-center/authors-and-influencers.md`
+(mensagem de estado vazio corrigida + variantes de `AuthorsList`
+atualizadas, incluindo a correção do comentário desatualizado sobre quem
+usa `full`).
+
+**Verificação**: `npx tsc --noEmit` limpo. Migration `20260809030000`
+revisada manualmente (balanço de parênteses do arquivo `bw-sync/index.ts`
+conferido antes/depois — mesma profundidade final de antes desta sessão,
+artefato de comentário em prosa, não um erro de sintaxe introduzido
+agora), não executada contra um banco real nesta sessão — mesma limitação
+recorrente de toda sessão sem credenciais de deploy; `git push` para
+`develop` é o próximo passo, e o sinal a acompanhar é mais de 1 autor
+mostrando sentimento na tabela "Autores e comunidades por pauta" depois de
+`runAuthorEnrichmentStep` rodar algumas vezes (throttle de 1 autor por
+invocação, mesmo padrão de sempre).
 
 ## Directory structure
 

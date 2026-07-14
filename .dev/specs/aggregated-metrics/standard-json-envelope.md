@@ -167,8 +167,10 @@ exibidos na UI ficam em português:
   publicou (ver seção "Integração com event-radar" abaixo). Cada item usa o mesmo formato de
   saída do agent do radar: `event_type`, `severity` (`low`|`medium`|`high`|`critical`),
   `severity_score`, `title` (≤90 caracteres), `summary` (≤300 caracteres), `explanation`,
-  `recommendation` (quando aplicável), `confidence`, `tags`, e
-  `related_narrative_id`/`related_entity_id`. Itens de uma página são os N mais severos dentro
+  `recommendation` (quando aplicável), `confidence`, `tags`, `related_narrative_id`/
+  `related_entity_id`, e (✅ 2026-07-14) `created_at` (`feed_events.created_at`) — usado por
+  `ai-synthesis.md` pra detectar "evento novo desde a última composição da Camada 1", não é
+  exibido em nenhum componente de UI hoje. Itens de uma página são os N mais severos dentro
   do escopo/filtro daquela página, já dentro do cap diário aplicado pelo radar.
 - **`term_signals`**: termos/temas emergentes ou "drivers" de sentimento — de `bw_query_topics`,
   ver `sql-aggregation.md`. Cada item tem `term`, `growth_pct`, `sentiment_associated`.

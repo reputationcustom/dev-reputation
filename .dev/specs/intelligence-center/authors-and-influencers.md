@@ -391,20 +391,40 @@ tem nada a mostrar aqui: sem tipo, sem partido, sem ideologia):
   ex: um veículo de imprensa mostra "Portal de Notícias"/"Jornal
   Impresso" (`entities/data-model.md`, seed de institutos/veículos de
   2026-07-14) em vez de ficar em branco.
-- Estado vazio dedicado quando não há nenhum autor vinculado no
-  organização/período atual: explica que o vínculo depende de cadastro em
-  `/admin/entities` + `entity_accounts` (`author-linking.md`), não um erro.
+- Estado vazio dedicado quando não há nenhum autor vinculado na
+  organização/período atual — não um erro. ⚠️ **Mensagem corrigida
+  (2026-08-09)** — usuário reportou "Autores Por Entities a página está
+  vazia sem gráficos". Achado: a mensagem original apontava pra
+  `/admin/entities`, uma página que **não existe** (`entity-registration.md`
+  é spec `pronta`, nunca implementada — confirmado nesta sessão,
+  `app/(intelligence-center)/admin/` só tem `users`/`finops`). O estado
+  vazio em si está correto (nenhum autor deste escopo bate com uma conta
+  já semeada, ver `author-linking.md`) — só a instrução era um link morto.
+  Reescrita pra explicar que o vínculo é automático por handle contra o
+  que já foi semeado no banco (partidos/parlamentares/imprensa/institutos
+  de pesquisa), sem prometer uma tela de cadastro que ainda não existe.
+  Usuário confirmou (pergunta direta, `AskUserQuestion`) que **não** quer
+  a implementação de `/admin/entities` nesta sessão — só a correção da
+  mensagem.
 
 ### Tabela (`AuthorsList`) — variantes por coluna
 
-✅ **Nova prop `variant: "full" | "general" | "entity"` (default `"full"`)**
-— `full` preserva exatamente as 7 colunas/comportamento de sempre, usada
-sem mudança nenhuma pelos 2 outros consumidores deste componente
-(`/themes`, detalhe de Narrativa — nenhum dos dois pediu a mudança desta
-sessão). `general` remove Partido/Ideologia (guia "Visão Geral" de
-`/authors`). `entity` acrescenta a coluna **Tipo** antes de Partido/
-Ideologia (guia "Por Entidade"). Mesma lista de linhas/ordenação/paginação
-por trás das 3 — só quais colunas renderizam muda.
+✅ **Nova prop `variant: "full" | "general" | "entity" | "disseminators"`
+(default `"full"`)** — `general` remove Partido/Ideologia (guia "Visão
+Geral" de `/authors`). `entity` acrescenta a coluna **Tipo** antes de
+Partido/Ideologia (guia "Por Entidade"). `disseminators` (Autor/
+Plataforma/Papel na conversa/Seguidores/Publicações/Engajamento) é usada
+só pelo detalhe de Narrativa ("Formação e propagação"), não por `full`.
+Mesma lista de linhas/ordenação/paginação por trás de todas — só quais
+colunas renderizam muda.
+
+⚠️ **`full` deixou de ser "as 7 colunas de sempre" (2026-08-09)** — único
+consumidor: `/themes` ("Autores e comunidades por pauta"). Pedido do
+usuário: "substitua a coluna Partido por tipo de entidade... Retire da
+tabela o campo ideologia." Colunas atuais: Autor/Tipo/Menções/Alcance/
+Engaj./Sentimento (Tipo = `entity_type`, mesma renderização/cor de avatar
+já usada por `entity`, `—` sem vínculo de Entity). Ver
+`electoral-themes.md` pro detalhamento.
 
 ### Bloco novo do envelope: `top_sites`
 

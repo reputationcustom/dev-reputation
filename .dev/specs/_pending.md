@@ -256,6 +256,25 @@ carregamento de página, nunca um cron dedicado. Ver
 instância deste gap em `page_cache`** (TTL de resposta HTTP, mecanismo
 independente, hoje desabilitado) **continua aberta** — não fazia parte
 deste pedido.
+
+✅ **Follow-up, mesmo dia** — usuário pediu 2 refinamentos: "esse resumo
+executivo precisa acompanhar o radar, se aparecer algo novo no radar,
+refaz o resumo executivo. Além disso, atualiza automaticamente de hora em
+hora." `AI_SYNTHESIS_REFRESH_HOURS` default reduzido de 3h pra **1h**; novo
+gatilho independente do tempo — `get_active_highlights` ganhou
+`created_at` (migration `20260809040000`, `feed_events.created_at`, já
+existia na tabela, nunca exposto) e `fetchNarrativeText()` agora também
+recompõe quando algum highlight já buscado na mesma requisição tem
+`created_at` mais recente que `page_narrative_synthesis.generated_at`
+(`highlightsNewerThan()`) — "algo novo no radar" dispara independente da
+janela de tempo ainda não ter vencido. `Highlight` (`@reputation/shared-types`
++ cópia inline Deno) ganhou `created_at: string`. Esclarecido pro usuário
+que o resumo **por Narrativa** (`narratives.description`,
+`narrative-summary-composer`) é um mecanismo diferente e já reage a
+`feed_events` novos desde que foi criado (`narrative_summary_due_ids()`,
+condição "c" — ver `foundation/narratives.md`) — não alterado nesta
+sessão. Ver `aggregated-metrics/ai-synthesis.md` pro detalhamento
+completo.
 - **#27 (Camada 0 de `ai-synthesis.md`)**: `fetchNarrativeText()` na
   service layer — usa o `summary`/`explanation` de um highlight quando há
   exatamente 1 (hoje inalcançável, `get_active_highlights` ainda não

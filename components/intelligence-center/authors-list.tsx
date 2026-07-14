@@ -32,9 +32,16 @@ import {
 // ver `variant` abaixo): a tabela agora tem 4 conjuntos de colunas,
 // escolhidos por `variant`, todos sobre o mesmo dado já buscado, nenhum
 // re-fetch:
-//   - `full` (default) — as 7 colunas de sempre (Autor/Partido/Ideologia/
-//     Menções/Alcance/Engaj./Sentimento). Usada por Pautas Eleitorais, que
-//     nunca pediu a mudança — comportamento inalterado.
+//   - `full` (default, único uso: Pautas Eleitorais) — Autor/Tipo/Menções/
+//     Alcance/Engaj./Sentimento. ✅ **Trocado 2026-08-09** (pedido do
+//     usuário: "Na tabela Autores e comunidades por pauta substitua a
+//     coluna Partido por tipo de entidade... Retire da tabela o campo
+//     ideologia") — antes era Autor/Partido/Ideologia/Menções/Alcance/
+//     Engaj./Sentimento (7 colunas, daí o nome `full`, mantido por ser o
+//     variant default, mesmo não sendo mais literalmente "todas as
+//     colunas"). "Tipo" (`entity_type`) só preenche quando o autor tem
+//     vínculo real com uma Entity (`entity_accounts`, ver
+//     `entities/author-linking.md`) — `—` sem vínculo, nunca inventado.
 //   - `general` — guia "Visão Geral" de /authors: sem Partido/Ideologia
 //     (assunto da outra guia), foco em menções/alcance/engajamento/
 //     sentimento/narrativas.
@@ -85,8 +92,7 @@ type SortKey =
 const COLUMNS_BY_VARIANT: Record<AuthorsListVariant, { key: SortKey; label: string; numeric?: boolean }[]> = {
   full: [
     { key: "name", label: "Autor" },
-    { key: "entity_partido", label: "Partido" },
-    { key: "entity_ideologia", label: "Ideologia" },
+    { key: "entity_type", label: "Tipo" },
     { key: "mentions", label: "Menções", numeric: true },
     { key: "reach", label: "Alcance", numeric: true },
     { key: "engagement", label: "Engaj.", numeric: true },
@@ -229,7 +235,11 @@ export function AuthorsList({
                         style={{
                           backgroundColor: authorColorHex(
                             author,
-                            variant === "entity" ? "entity_type" : variant === "disseminators" ? "sentimento" : "ideologia",
+                            variant === "entity" || variant === "full"
+                              ? "entity_type"
+                              : variant === "disseminators"
+                                ? "sentimento"
+                                : "ideologia",
                           ),
                         }}
                         aria-hidden
@@ -258,13 +268,13 @@ export function AuthorsList({
                       </div>
                     </div>
                   </td>
-                  {variant === "entity" && (
+                  {(variant === "entity" || variant === "full") && (
                     <td className="px-4 py-3 text-xs text-text-secondary">{entityTypeLabel(author.entity_type) ?? "—"}</td>
                   )}
                   {variant === "disseminators" && (
                     <td className="px-4 py-3 text-xs text-text-secondary">{formatPlatforms(author.platforms)}</td>
                   )}
-                  {(variant === "full" || variant === "entity") && (
+                  {variant === "entity" && (
                     <td className="px-4 py-3">
                       {author.entity_partido ? (
                         <span className="inline-flex items-center gap-1.5 text-xs font-medium text-text-secondary">
@@ -280,7 +290,7 @@ export function AuthorsList({
                       )}
                     </td>
                   )}
-                  {(variant === "full" || variant === "entity") && (
+                  {variant === "entity" && (
                     <td className="px-4 py-3">
                       {ideoBadge ? (
                         <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold ${ideoBadge.bg} ${ideoBadge.text}`}>

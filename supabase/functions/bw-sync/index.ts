@@ -3898,18 +3898,40 @@ async function runTopTweetersStep(
   return { didWork: false };
 }
 
+// ⚠️ **Bug real de produção encontrado e corrigido (2026-08-09)** — usuário
+// reportou: "na tabela [Autores e comunidades por pauta] só aparece
+// sentimento para um author, pq não aparece para os demais?" Causa raiz:
+// sentimento por autor (`get_authors_ranking`'s `author_sentiment`) só
+// existe pra quem já tem uma linha em `bw_query_author_topics` — mas o
+// único pool de candidatos a enriquecer sempre foi "top 10 autores por
+// volume da QUERY INTEIRA" (abaixo), nunca escopado por Narrativa/Pauta.
+// Como Pautas é um subconjunto pequeno do que a Query inteira rastreia
+// (mesma observação já confirmada pelo bug de SOV corrigido antes nesta
+// sessão), o pool global e "autores ativos em Pautas" são majoritariamente
+// disjuntos — só quem aparece nos dois (por coincidência) mostra
+// sentimento na tabela de Pautas. Fix: segundo pool de candidatos, via
+// `bw_pautas_top_author_candidates` (migration `20260809030000` — top N
+// autores por volume somado entre todas as Subcategories de "Pautas"),
+// processado só depois que o pool global já estiver totalmente enriquecido
+// (prioridade ao pool original, sem mudança de comportamento pra quem não
+// usa Pautas). Só chama `syncAuthorTopics` pra este pool (não
+// `syncAuthorImpressions`) — `impressions` é escrito numa linha
+// `category_id is null` de `bw_query_top_authors`, que um autor só ativo
+// em Pautas pode não ter; `bw_query_author_topics` (o que
+// `get_authors_ranking` de fato lê pra sentimento) não depende disso.
 async function runAuthorEnrichmentStep(
   supabase: SupabaseClient,
   token: string,
   projectId: number,
   queryId: number,
+  organizationId: string,
   metricsStartDate: Date,
   now: Date,
 ): Promise<StepResult> {
-  // Escopo inicial: só os top 10 autores por volume da Query inteira
-  // (category_id is null), não todo autor já visto nem quebra por
-  // Narrativa — salvaguarda de orçamento (2 chamadas extras por autor
-  // enriquecido). Ver data-model.md §5.
+  // Pool global: top 10 autores por volume da Query inteira (category_id
+  // is null), não todo autor já visto nem quebra por Narrativa —
+  // salvaguarda de orçamento (2 chamadas extras por autor enriquecido).
+  // Ver data-model.md §5.
   const metricWeek = toDateOnly(now.toISOString());
   const { data: candidates, error: candidatesError } = await supabase
     .from("bw_query_top_authors")
@@ -3925,26 +3947,58 @@ async function runAuthorEnrichmentStep(
   }
 
   const pending = (candidates ?? []).find((c) => c.impressions === null);
-  if (!pending) {
+  if (pending) {
+    if (!hasBrandwatchCallBudget()) return { didWork: false };
+    const author = pending.author as string;
+    const impressions = await syncAuthorImpressions(projectId, queryId, author, token, metricsStartDate, now);
+    const { error: updateError } = await supabase
+      .from("bw_query_top_authors")
+      .update({ impressions })
+      .eq("project_id", projectId)
+      .eq("query_id", queryId)
+      .is("category_id", null)
+      .eq("author", author)
+      .eq("metric_week", metricWeek);
+    if (updateError) throw new Error(`Erro atualizando bw_query_top_authors.impressions: ${updateError.message}`);
+
+    await syncAuthorTopics(supabase, token, projectId, queryId, author, metricsStartDate, now);
+    return { didWork: true };
+  }
+
+  // ✅ Pool de Pautas (2026-08-09) — só processado depois que o pool global
+  // acima já está totalmente enriquecido nesta semana.
+  const { data: pautasCandidates, error: pautasCandidatesError } = await supabase.rpc(
+    "bw_pautas_top_author_candidates",
+    { p_organization_id: organizationId, p_project_id: projectId, p_query_id: queryId, p_limit: 10 },
+  );
+  if (pautasCandidatesError) {
+    throw new Error(`Erro lendo bw_pautas_top_author_candidates: ${pautasCandidatesError.message}`);
+  }
+  const pautasAuthors = (pautasCandidates ?? []).map((c: { author: string }) => c.author);
+  if (pautasAuthors.length === 0) {
     log("runAuthorEnrichmentStep:all_enriched", { projectId, queryId, candidates: candidates?.length ?? 0 });
+    return { didWork: false };
+  }
+
+  const { data: alreadyEnriched, error: alreadyEnrichedError } = await supabase
+    .from("bw_query_author_topics")
+    .select("author")
+    .eq("project_id", projectId)
+    .eq("query_id", queryId)
+    .eq("metric_week", metricWeek)
+    .in("author", pautasAuthors);
+  if (alreadyEnrichedError) {
+    throw new Error(`Erro checando bw_query_author_topics já enriquecidos: ${alreadyEnrichedError.message}`);
+  }
+  const enrichedSet = new Set((alreadyEnriched ?? []).map((r: { author: string }) => r.author));
+  const pautasPending = pautasAuthors.find((author) => !enrichedSet.has(author));
+  if (!pautasPending) {
+    log("runAuthorEnrichmentStep:all_enriched", { projectId, queryId, candidates: candidates?.length ?? 0, pautasCandidates: pautasAuthors.length });
     return { didWork: false };
   }
   if (!hasBrandwatchCallBudget()) return { didWork: false };
 
-  const author = pending.author as string;
-  const impressions = await syncAuthorImpressions(projectId, queryId, author, token, metricsStartDate, now);
-  const { error: updateError } = await supabase
-    .from("bw_query_top_authors")
-    .update({ impressions })
-    .eq("project_id", projectId)
-    .eq("query_id", queryId)
-    .is("category_id", null)
-    .eq("author", author)
-    .eq("metric_week", metricWeek);
-  if (updateError) throw new Error(`Erro atualizando bw_query_top_authors.impressions: ${updateError.message}`);
-
-  await syncAuthorTopics(supabase, token, projectId, queryId, author, metricsStartDate, now);
-
+  await syncAuthorTopics(supabase, token, projectId, queryId, pautasPending, metricsStartDate, now);
   return { didWork: true };
 }
 
@@ -4186,7 +4240,7 @@ async function runSyncInvocation(supabase: SupabaseClient, invocationStartedAt: 
           result = await runTopTweetersStep(supabase, token, projectId, queryId, categoryTargets, metricsStartDate, now);
           break;
         case "author_enrichment":
-          result = await runAuthorEnrichmentStep(supabase, token, projectId, queryId, metricsStartDate, now);
+          result = await runAuthorEnrichmentStep(supabase, token, projectId, queryId, organizationId, metricsStartDate, now);
           break;
         case "top_sites":
           result = await runTopSitesStep(supabase, token, projectId, queryId, categoryTargets, metricsStartDate, now);

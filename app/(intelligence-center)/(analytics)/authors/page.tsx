@@ -212,7 +212,7 @@ export default function AuthorsPage() {
         ) : (
           <WidgetCard title="Autores por Entidade" status={status} onRetry={retry}>
             {linkedAuthors.length === 0 ? (
-              <EmptyState message="Nenhum autor vinculado a uma Entity ainda neste escopo — cadastre partidos, veículos de imprensa ou outras organizações em /admin/entities e vincule contas em entity_accounts." />
+              <EmptyState message="Nenhum autor deste escopo bate com uma conta já cadastrada no Cadastro Nacional de Entidades (partidos, parlamentares, veículos de imprensa e institutos de pesquisa já sincronizados). O vínculo é automático por handle — sem uma tela de administração para cadastrar novas Entities/contas ainda (entity-registration.md, spec pronta, não implementada), a cobertura fica limitada ao que já foi semeado no banco." />
             ) : (
               <div className="flex flex-col gap-5">
                 <AuthorEntityFiltersToolbar authors={linkedAuthors} filters={filters} onChange={setFilters} />

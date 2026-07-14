@@ -255,6 +255,10 @@ export interface Highlight {
   tags: string[];
   related_narrative_id: string | null;
   related_entity_id: string | null;
+  // ✅ 2026-07-14 — feed_events.created_at, sempre presente. Permite ao
+  // consumidor (ai-synthesis Camada 1) detectar um evento mais novo que a
+  // última composição salva, sem depender só de um TTL de tempo.
+  created_at: string;
 }
 
 export interface TermSignal {
