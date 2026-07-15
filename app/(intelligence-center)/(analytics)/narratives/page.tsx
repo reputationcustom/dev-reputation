@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import type { NarrativeRow } from "@reputation/shared-types";
+import type { NarrativeRow, TopicSortMode } from "@reputation/shared-types";
 import { usePageEnvelope } from "@/hooks/use-page-envelope";
 import { useUserProfile } from "@/hooks/use-user-profile";
 import { useIntelligenceCenterHeader } from "@/components/intelligence-center/header-context";
@@ -57,7 +57,8 @@ const GROUPING_OPTIONS: { grouping: TableGrouping; label: string }[] = [
 //    item 2 (painel lateral ao selecionar) é o único jeito de ler o resumo
 //    completo, já que a grade de cards fica oculta.
 export default function NarrativesListPage() {
-  const { status, envelope, retry } = usePageEnvelope("get-page-narratives");
+  const [topicSort, setTopicSort] = useState<TopicSortMode>("trending");
+  const { status, envelope, retry } = usePageEnvelope("get-page-narratives", { topicSort });
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [displayMode, setDisplayMode] = useState<DisplayMode>("both");
   const [tableGrouping, setTableGrouping] = useState<TableGrouping>("flat");
@@ -77,7 +78,12 @@ export default function NarrativesListPage() {
 
   return (
     <>
-      <PageHeaderBar title="Narrativas" subtitle="Explore todas as Narrativas em monitoramento." />
+      <PageHeaderBar
+        title="Narrativas"
+        subtitle="Explore todas as Narrativas em monitoramento."
+        topicSort={topicSort}
+        onTopicSortChange={setTopicSort}
+      />
 
       <div className="flex flex-col gap-6 p-8">
         {/* Botão "Atualizar resumos executivos das Narrativas"

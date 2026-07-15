@@ -63,6 +63,17 @@ concentra o reaproveitamento de código entre páginas.
   `narrative_labels` (a quais pautas cada autor está associado, pode ser mais de uma). Pedido do
   usuário: "em Autores e comunidades por pauta deve aparecer apenas os autores que citaram algo
   relacionado às Pautas e deve ser informado a que pauta ele está associado."
+- ✅ **`PageContext.topicSort` (2026-08-09, migration `20260809130000`)** — `'trending' | 'volume'`,
+  opcional. `fetchNarratives`/`fetchTermSignals` repassam `ctx.topicSort ?? 'trending'` como
+  `p_topic_sort` pras RPCs correspondentes (`get_narratives_table`/`get_term_signals`, ver
+  `sql-aggregation.md`, "Perspectiva de ranking Trending × Volume"). Handler HTTP: só as 6
+  Edge Functions cujo `PAGE_BLOCKS` inclui `'narratives'` ou `'term_signals'`
+  (`get-page-{overview,narratives,sentiment,platforms,themes}`, `get-narrative-detail`) leem
+  `body.topic_sort` (via `normalizeTopicSort`, handler-específico — mesmo padrão de `pauta_id`,
+  não faz parte do corpo canônico compartilhado); `get-page-authors`/`compose-narrative-synthesis`
+  não usam nenhum dos dois blocos, então não aceitam esse campo. ⚠️ **Exceção**: o payload de IA
+  (Camada 2, `platforms:featured_content`) sempre usa `'trending'`, independente de
+  `context.topicSort` — ver `ai-synthesis.md`.
 - `PAGE_BLOCKS` deve ser uma constante única, tipada, espelhando exatamente a tabela de
   [block-mapping-per-page.md](block-mapping-per-page.md). Se a tabela mudar, esta
   constante deve ser atualizada junto — o Claude Code deve tratar os dois como uma coisa só.

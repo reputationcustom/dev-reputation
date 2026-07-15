@@ -423,6 +423,11 @@ export interface PageContext {
   filters: EnvelopeFilters
   narrativeId?: string
   pautaId?: string
+  // ✅ 2026-08-09 (migration 20260809130000) — controla o critério de
+  // ranking de tags/positive_topics/negative_topics (get_narratives_table)
+  // e term_signals (get_term_signals). Default 'trending' quando ausente
+  // (mesmo default do lado SQL) — ver fetchNarratives/fetchTermSignals.
+  topicSort?: 'trending' | 'volume'
 }
 
 function effectiveFilters(ctx: PageContext): EnvelopeFilters {
@@ -516,6 +521,7 @@ interface NarrativeSentimentBreakdownRow {
 interface TermSignalRow {
   term: string
   growth_pct: number | null
+  volume: number | null
   sentiment_associated: string
 }
 
@@ -776,6 +782,7 @@ async function fetchNarratives(page: PageKey, supabase: SupabaseClient, ctx: Pag
       p_filters: effectiveFilters(ctx),
       p_pauta_id: ctx.pautaId ?? null,
       p_scope: narrativesScopeForPage(page),
+      p_topic_sort: ctx.topicSort ?? 'trending',
     })
     if (error) throw error
     return ((data ?? []) as NarrativeTableRow[]).map((row) => ({
@@ -898,6 +905,7 @@ async function fetchTermSignals(supabase: SupabaseClient, ctx: PageContext): Pro
       p_period_start: ctx.period.start,
       p_period_end: ctx.period.end,
       p_filters: effectiveFilters(ctx),
+      p_topic_sort: ctx.topicSort ?? 'trending',
     })
     if (error) throw error
     return (data ?? []) as TermSignalRow[]
@@ -1850,14 +1858,25 @@ export async function assemblePageResponse(
   const uiMeta: Record<string, unknown> = {}
   if (page === 'platforms') {
     const platformBreakdown = breakdowns.find((b) => b.type === 'platform')
+    // ✅ 2026-08-09 (pedido do usuário: "no envelope das páginas que também
+    // são utilizadas pela IA, deve ter os termos de Trending") — o payload
+    // enviado à IA ("termos em alta") usa sempre a perspectiva Trending,
+    // independente de `context.topicSort` (que só controla o que É EXIBIDO
+    // ao usuário no bloco `term_signals` do envelope). Reusa `termSignals`
+    // já buscado quando o usuário já está em 'trending' (caso comum, sem
+    // chamada extra); busca de novo só quando ele escolheu 'volume' pra
+    // exibição — get_term_signals é `stable`/barato, não Brandwatch.
+    const trendingTermSignals = context.topicSort === 'volume'
+      ? await fetchTermSignals(supabase, { ...context, topicSort: 'trending' })
+      : termSignals
     uiMeta.featured_content_text = await fetchSectionText(
       supabase,
       context,
       page,
       'featured_content',
       PLATFORMS_FEATURED_CONTENT_SYSTEM_PROMPT,
-      () => Promise.resolve(buildPlatformsFeaturedContentPayload(platformBreakdown, termSignals)),
-      platformsFeaturedContentFallback(platformBreakdown, termSignals),
+      () => Promise.resolve(buildPlatformsFeaturedContentPayload(platformBreakdown, trendingTermSignals)),
+      platformsFeaturedContentFallback(platformBreakdown, trendingTermSignals),
     )
   } else if (page === 'themes') {
     const themeBreakdown = breakdowns.find((b) => b.type === 'theme')

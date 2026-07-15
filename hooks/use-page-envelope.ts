@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import type { EnvelopeFilters, PageEnvelope } from "@reputation/shared-types";
+import type { EnvelopeFilters, PageEnvelope, TopicSortMode } from "@reputation/shared-types";
 import { callFunction } from "@/lib/supabase/call-function";
 import { useIntelligenceCenterHeader } from "@/components/intelligence-center/header-context";
 
@@ -23,11 +23,15 @@ const EMPTY_FILTERS: EnvelopeFilters = {
 // (IntelligenceCenterProvider), nunca escolhidos pela própria página
 // (Princípio técnico 2). `narrativeId`/`pautaId` são os únicos parâmetros
 // extras que alguma página precisa passar (get-narrative-detail/
-// get-page-themes). Segue o padrão de 3 estados obrigatório pra fetch de
-// carregamento inicial (CLAUDE.md, "Falha de comunicação com o backend").
+// get-page-themes). `topicSort` (✅ 2026-08-09, migration 20260809130000)
+// é opcional — só as páginas que renderizam tags/positive_topics/
+// negative_topics ou term_signals passam um valor; omitido, o backend
+// usa o default 'trending' (mesmo default do lado SQL). Segue o padrão de
+// 3 estados obrigatório pra fetch de carregamento inicial (CLAUDE.md,
+// "Falha de comunicação com o backend").
 export function usePageEnvelope(
   functionName: string,
-  options?: { narrativeId?: string; pautaId?: string },
+  options?: { narrativeId?: string; pautaId?: string; topicSort?: TopicSortMode },
 ) {
   const { organizationId, period } = useIntelligenceCenterHeader();
   const [state, setState] = useState<
@@ -51,6 +55,7 @@ export function usePageEnvelope(
           filters: EMPTY_FILTERS,
           ...(options?.narrativeId ? { narrative_id: options.narrativeId } : {}),
           ...(options?.pautaId ? { pauta_id: options.pautaId } : {}),
+          ...(options?.topicSort ? { topic_sort: options.topicSort } : {}),
         });
         if (!cancelled) setState({ status: "loaded", envelope });
       } catch {
@@ -64,7 +69,16 @@ export function usePageEnvelope(
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [functionName, organizationId, period.start, period.end, options?.narrativeId, options?.pautaId, attempt]);
+  }, [
+    functionName,
+    organizationId,
+    period.start,
+    period.end,
+    options?.narrativeId,
+    options?.pautaId,
+    options?.topicSort,
+    attempt,
+  ]);
 
   return {
     status: state.status satisfies LoadState,

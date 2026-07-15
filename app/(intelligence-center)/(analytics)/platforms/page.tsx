@@ -1,5 +1,7 @@
 "use client";
 
+import { useState } from "react";
+import type { TopicSortMode } from "@reputation/shared-types";
 import { usePageEnvelope } from "@/hooks/use-page-envelope";
 import { PageHeaderBar } from "@/components/intelligence-center/page-header-bar";
 import { WidgetCard } from "@/components/intelligence-center/widget-card";
@@ -36,12 +38,18 @@ import { EmptyState } from "@/components/ui/empty-state";
 // `authors`/`x_insights` nesta página, manter esses blocos seria uma
 // chamada RPC sem uso em todo carregamento.
 export default function PlatformsPage() {
-  const { status, envelope, retry } = usePageEnvelope("get-page-platforms");
+  const [topicSort, setTopicSort] = useState<TopicSortMode>("trending");
+  const { status, envelope, retry } = usePageEnvelope("get-page-platforms", { topicSort });
   const platformBreakdown = envelope?.breakdowns.find((b) => b.type === "platform");
 
   return (
     <>
-      <PageHeaderBar title="Análise por Plataforma" subtitle="Onde a conversa está acontecendo." />
+      <PageHeaderBar
+        title="Análise por Plataforma"
+        subtitle="Onde a conversa está acontecendo."
+        topicSort={topicSort}
+        onTopicSortChange={setTopicSort}
+      />
 
       <div className="flex flex-col gap-6 p-8">
         {/* ✅ Movido pro início da página (2026-07-14, pedido do usuário) —

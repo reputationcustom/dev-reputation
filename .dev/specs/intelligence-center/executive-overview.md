@@ -350,6 +350,14 @@ Qualquer usuário autenticado, membro de ao menos uma organização (ver
 
 ## Interface (UI)
 
+- ✅ **Toggle "Perspectiva: Tendência/Volume" (2026-08-09, migration
+  `20260809130000`)** — no `PageHeaderBar`, ao lado do seletor de período,
+  controla se `positive_topics`/`negative_topics`/`tags` (chips do
+  `NarrativeCard`) e "Principais tópicos positivos"/"negativos" ranqueiam
+  por crescimento (`trending`, default) ou por menções absolutas
+  (`volume`) — ver `aggregated-metrics/sql-aggregation.md`, "Perspectiva
+  de ranking Trending × Volume". Estado local à página, não persiste
+  entre navegações (mesmo padrão de `filtrosOpen`).
 - **Header**: nome da organização ativa (+ seletor, se aplicável), seletor
   de período. **Sem seletor de Query** — pedido explícito
   do usuário (2026-07-13): "o seletor de organização é independente de

@@ -269,8 +269,24 @@ export interface Highlight {
 export interface TermSignal {
   term: string;
   growth_pct: number;
+  // ✅ 2026-08-09 (migration 20260809130000) — volume absoluto de menções
+  // do termo, sempre presente independente de qual perspectiva
+  // (TopicSortMode) decidiu o corte/ordem do conjunto retornado.
+  volume: number | null;
   sentiment_associated: string;
 }
+
+// ✅ 2026-08-09 (migration 20260809130000) — perspectiva de ranking de
+// termos/tags usada por get_term_signals e por
+// get_narratives_table.tags/positive_topics/negative_topics: 'trending'
+// (crescimento, bw_query_topics.trending) ou 'volume' (menções absolutas,
+// bw_query_topics.volume). Default 'trending' em toda a cadeia (SQL e
+// TS) — o usuário escolhe no frontend qual perspectiva quer acompanhar
+// (usePageEnvelope/header), mas o payload enviado à IA (ai-synthesis
+// Camada 2, "Conteúdos em destaque" de /platforms) sempre usa 'trending',
+// independente da escolha de exibição — ver aggregated-metrics-service.ts,
+// assemblePageResponse, ramo `page === 'platforms'`.
+export type TopicSortMode = "trending" | "volume";
 
 export interface DisseminationGraphNode {
   id: string;

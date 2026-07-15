@@ -95,6 +95,16 @@ Mesmo público das demais páginas deste módulo.
 
 ## Interface (UI)
 
+- ✅ **Toggle "Perspectiva: Tendência/Volume" (2026-08-09, migration
+  `20260809130000`)** — no `PageHeaderBar`, controla o ranking de
+  "Principais tópicos positivos e negativos" (`term_signals`) exibido ao
+  usuário — `trending` (crescimento, default) ou `volume` (menções
+  absolutas). ⚠️ **Não afeta o payload de IA** de "Conteúdos em destaque"
+  (`ai-synthesis.md`, Camada 2) — o texto gerado sempre descreve os termos
+  pela perspectiva Trending, independente do que está selecionado pra
+  exibição (pedido explícito do usuário). Ver
+  `aggregated-metrics/sql-aggregation.md`, "Perspectiva de ranking
+  Trending × Volume".
 - **Participação por plataforma**: donut/barras de
   `bw_query_metrics_daily_by_platform` (`category_id is null`, agregado por
   `page_type`) somado no período — sem gap.

@@ -1,10 +1,25 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import type { TopicSortMode } from "@reputation/shared-types";
 import { ErrorMessage } from "@/components/ui/error-message";
 import { Toast } from "@/components/ui/toast";
 import { formatDateOnly } from "@/lib/date/format";
 import { PERIOD_MODE_OPTIONS, useIntelligenceCenterHeader } from "./header-context";
+
+// ✅ 2026-08-09 (migration 20260809130000) — pedido do usuário: "no
+// frontend adicionaremos essa opção para o usuário selecionar qual a
+// perspectiva ele deseja acompanhar. Default deve ser trending." Controla
+// o critério de ranking de tags/positive_topics/negative_topics
+// (get_narratives_table) e term_signals (get_term_signals) — Tendência
+// (crescimento) ou Volume (menções absolutas). Só as 6 páginas que
+// renderizam conteúdo derivado de tópicos passam `topicSort`/
+// `onTopicSortChange` (ver usePageEnvelope) — nas demais o par de props
+// fica indefinido e o toggle simplesmente não renderiza.
+export const TOPIC_SORT_OPTIONS: { mode: TopicSortMode; label: string }[] = [
+  { mode: "trending", label: "Tendência" },
+  { mode: "volume", label: "Volume" },
+];
 
 // Header global (2 seletores — organização ativa e período — ver
 // intelligence-center/executive-overview.md, "Header"). Especificado uma
@@ -46,10 +61,14 @@ export function PageHeaderBar({
   title,
   subtitle,
   hidePeriodSelector = false,
+  topicSort,
+  onTopicSortChange,
 }: {
   title?: string;
   subtitle?: string;
   hidePeriodSelector?: boolean;
+  topicSort?: TopicSortMode;
+  onTopicSortChange?: (mode: TopicSortMode) => void;
 }) {
   const {
     organizations,
@@ -165,6 +184,28 @@ export function PageHeaderBar({
                   <CustomRangePicker range={customRange} onChange={setCustomRange} />
                 )}
               </>
+            )}
+
+            {topicSort && onTopicSortChange && (
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs font-medium text-text-tertiary">Perspectiva:</span>
+                <div className="flex rounded-md border border-border-default p-0.5">
+                  {TOPIC_SORT_OPTIONS.map((option) => (
+                    <button
+                      key={option.mode}
+                      type="button"
+                      onClick={() => onTopicSortChange(option.mode)}
+                      className={`rounded px-3 py-1.5 text-sm font-medium transition-colors ${
+                        topicSort === option.mode
+                          ? "bg-accent-blue text-white"
+                          : "text-text-secondary hover:bg-bg-page"
+                      }`}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
             )}
           </div>
 

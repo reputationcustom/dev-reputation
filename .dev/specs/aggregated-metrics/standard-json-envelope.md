@@ -173,7 +173,12 @@ exibidos na UI ficam em português:
   exibido em nenhum componente de UI hoje. Itens de uma página são os N mais severos dentro
   do escopo/filtro daquela página, já dentro do cap diário aplicado pelo radar.
 - **`term_signals`**: termos/temas emergentes ou "drivers" de sentimento — de `bw_query_topics`,
-  ver `sql-aggregation.md`. Cada item tem `term`, `growth_pct`, `sentiment_associated`.
+  ver `sql-aggregation.md`. Cada item tem `term`, `growth_pct`, `volume`, `sentiment_associated`.
+  ✅ **`volume` adicionado (2026-08-09, migration `20260809130000`)** — menções absolutas do
+  termo, sempre presente independente de qual perspectiva (`TopicSortMode` — `'trending'`/
+  `'volume'`, ver `PageContext.topicSort` em `service-layer-aggregation.md`) decidiu o
+  corte/ordem do conjunto retornado por `get_term_signals`. Default da perspectiva: `'trending'`
+  em toda a cadeia (SQL e TS).
   ✅ **Estendido a `overview`/`narratives`/`platforms` (2026-07-14)** — antes só preenchido em
   `sentiment`/`themes`/`narrative_detail`; pedido do usuário ("em todas as páginas é importante
   existir os principais tópicos positivos e negativos"). Ver `block-mapping-per-page.md`.

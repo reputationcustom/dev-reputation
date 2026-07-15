@@ -142,6 +142,12 @@ Mesmo público das demais páginas deste módulo.
 
 ## Interface (UI)
 
+- ✅ **Toggle "Perspectiva: Tendência/Volume" (2026-08-09, migration
+  `20260809130000`)** — no `PageHeaderBar`, controla o ranking de
+  "Drivers de sentimento"/"Tópicos positivos e negativos" (`term_signals`)
+  — `trending` (crescimento, default) ou `volume` (menções absolutas).
+  Ver `aggregated-metrics/sql-aggregation.md`, "Perspectiva de ranking
+  Trending × Volume".
 - **Distribuição geral**: donut ou barras (positivo/neutro/negativo) — de
   `bw_query_metrics_daily` somado no período (Query inteira,
   `category_id is null`) ou de um agregado equivalente

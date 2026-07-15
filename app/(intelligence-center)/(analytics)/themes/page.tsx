@@ -1,5 +1,7 @@
 "use client";
 
+import { useState } from "react";
+import type { TopicSortMode } from "@reputation/shared-types";
 import { usePageEnvelope } from "@/hooks/use-page-envelope";
 import { PageHeaderBar } from "@/components/intelligence-center/page-header-bar";
 import { WidgetCard } from "@/components/intelligence-center/widget-card";
@@ -47,12 +49,18 @@ import { EmptyState } from "@/components/ui/empty-state";
 // colunas acima até então, sempre EmptyState (dependia de síntese
 // narrativa, ainda não implementada). Ver ai-synthesis.md.
 export default function ThemesPage() {
-  const { status, envelope, retry } = usePageEnvelope("get-page-themes");
+  const [topicSort, setTopicSort] = useState<TopicSortMode>("trending");
+  const { status, envelope, retry } = usePageEnvelope("get-page-themes", { topicSort });
   const themeBreakdown = envelope?.breakdowns.find((b) => b.type === "theme");
 
   return (
     <>
-      <PageHeaderBar title="Pautas Eleitorais" subtitle="O que está sendo discutido, por tema político." />
+      <PageHeaderBar
+        title="Pautas Eleitorais"
+        subtitle="O que está sendo discutido, por tema político."
+        topicSort={topicSort}
+        onTopicSortChange={setTopicSort}
+      />
 
       <div className="flex flex-col gap-6 p-8">
         {/* ✅ Movido pro início da página (2026-07-14, pedido do usuário) —
@@ -131,7 +139,7 @@ export default function ThemesPage() {
                 scroll interno em vez de crescer livremente. */}
             <WidgetCard title="Termos emergentes" status={status} onRetry={retry}>
               <div className="max-h-48 overflow-y-auto">
-                <TermSignalsList signals={envelope?.term_signals ?? []} />
+                <TermSignalsList signals={envelope?.term_signals ?? []} sizeBy={topicSort} />
               </div>
             </WidgetCard>
 

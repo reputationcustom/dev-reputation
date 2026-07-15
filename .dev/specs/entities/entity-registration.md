@@ -3,10 +3,63 @@ tipo: feature-spec
 módulo: entities
 funcionalidade: entity-registration
 status: implementado
-atualizado: 2026-07-15
+atualizado: 2026-07-16
 ---
 
 # Cadastro de Entidades (CRUD)
+
+> ✅ **4 melhorias de UX adicionadas (2026-07-16)**, depois do CRUD já
+> implementado (2026-07-15) — pedidos do usuário na mesma sessão, em
+> cima de um screenshot real da tabela em produção:
+>
+> 1. **Seletor de linhas por página** — `components/ui/pagination.tsx`
+>    ganhou `pageSize`/`onPageSizeChange`/`pageSizeOptions` opcionais (10/
+>    25/50/100), aditivo/retrocompatível (nenhum dos outros 3 consumidores
+>    do componente precisou mudar). `EntitiesAdminView` mantém `pageSize`
+>    em estado local, reseta pra página 1 ao trocar.
+> 2. **Selecionar uma linha mostra a Entidade ao lado, sem precisar clicar
+>    em "Editar"** — mesmo mecanismo já usado por `/narratives`
+>    (`grid-cols-1 lg:grid-cols-[minmax(0,1fr)_400px]` quando algo está
+>    selecionado): a tabela encolhe pra uma coluna elástica, um novo
+>    `EntityDetailPanel` (nome/tipo/cargo/partido/ideologia/influência/
+>    contas/classificações, tudo somente leitura) aparece fixo a 400px à
+>    direita, com "✕ Fechar" e um único botão "Editar" (só ele abre o
+>    `EntityFormModal`). Clicar de novo na mesma linha desseleciona.
+> 3. **Ordenação por qualquer coluna** — pedido explícito do usuário pra
+>    virar padrão de toda tabela do sistema, não só desta (ver CLAUDE.md,
+>    Regras transversais de UX #11). Extraído de `NarrativesTable`
+>    (`components/intelligence-center/narratives-table.tsx`, que já tinha
+>    esse comportamento desde 2026-08-08) pra um par compartilhado —
+>    `components/ui/sortable-th.tsx`'s `useSortableRows()`/`<SortableTh>`
+>    — reusado aqui pras 8 colunas de dado (Nome/Tipo/Cargo/Partido/
+>    Ideologia/Influência/Contas/Status; "Ações" fica de fora, não é
+>    coluna de dado). Colunas ordinais (Ideologia/Influência) ordenam pela
+>    posição na escala real (`IDEOLOGIA_OPTIONS`/`severity_level`), não
+>    alfabeticamente.
+> 4. **Filtro "Sem conta associada"** — nova checkbox ao lado de "Mostrar
+>    inativas", filtra Entidades com `accounts.length === 0` — atalho pra
+>    localizar quem ainda precisa de enriquecimento em "Contas nas redes"
+>    antes de aparecer no vínculo aditivo de `author-linking.md`.
+>
+> ✅ **2 correções de segurança/UX no mesmo lote, também pedidas pelo
+> usuário**: (1) o menu de ações "⋮" (`EntityRowMenu`, portal-based, mesmo
+> padrão de `UserRowMenu`) foi **substituído por botões sempre visíveis**
+> (Editar/Desativar-Reativar/Excluir) — `EntityRowMenu` foi apagado do
+> repositório (sem consumidor restante, nenhum código morto). (2)
+> "Desativar" (mas não "Reativar") ganhou o `ConfirmDialog` "leve" que o
+> texto original desta spec já pedia ("Fluxo principal" item 7) mas que a
+> primeira implementação (2026-07-15) tinha deixado de fora — chamava
+> `update-entity` direto do clique, sem confirmação nenhuma. Fechado junto
+> com a auditoria mais ampla que o usuário pediu nesta mesma mensagem
+> ("em todas as exclusões do sistema, é necessário confirmação... nunca
+> excluir diretamente") — os outros 4 fluxos de exclusão do produto
+> (`admin-delete-user`, `delete-communication`, `delete-finops-manual-cost`,
+> e o próprio `delete-entity` desta tela) já passavam por
+> `ConfirmDialog` desde que foram implementados, confirmado por auditoria
+> nesta sessão, nenhum ajuste necessário neles. Ver CLAUDE.md, Regras
+> transversais de UX #12-14, pro detalhe completo dos 3 padrões (preview
+> por seleção de linha, botões visíveis em vez de menu, confirmação
+> obrigatória em toda exclusão).
 
 > ✅ **Implementado (2026-07-15)**, pedido do usuário: "Implemente o
 > frontend de gerenciamento de entities e entities account para que seja

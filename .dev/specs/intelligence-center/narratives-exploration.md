@@ -190,6 +190,14 @@ membro de ao menos uma organização.
 
 ## Interface (UI)
 
+✅ **Toggle "Perspectiva: Tendência/Volume" (2026-08-09, migration
+`20260809130000`)** — no `PageHeaderBar` (lista e detalhe), controla o
+ranking de `tags`/`positive_topics`/`negative_topics` (`NarrativeCard`) e
+"Termos e frases mais citados"/"Tópicos positivos e negativos da
+narrativa" (detalhe) — `trending` (crescimento, default) ou `volume`
+(menções absolutas). Ver `aggregated-metrics/sql-aggregation.md`,
+"Perspectiva de ranking Trending × Volume".
+
 ### Lista (`/narratives`)
 
 Idêntica à tabela do Executive Overview (ver `foundation/overview.md`), mais

@@ -447,6 +447,64 @@ Added 2026-07-13, apply to every page/component going forward, not just
     being removed traces back to an explicit user request in `CLAUDE.md`/
     a spec note first — don't rely on general best-practice judgment alone
     to override a specific, already-settled product decision.
+11. **Any data table must allow sorting by any column, by clicking the
+    column header** — added 2026-07-16, user request ("Permitir ordenação
+    por qualquer coluna na tabela — isso deve ser padrão para todo tipo de
+    tabela do sistema"). `NarrativesTable` had already built this pattern
+    inline (2026-08-08, `sort`/`handleSort`, `↓`/`↑` arrow on the active
+    column); extracted into a shared, reusable pair —
+    `components/ui/sortable-th.tsx`'s `useSortableRows()` (generic sort
+    state + `.sort()`, nulls always last regardless of direction) and
+    `<SortableTh>` (the clickable `<th>` + arrow, same markup/classes as
+    `NarrativesTable`'s original). First real consumer:
+    `entities-admin-view.tsx` — use this pair for any new table rather
+    than reimplementing sort state from scratch; existing tables
+    (`users-admin-view.tsx`, `finops-admin-view.tsx`'s 2 tables,
+    `communications-table.tsx`, `authors-list.tsx`, `x-insights-panel.tsx`)
+    were **not** retroactively converted in this pass (not requested,
+    no bug in any of them) — apply this pair the next time one of those
+    tables is touched, same "don't refactor unrelated code speculatively"
+    posture already used for rule 9's rollout.
+12. **A row-select-to-preview table** (click a row to see its full detail
+    without opening an edit form) **always offers a visible way to close
+    the preview and never hides its own action buttons behind the
+    selection** — see `entities-admin-view.tsx`/`EntityDetailPanel`
+    (2026-07-16): clicking a row toggles a side panel (mirrors
+    `/narratives`' `NarrativeCard` side panel, `grid-cols-1
+    lg:grid-cols-[minmax(0,1fr)_400px]` when something is selected), with
+    an explicit "✕ Fechar" and its own "Editar" button — selecting a row
+    is a pure view action, never a prerequisite for editing.
+13. **A row's actions (Editar/Excluir/etc.) render as always-visible
+    buttons, not hidden behind a "⋮" overflow menu** — added 2026-07-16,
+    user request specifically reversing the "⋮" pattern
+    `users-admin-view.tsx`/the first cut of `entities-admin-view.tsx` had
+    used (portal-based `UserRowMenu`/`EntityRowMenu`, per-row dropdown).
+    `entities-admin-view.tsx`'s row actions are now inline text buttons
+    (`Editar`/`Desativar`|`Reativar`/`Excluir`, same
+    `text-accent-blue`/`text-[#e0483e]` convention already used by
+    `finops-admin-view.tsx`'s table) — `EntityRowMenu` was deleted
+    outright (Princípio técnico: never leave dead code once a component's
+    only consumer is removed). Not retroactively applied to
+    `users-admin-view.tsx`'s `UserRowMenu` (not requested, no bug) — same
+    "apply next time that table is touched" posture as rule 11.
+14. **Every destructive delete anywhere in the product must go through a
+    confirmation dialog — a delete button never calls the delete handler
+    directly from its own `onClick`.** Explicit standing rule since
+    2026-07-16 (user: "em todas as exclusões do sistema, é necessário
+    confirmação do usuário, nunca excluir diretamente"), though every
+    delete flow already in production at that point (`admin-delete-user`,
+    `delete-communication`, `delete-finops-manual-cost`, `delete-entity`)
+    was already following this pattern — audited and confirmed 2026-07-16,
+    no violations found. The convention: the trigger button only ever sets
+    modal state (`setModal({ type: "delete", ... })`); the actual
+    `callFunction("delete-*"/"admin-delete-*", ...)` call is wired
+    exclusively to `<ConfirmDialog onConfirm={...}>`
+    (`components/ui/confirm-dialog.tsx`). Applies to hard deletes only —
+    a reversible/non-destructive toggle (ex: "Reativar" an Entity) is
+    exempt by design, though a **de**activation (ex: "Desativar", not
+    destructive but a real behavior change) still gets a lighter
+    `ConfirmDialog` per `entity-registration.md`'s own spec text — see
+    `entities-admin-view.tsx`'s `deactivate` modal state for the pattern.
 
 ## Backend communication failures
 
@@ -8766,6 +8824,125 @@ RLS) — sem precisar de uma function auxiliar tipo
 escopado por organização.
 
 Ainda spec-only — nenhuma migration/Edge Function/UI escrita.
+
+### Perspectiva de ranking Trending × Volume — `get_term_signals`/`get_narratives_table.tags` (2026-08-09)
+
+User request: "Permita `get_term_signals` e
+`get_narratives_table.tags/positive_topics/negative_topics` retornar
+tanto por trending quanto por volumetria, pois no frontend adicionaremos
+essa opção para o usuário selecionar qual a perspectiva ele deseja
+acompanhar. Default deve ser trending." Seguido, mid-turn, de: "no
+envelope das páginas que também são utilizados pela IA, deve ter os
+termos de Trending."
+
+**Contexto (resposta anterior nesta mesma conversa)**: `bw_query_topics`
+já guarda `volume` E `trending` por linha desde sempre (ambos
+sincronizados por `bw-sync`/`syncTopicsData()`, `data/topics`) — o gap
+nunca foi de captura, era de exposição: `get_term_signals` sempre
+ranqueava só por `trending`, `get_narratives_table.tags`/
+`positive_topics`/`negative_topics` sempre por `volume`. Nenhuma das duas
+oferecia a outra perspectiva ao consumidor.
+
+**Backend** (migration `20260809130000`, ambas mudam de aridade — `drop
+function` explícito antes de recriar):
+- `get_term_signals` ganhou `p_topic_sort text default 'trending'` (5º
+  parâmetro) e uma coluna nova, `volume integer` (sempre devolvida,
+  independente do critério de corte). O `row_number()`/top-20-por-balde-
+  de-sentimento passou a ordenar pelo critério escolhido — o conjunto de
+  termos retornado pode genuinamente mudar entre as duas perspectivas
+  (não é um resort client-side de um top-20-por-trending já fixo).
+- `get_narratives_table` ganhou `p_topic_sort text default 'trending'`
+  (9º parâmetro, depois de `p_reference_at`). `topic_classified` (a CTE
+  que já classifica cada termo por sentimento pra `tags`/
+  `positive_topics`/`negative_topics`) ganhou a coluna `trending`, nunca
+  lida antes por esta function; as 3 CTEs de ranking passaram a ordenar
+  pelo critério escolhido. `tags`/`positive_topics`/`negative_topics`
+  continuam `text[]` simples — o parâmetro só muda quais/em que ordem os
+  rótulos aparecem, sem coluna de saída nova (diferente de
+  `get_term_signals`, que expõe magnitude).
+- `narrative_summary_build_payload` (job `narrative-summary-composer`)
+  chama `get_narratives_table` com 7 argumentos posicionais, sem o 8º —
+  continua funcionando sem nenhuma mudança e cai automaticamente no
+  default `'trending'`, satisfazendo por construção metade do pedido
+  mid-turn pra este consumidor específico.
+
+**O pedido mid-turn revelou um ponto real que a primeira parte da
+implementação, sozinha, teria quebrado**: `assemblePageResponse`'s ramo
+`page === 'platforms'` alimenta o payload de IA da Camada 2
+("Conteúdos em destaque", `ai-synthesis.md`) com o mesmo array
+`termSignals` que também é devolvido pro usuário no bloco `term_signals`
+do envelope — sem separar os dois, se o usuário estivesse vendo a
+perspectiva "Volume" na tela, a IA descreveria esses mesmos termos como
+"termos em alta" (Trending) incorretamente. Fechado antes de propagar:
+o ramo `platforms` agora busca `term_signals` de novo com
+`topicSort: 'trending'` explícito só quando `context.topicSort ===
+'volume'` (reusa o array já buscado no caso comum — default já é
+trending — sem chamada extra). Confirmado por leitura de código que
+nenhum outro payload de Camada 1/2 (`narrative_text`,
+`buildNarrativesOverviewPayload`, `buildAuthorsOverviewPayload`,
+`buildThemesPeriodComparisonPayload`) lê `term_signals`/`tags`/
+`positive_topics`/`negative_topics` — só este ramo precisava do ajuste.
+
+**Propagação (Princípio técnico 5)**: `PageContext.topicSort?: 'trending'
+| 'volume'`, `TermSignalRow.volume`, e os 2 `p_topic_sort` nas chamadas
+RPC de `fetchNarratives`/`fetchTermSignals`, além do fix de
+`platforms`/`featured_content` acima, foram propagados via script Node
+de uso único (substituição por igualdade de string exata — nunca a
+técnica "wholesale prefix replace" que já causou 2 incidentes reais de
+produção neste projeto, ver "`[get-page-*] unhandled error ReferenceError:
+createClient is not defined`" mais acima) na cópia canônica
+(`aggregated-metrics-service.ts`) e nas 8 Edge Functions deployadas
+(`get-page-{overview,narratives,sentiment,platforms,themes,authors}`,
+`get-narrative-detail`, `compose-narrative-synthesis`) — verificado por
+contagem de ocorrências (exatamente 1 por edição por arquivo) antes de
+aplicar, e por diff do prefixo canônico contra cada um dos 8 depois
+(única divergência remanescente: a linha de import `createClient`,
+conhecida e documentada desde a sessão da Fase B). Parsing de
+`body.topic_sort` no handler HTTP (`normalizeTopicSort`, mesmo padrão de
+`pauta_id` — não faz parte do corpo canônico compartilhado) só foi
+adicionado às 6 Edge Functions cujo `PAGE_BLOCKS` inclui `'narratives'`
+ou `'term_signals'` (`get-page-{overview,narratives,sentiment,platforms,
+themes}`, `get-narrative-detail`) — `get-page-authors` (nenhum dos dois
+blocos) e `compose-narrative-synthesis` (só compõe `narrative_text`,
+nunca lê `term_signals`/`narratives`) deliberadamente não ganharam esse
+parsing, mesmo critério já usado pra `pauta_id` não existir em todo
+handler.
+
+**Frontend**: `TopicSortMode` (`@reputation/shared-types`) — toggle
+"Perspectiva: Tendência/Volume" novo em `PageHeaderBar` (só renderiza
+quando a página passa `topicSort`/`onTopicSortChange`, mesmo padrão de
+prop opcional já usado por `headerAction` em `WidgetCard`), estado local
+por página via `useState` (não no `IntelligenceCenterProvider` global —
+diferente de organização/período, esta opção não se aplica a toda
+página, ex: `/authors` não usa nenhum dos dois blocos), repassado a
+`usePageEnvelope`'s novo option `topicSort` (só inclui `topic_sort` no
+corpo da requisição quando presente). Wired nas 6 páginas relevantes:
+`overview`, `narratives`, `sentiment`, `platforms`, `themes`,
+`narrative-detail-content.tsx` (só no estado carregado — loading/erro/
+não-encontrado não ganharam o toggle, sem dado ainda pra alternar; modal
+de detalhe não renderiza `PageHeaderBar` de propósito desde que existe,
+então fica sempre em `'trending'`, "Abrir página completa" leva pro
+toggle). `TermSignalsList` (nuvem de palavras) ganhou `sizeBy?:
+TopicSortMode` (default `'trending'`, preserva comportamento anterior
+onde não passado) — dimensiona a fonte por `growth_pct` ou `volume`
+conforme a perspectiva ativa; `TopicSentimentList`/`NarrativeCard` não
+precisaram de nenhuma mudança de código, já refletem a perspectiva
+automaticamente (o CONJUNTO de itens retornado pelo backend é quem
+muda).
+
+**Verificação**: `npx tsc --noEmit` e `npm run build` (com `rm -rf .next`
+antes) passam limpos — 23 rotas (mesma contagem de antes, nenhuma rota
+nova/removida). Balanço de parênteses/chaves conferido nos 9 arquivos
+Deno tocados (mesmo proxy de verificação de toda sessão sem acesso a
+Deno/Supabase real). Migration `20260809130000` revisada manualmente
+(parênteses/`$$` balanceados, 2 funções), não executada contra um banco
+real nesta sessão — mesma limitação recorrente de toda sessão sem
+credenciais de deploy neste ambiente. `git push` para `develop` é o
+próximo passo; sinal a acompanhar depois do deploy: alternar o toggle em
+qualquer uma das 6 páginas muda o conjunto de tópicos/tags/nuvem de
+palavras exibido (não só a ordem), e o texto de "Conteúdos em destaque"
+de `/platforms` continua descrevendo os mesmos termos como "em alta"
+mesmo com o toggle em "Volume".
 
 ## Directory structure
 

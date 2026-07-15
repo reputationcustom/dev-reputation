@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import type { NarrativeRow } from "@reputation/shared-types";
+import type { NarrativeRow, TopicSortMode } from "@reputation/shared-types";
 import { usePageEnvelope } from "@/hooks/use-page-envelope";
 import { PageHeaderBar } from "@/components/intelligence-center/page-header-bar";
 import { WidgetCard } from "@/components/intelligence-center/widget-card";
@@ -22,12 +22,18 @@ const TOP_COUNT_OPTIONS = [3, 5, 10] as const;
 // acontece aqui (Princípio técnico 2), só renderização do que o backend
 // já devolve pronto.
 export default function OverviewPage() {
-  const { status, envelope, retry } = usePageEnvelope("get-page-overview");
+  const [topicSort, setTopicSort] = useState<TopicSortMode>("trending");
+  const { status, envelope, retry } = usePageEnvelope("get-page-overview", { topicSort });
   const [topCount, setTopCount] = useState<(typeof TOP_COUNT_OPTIONS)[number]>(3);
 
   return (
     <>
-      <PageHeaderBar title="Visão Geral" subtitle="O que está acontecendo agora, de relance." />
+      <PageHeaderBar
+        title="Visão Geral"
+        subtitle="O que está acontecendo agora, de relance."
+        topicSort={topicSort}
+        onTopicSortChange={setTopicSort}
+      />
 
       <div className="flex flex-col gap-6 p-8">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5">

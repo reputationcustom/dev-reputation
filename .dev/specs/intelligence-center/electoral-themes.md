@@ -198,6 +198,13 @@ Mesmo público das demais páginas deste módulo.
 
 ## Interface (UI)
 
+- ✅ **Toggle "Perspectiva: Tendência/Volume" (2026-08-09, migration
+  `20260809130000`)** — no `PageHeaderBar`, controla o ranking de "Termos
+  emergentes" (tamanho da fonte na nuvem de palavras), "Tópicos positivos
+  e negativos por pauta" e `tags`/`positive_topics`/`negative_topics` dos
+  cards de Pauta — `trending` (crescimento, default) ou `volume` (menções
+  absolutas). Ver `aggregated-metrics/sql-aggregation.md`, "Perspectiva
+  de ranking Trending × Volume".
 - **SOV por pauta**: ⚠️ **Definição corrigida (2026-08-09)** — o texto
   original desta spec ("idêntico ao SOV por Narrativa... filtrado às
   Subcategories de Pautas") descrevia, sem perceber, o próprio bug: SOV

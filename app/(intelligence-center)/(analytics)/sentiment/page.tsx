@@ -1,5 +1,7 @@
 "use client";
 
+import { useState } from "react";
+import type { TopicSortMode } from "@reputation/shared-types";
 import { usePageEnvelope } from "@/hooks/use-page-envelope";
 import { PageHeaderBar } from "@/components/intelligence-center/page-header-bar";
 import { WidgetCard } from "@/components/intelligence-center/widget-card";
@@ -27,11 +29,17 @@ import { EmptyState } from "@/components/ui/empty-state";
 // versão — não existe bloco de "mentions em destaque" no contrato do
 // envelope ainda (ver _pending.md #19).
 export default function SentimentPage() {
-  const { status, envelope, retry } = usePageEnvelope("get-page-sentiment");
+  const [topicSort, setTopicSort] = useState<TopicSortMode>("trending");
+  const { status, envelope, retry } = usePageEnvelope("get-page-sentiment", { topicSort });
 
   return (
     <>
-      <PageHeaderBar title="Análise de Sentimento" subtitle="Distribuição, evolução e drivers do sentimento." />
+      <PageHeaderBar
+        title="Análise de Sentimento"
+        subtitle="Distribuição, evolução e drivers do sentimento."
+        topicSort={topicSort}
+        onTopicSortChange={setTopicSort}
+      />
 
       <div className="flex flex-col gap-6 p-8">
         <div className="grid grid-cols-1 gap-6 md:grid-cols-2">

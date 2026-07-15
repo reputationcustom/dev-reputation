@@ -1,6 +1,8 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
+import type { TopicSortMode } from "@reputation/shared-types";
 import { usePageEnvelope } from "@/hooks/use-page-envelope";
 import { useIntelligenceCenterHeader } from "@/components/intelligence-center/header-context";
 import { useUserProfile } from "@/hooks/use-user-profile";
@@ -101,7 +103,8 @@ export function NarrativeDetailContent({
   narrativeId: string;
   isModal?: boolean;
 }) {
-  const { status, envelope, retry } = usePageEnvelope("get-narrative-detail", { narrativeId });
+  const [topicSort, setTopicSort] = useState<TopicSortMode>("trending");
+  const { status, envelope, retry } = usePageEnvelope("get-narrative-detail", { narrativeId, topicSort });
   const { organizationId } = useIntelligenceCenterHeader();
   const { timezone } = useUserProfile();
 
@@ -146,7 +149,7 @@ export function NarrativeDetailContent({
     <>
       {/* Sem `title` aqui — a página já renderiza seu próprio <h1> +
           badges logo abaixo, ver comentário em page-header-bar.tsx. */}
-      {!isModal && <PageHeaderBar />}
+      {!isModal && <PageHeaderBar topicSort={topicSort} onTopicSortChange={setTopicSort} />}
       <div className="flex flex-col gap-6 p-8">
       <div>
         {isModal ? (
@@ -257,6 +260,7 @@ export function NarrativeDetailContent({
       <WidgetCard title="Termos e frases mais citados" status={status} onRetry={retry}>
         <TermSignalsList
           signals={envelope?.term_signals ?? []}
+          sizeBy={topicSort}
           emptyMessage="Nenhum termo/frase em destaque para esta Narrativa neste período."
         />
       </WidgetCard>

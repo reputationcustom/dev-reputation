@@ -316,7 +316,21 @@ atualizado: 2026-07-14
 >   payload = breakdown de plataforma (top 5) + `term_signals` (top 8) já
 >   buscados pela página. Justificativa da Camada 2: não há
 >   `feed_events` equivalente a "quais plataformas/termos dominam este
->   período" — é uma leitura composta, não um evento pontual.
+>   período" — é uma leitura composta, não um evento pontual. ⚠️ **`top_terms`
+>   sempre usa a perspectiva Trending (2026-08-09, migration
+>   `20260809130000`)** — pedido explícito do usuário, mid-turn, na mesma
+>   sessão que adicionou o toggle Tendência/Volume ao frontend: "no
+>   envelope das páginas que também são utilizadas pela IA, deve ter os
+>   termos de Trending". `context.topicSort` (o que o usuário escolheu
+>   pra EXIBIÇÃO no bloco `term_signals` do envelope) não influencia este
+>   payload — `assemblePageResponse` busca `term_signals` de novo com
+>   `topicSort: 'trending'` explícito só quando o usuário estava em
+>   `'volume'` (reusa o array já buscado no caso comum, sem chamada
+>   extra). Faz sentido descrever "termos em alta" pra um redator/IA sem
+>   ambiguidade sobre qual perspectiva está sendo citada. Nenhum outro
+>   payload de Camada 1/2 lê `term_signals`/`tags`/`positive_topics`/
+>   `negative_topics` — confirmado por leitura de código antes da decisão,
+>   não presumido.
 > - **`themes` / `period_comparison`** ("Comparação entre períodos") —
 >   payload = `get_theme_breakdown` (já usado por "Share of Voice e
 >   sentimento por pauta") chamado uma 2ª vez pro período imediatamente
