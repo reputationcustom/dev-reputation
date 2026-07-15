@@ -3,8 +3,19 @@ tipo: feature-spec
 módulo: foundation
 funcionalidade: sync-brandwatch
 status: implementado
-atualizado: 2026-08-06
+atualizado: 2026-08-09
 ---
+
+> ✅ **Correção de documentação (constatada numa auditoria pedida pelo
+> usuário, junto com a criação da spec `sync-console`)**: este documento
+> ainda descrevia o heartbeat do `pg_cron` como "a cada 15 minutos" em
+> várias seções — desatualizado desde a migration `20260809070000`
+> (`cron.alter_job(..., schedule => '* * * * *')`), que apertou a cadência
+> real para **1 minuto** (ver `CLAUDE.md`, "Heartbeat de `bw-sync`
+> apertado de 15min pra 1min"). Toda referência abaixo foi corrigida para
+> "1 minuto"/`* * * * *` — o mecanismo em si (gate 0.5b só faz trabalho
+> quando um par está de fato devido; a maioria dos heartbeats sai cedo,
+> sem custo) não mudou, só ficou 15x mais frequente.
 
 # Sync Brandwatch
 
@@ -344,7 +355,8 @@ de 30/10min). Duas correções, sem migration (mudança só na Edge Function):
 **Estado vive inteiro no Postgres, nunca em memória do isolate** — por
 isso uma invocação **manual** (clique em "Invoke" no Dashboard do
 Supabase, útil durante testes) se comporta exatamente como um tick do
-heartbeat de 15min: lê `next_step` do par mais "devido", roda essa fase,
+heartbeat (1 minuto, desde 2026-08-09 — ver nota de topo): lê `next_step`
+do par mais "devido", roda essa fase,
 grava o próximo passo. Não há modo de teste separado nem estado
 in-memory que se perca entre invocações — clicar várias vezes seguidas
 avança o ciclo normalmente, mas desde 2026-08-06 uma única invocação (manual
@@ -522,30 +534,44 @@ própria `platform_by_narrative` (passo 6.3c abaixo) — ver `data-model.md`
    skipped: true, reason: "brandwatch_rate_limit_near_ceiling"`) sem
    mintar token. Diferente do gate 0.5c (reage a um 429 que já
    aconteceu), este gate impede a maioria dos 429 de sequer ocorrer.
-1. `pg_cron` invoca a Edge Function `bw-sync` a cada **15 minutos** — um
-   heartbeat fixo e barato (cadência de infraestrutura, não o parâmetro de
-   negócio; só precisa ser frequente o bastante relativo aos
-   `BW_SYNC_INTERVAL_HOURS` configurados pra não gerar atraso perceptível
-   — ver migration `20260711020000`, `select net.http_post(url := ...)`,
-   `verify_jwt = false` pra esta function já que só é acionada por
-   `pg_cron`/manualmente). A maioria dos heartbeats não faz nenhum trabalho
-   — sai no gate do passo 0.5b. ⚠️ **Histórico**: até 2026-07-11, `bw-sync`
-   nunca teve `pg_cron` agendado de verdade (só invocação manual) — o
-   bloqueio documentado (mint de token gastando parte do orçamento de
-   30/10min a cada invocação, relevante numa cadência de ~20-30s) deixou de
-   valer nesse desenho, porque o gate do passo 0.5b faz o mint só acontecer
-   quando algum par está de fato devido (a cada `BW_SYNC_INTERVAL_HOURS`
-   por par, não a cada heartbeat) — sem precisar implementar o cache de
-   token no Vault antes (continua um TODO separado, só que não bloqueante).
+1. `pg_cron` invoca a Edge Function `bw-sync` a cada **1 minuto**
+   (`* * * * *`) — um heartbeat fixo e barato (cadência de
+   infraestrutura, não o parâmetro de negócio; só precisa ser frequente
+   o bastante relativo aos `BW_SYNC_INTERVAL_HOURS` configurados pra não
+   gerar atraso perceptível — ver migration `20260711020000`, `select
+   net.http_post(url := ...)`, `verify_jwt = false` pra esta function já
+   que só é acionada por `pg_cron`/manualmente). A maioria dos heartbeats
+   não faz nenhum trabalho — sai no gate do passo 0.5b. ⚠️ **Histórico**:
+   até 2026-07-11, `bw-sync` nunca teve `pg_cron` agendado de verdade (só
+   invocação manual) — o bloqueio documentado (mint de token gastando
+   parte do orçamento de 30/10min a cada invocação, relevante numa
+   cadência de ~20-30s) deixou de valer nesse desenho, porque o gate do
+   passo 0.5b faz o mint só acontecer quando algum par está de fato
+   devido (a cada `BW_SYNC_INTERVAL_HOURS` por par, não a cada
+   heartbeat) — sem precisar implementar o cache de token no Vault antes
+   (continua um TODO separado, só que não bloqueante). ✅ **Cadência
+   apertada de 15min para 1min (2026-08-09, migration
+   `20260809070000`)**: com o heartbeat fixo em 15min, o tempo entre "o
+   orçamento de chamadas liberou" e "o sistema percebe" podia chegar a
+   ~17min de espera ociosa pura (log real de produção) — reagendado via
+   `cron.alter_job` (não recriado) para `* * * * *`. Uma invocação ociosa
+   (`no_pair_due`/`rate_limit_near_ceiling_skip`) já era barata antes
+   disso (~24-46ms, sem tocar a Brandwatch), então rodar 15x mais vezes
+   não pesa em custo real — só reduz a folga entre "orçamento liberou" e
+   "o sistema percebeu". `BW_SYNC_INTERVAL_HOURS` (quando um PAR fica
+   devido) e `getSyncStalenessWindowMs()` (janela de frescor por fase)
+   continuam sendo o parâmetro de negócio, inalterados — só a cadência de
+   *checagem* mudou. Ver `CLAUDE.md`, "Heartbeat de `bw-sync` apertado de
+   15min pra 1min".
 2. A função resolve, em round-robin, o próximo par `(project_id, query_id)`
    **devido** (mesmo filtro do passo 0.5b, reaplicado aqui) com sync
    pendente, olhando `sync_cursors` (dentre os devidos, o cursor com
    `last_synced_at` mais antigo primeiro). ⚠️ **Trade-off aceito**: uma
    invocação processa só um par — se houver múltiplos pares devidos ao
-   mesmo tempo (ex: várias Queries), cada um é pego num heartbeat de 15min
-   subsequente, não todos de uma vez. Com heartbeat de 15min e um punhado
+   mesmo tempo (ex: várias Queries), cada um é pego num heartbeat de 1min
+   subsequente, não todos de uma vez. Com heartbeat de 1min e um punhado
    de pares (cenário típico de MVP — 1 Project, poucas Queries), o atraso
-   entre pares no mesmo ciclo é de no máximo alguns múltiplos de 15min —
+   entre pares no mesmo ciclo é de no máximo alguns minutos —
    desprezível frente a uma cadência de negócio de horas. O
    **backfill histórico de mentions** (`BRANDWATCH_MENTIONS_START_DATE` até
    hoje) também passa a avançar só quando o par está devido, não
@@ -573,9 +599,10 @@ própria `platform_by_narrative` (passo 6.3c abaixo) — ver `data-model.md`
    ainda é TODO. ✅ **Deixou de bloquear o agendamento via `pg_cron`
    (2026-07-11)**: o gate do passo 0.5b faz o mint só acontecer quando algum
    par está devido (a cada `BW_SYNC_INTERVAL_HOURS` por par, não a cada
-   heartbeat de 15min) — a essa cadência o mint sem cache é irrelevante para
-   o orçamento de 30/10min. O cache continua valendo a pena (evita 1
-   chamada por par devido), só não é mais pré-requisito.
+   heartbeat — 1 minuto desde 2026-08-09, era 15min antes disso) — a essa
+   cadência o mint sem cache é irrelevante para o orçamento de 30/10min.
+   O cache continua valendo a pena (evita 1 chamada por par devido), só
+   não é mais pré-requisito.
 4. Se for a primeira sincronização daquele Project (`bw_projects.name` ainda
    é o placeholder do passo 0), `bw_categories` estiver vazia, ou um refresh
    periódico (> 1h desde `synced_at` — reduzido de 24h, ver correção
@@ -1298,10 +1325,12 @@ só metadados (tamanho do token, expiração, ids do par processado).
 - Edge Function autossuficiente `supabase/functions/bw-sync/index.ts`
   (Princípio técnico 5, `_index.md`).
 - `pg_cron` + `pg_net` para HTTP a partir do Postgres (migration
-  `20260711020000`, heartbeat `bw-sync-heartbeat` a cada 15min via
-  `net.http_post`, URL hardcoded na migration — não é segredo, mesmo valor
-  já exposto via `NEXT_PUBLIC_SUPABASE_URL`, então sem passo manual
-  pós-deploy). Function roda com `verify_jwt = false`
+  `20260711020000`, heartbeat `bw-sync-heartbeat`, originalmente a cada
+  15min, reagendado para **a cada 1 minuto** via `cron.alter_job` na
+  migration `20260809070000` — via `net.http_post`, URL hardcoded na
+  migration — não é segredo, mesmo valor já exposto via
+  `NEXT_PUBLIC_SUPABASE_URL`, então sem passo manual pós-deploy). Function
+  roda com `verify_jwt = false`
   (`supabase/config.toml`) — sem Authorization header no cron job.
 - `BW_SYNC_INTERVAL_HOURS` (secret da Edge Function, default `3`) — o
   parâmetro de negócio de cadência de captura (ver "Objetivo" acima e passo

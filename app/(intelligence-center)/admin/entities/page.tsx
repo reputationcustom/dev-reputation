@@ -1,0 +1,34 @@
+import { redirect } from "next/navigation";
+import { createClient } from "@/lib/supabase/server";
+import { EntitiesAdminView } from "./entities-admin-view";
+
+// Mesmo gate de admin/users/page.tsx e admin/finops/page.tsx — a rota
+// nunca renderiza para não-admin, mesmo digitando a URL direto
+// (.dev/specs/entities/entity-registration.md, "Fluxos alternativos").
+export default async function EntitiesAdminPage() {
+  const supabase = await createClient();
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    throw new Error("Não foi possível verificar permissões de administrador.");
+  }
+
+  const { data: profile, error } = await supabase
+    .from("user_profiles")
+    .select("is_admin")
+    .eq("id", user.id)
+    .single();
+
+  if (error) {
+    throw new Error("Não foi possível verificar permissões de administrador.");
+  }
+
+  if (!profile?.is_admin) {
+    redirect("/overview");
+  }
+
+  return <EntitiesAdminView />;
+}

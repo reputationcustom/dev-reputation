@@ -21,16 +21,23 @@ export async function callFunction<T>(
 
   if (error) {
     let message = BACKEND_ERROR_MESSAGE;
+    let extra: Record<string, unknown> | null = null;
     const context = (error as { context?: Response }).context;
     if (context) {
       try {
         const payload = await context.clone().json();
         if (payload?.error) message = payload.error;
+        if (payload && typeof payload === "object") extra = payload;
       } catch {
         // mantém a mensagem genérica
       }
     }
-    throw new Error(message);
+    // Campos extras do corpo de erro (ex: `conflict_account` de
+    // create-entity/update-entity, entities/entity-registration.md) ficam
+    // disponíveis no objeto lançado além de `.message` — todo consumidor
+    // existente só lê `.message`, então isso não muda nenhum comportamento
+    // já em produção, só amplia o que um consumidor novo pode ler.
+    throw Object.assign(new Error(message), extra ?? {});
   }
 
   return data as T;

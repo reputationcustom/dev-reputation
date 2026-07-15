@@ -280,6 +280,8 @@ exatos em variáveis, componentes, tabelas e comentários.
 | Share of Voice (plataforma) | Participação de uma Narrativa dentro de uma plataforma específica, ou mix de plataformas dentro de uma Narrativa — via `bw_query_metrics_daily_by_platform.category_id` (adicionado 2026-07-11). |
 | Share of Voice (autor) | Participação de um autor no total de menções de uma Query/Narrativa — `bw_query_top_authors.volume` ÷ `bw_query_metrics_daily.total_mentions` (mesmo Query/Category/período); razão calculada na camada de consumo, sem tabela própria. |
 | Compliance eleitoral  | Guardrails de conteúdo/auditoria de IA sobre mentions relacionadas a candidatos/eleições — responsabilidade da aplicação, não da API da Brandwatch. |
+| Fase (Sync Step)      | Uma das 16 etapas fixas, sempre na mesma ordem, que o pipeline `bw-sync` executa para sincronizar um par (Projeto, Query) — `metadata`, `mentions`, `daily_metrics`, ..., `sov` (`SYNC_STEPS`, `bw-sync/index.ts`; lista completa em `foundation/sync-brandwatch.md`, "Execução em fases"). Rastreada por `sync_cursors.next_step`. |
+| Execução manual de fase | Forçar uma Fase específica a rodar agora, para um par específico, fora da rotação automática — funcionalidade do módulo `sync-console` (ver [sync-console/manual-step-execution.md](sync-console/manual-step-execution.md)). Nunca altera `sync_cursors.next_step`/`last_synced_at` — é sempre um desvio observável (`sync_log.trigger_source = 'manual'`), nunca uma alteração do ciclo automático. |
 
 ## Abreviações usadas nas specs
 

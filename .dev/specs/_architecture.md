@@ -46,6 +46,7 @@ graph TD
 
     subgraph TRANSVERSAL["Transversal — admin, sem Sprint própria"]
         FINOPS["finops<br/>custo de IA + custos extras"]
+        SYNCCONSOLE["sync-console<br/>monitoramento + execução manual do bw-sync"]
     end
 
     FOUNDATION --> AUTH
@@ -72,22 +73,34 @@ graph TD
     EVENTRADAR -.-> FINOPS
     AGGMETRICS -.-> FINOPS
 
+    AUTH --> SYNCCONSOLE
+    FOUNDATION --> SYNCCONSOLE
+
     style FOUNDATION fill:#c3e6cb,stroke:#2e7d32
     style AUTH fill:#c3e6cb,stroke:#2e7d32
     style AGGMETRICS fill:#c3e6cb,stroke:#2e7d32
     style INTEL fill:#c3e6cb,stroke:#2e7d32
-    style ENTITIES fill:#fff3cd,stroke:#856404
+    style ENTITIES fill:#c3e6cb,stroke:#2e7d32
     style COMMUNICATIONS fill:#c3e6cb,stroke:#2e7d32
     style EVENTRADAR fill:#c3e6cb,stroke:#2e7d32
     style PROPGRAPH fill:#e2e3e5,stroke:#6c757d
     style DECISIONCENTER fill:#e2e3e5,stroke:#6c757d
     style REPORTS fill:#e2e3e5,stroke:#6c757d
     style FINOPS fill:#c3e6cb,stroke:#2e7d32
+    style SYNCCONSOLE fill:#fff3cd,stroke:#856404
 ```
 
 **Como ler**: seta cheia (`-->`) = dependência forte, o módulo de origem bloqueia o de destino.
 Seta pontilhada (`-.->`) = dependência fraca/opcional — o destino funciona sem a origem (com
 fallback), mas fica mais completo com ela.
+
+> 📝 **`sync-console` adicionado (2026-07-15)**, transversal/admin-only —
+> depende de `foundation` (lê `sync_cursors`/`bw_sync_lock`/`sync_log`,
+> nunca reimplementa a lógica de sincronização) e de `auth` (gate
+> `is_admin`), mesmo padrão de dependência já usado por `finops`. Nó
+> **amarelo** (`pronto` — spec aprovada, aguardando implementação),
+> ainda sem nenhuma migration/Edge Function/UI escrita. Ver
+> [_index.md](_index.md) e [sync-console/overview.md](sync-console/overview.md).
 
 > ✅ **`communications` adicionado (2026-07-25)**, Sprint 2.1 — fora da sequência original de
 > Sprint 2, depende de `foundation`/`auth`/`aggregated-metrics` (já implementados) e do shell de
@@ -135,6 +148,16 @@ fallback), mas fica mais completo com ela.
 > `entity-registration.md` (CRUD pela UI) ainda não tem código; ver
 > `intelligence-center/authors-and-influencers.md`, "Redesenho interativo", pro consumo completo
 > (dispersão/breakdowns/painel de detalhe em `/authors`).
+>
+> ✅ **`entities` passa a verde (2026-07-15)** — `entity-registration.md` implementado: nova 3ª
+> guia "Entidades" em `/admin` (ao lado de "Usuários"/"FinOps"), Edge Functions
+> `create-entity`/`update-entity`/`delete-entity` (chave secreta + Bearer token, mesmo padrão já
+> estabelecido pelas outras telas `/admin/*` deste projeto — desvio deliberado do texto original
+> da spec, que sugeria o padrão de exceção "publicável + JWT encaminhado" de `communications`).
+> Com as 3 funcionalidades do módulo (`data-model`/`author-linking`/`entity-registration`) todas
+> `implementado`, `entities` como módulo inteiro sai do amarelo pela primeira vez desde que ganhou
+> spec própria em 2026-07-13. Ver `entities/entity-registration.md` e `CLAUDE.md` pro detalhe
+> completo.
 
 > ✅ **`event-radar` passou a verde em 2026-07-31**, 100% `implementado` desde 2026-08-02 — as 8
 > funcionalidades do módulo (`data-model`/`detection-engine`/`deduplication-grouping`/`severity`/
@@ -192,7 +215,7 @@ de `intelligence-center`, ver `_index.md`, "Módulo `command-center` removido".
 |---|---|---|---|
 | `foundation` | Sync Brandwatch → Supabase + Narrativas como entidade viva | implementado | [foundation/overview.md](foundation/overview.md) |
 | `auth` | Login/recuperação de senha (Supabase Auth) + administração de usuários (admin-only) + `/perfil` (fuso horário) | implementado | [auth/overview.md](auth/overview.md) |
-| `entities` | Cadastro Nacional de Entidades (partido/espectro/cargo) + vínculo aditivo com o ranking de Autores e Influenciadores | pronto — não implementado | [entities/overview.md](entities/overview.md) |
+| `entities` | Cadastro Nacional de Entidades (partido/espectro/cargo) + vínculo aditivo com o ranking de Autores e Influenciadores | **implementado** (2026-07-15) | [entities/overview.md](entities/overview.md) |
 | `intelligence-center` | As 5 páginas do frontend (Executive Overview, Narrativas, Sentimento, Plataformas, Pautas Eleitorais) + `cases` (ações/decisões, ex-`command-center`) | implementado — `cases` (schema) ainda não | [intelligence-center/overview.md](intelligence-center/overview.md) |
 | `aggregated-metrics` | Envelope JSON único + SQL de agregação + Edge Functions por página, consumido pelo frontend e pela IA | implementado — 10/10 functions SQL, `ai-synthesis.md` Camadas 0/1 completas (2026-08-02); `page_cache` **desabilitado** (2026-07-14, decisão do usuário de retomar depois), ver `_pending.md` gap #34 | [aggregated-metrics/overview.md](aggregated-metrics/overview.md) |
 | `communications` | Registro de Comunicações/Decisões por Narrativa + acompanhamento de impacto (sentimento/menções/risco/momentum antes vs. depois) — Sprint 2.1 | implementado | [communications/overview.md](communications/overview.md) |
@@ -201,6 +224,7 @@ de `intelligence-center`, ver `_index.md`, "Módulo `command-center` removido".
 | `decision-center` | AI Advisors — perguntas livres/interativas do analista sobre mentions/narrativas | rascunho | — |
 | `executive-reports` | Relatórios periódicos (diário/semanal/mensal/executivo/crise) | rascunho | — |
 | `finops` | Painel de custo de IA (uso real, `ai_usage_log`) + custos extras cadastráveis (`manual_costs`) + previsão de fim de mês — admin-only, transversal, sem Sprint própria | implementado (2026-08-05) | [finops/overview.md](finops/overview.md) |
+| `sync-console` | Observabilidade do pipeline `bw-sync` (fase atual/última+próxima sincronização/lock/rate limit por par) + execução manual de 1 fase específica sob demanda — admin-only, transversal, sem Sprint própria | pronto — não implementado (spec 2026-07-15) | [sync-console/overview.md](sync-console/overview.md) |
 
 ## Referências
 

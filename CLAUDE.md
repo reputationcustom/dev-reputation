@@ -5259,6 +5259,60 @@ vincular com os dados que vem da brandwatch." Migration
   toda sessão sem acesso ao Supabase Dashboard já registrada em várias
   entradas deste arquivo. `git push` para `develop` é o próximo passo.
 
+### Complemento de veículos de mídia/TV/rádio + canais legislativos (2026-07-15)
+
+User request: usuário pediu uma lista de "50 canais mais relevantes de
+notícias e política" (respondida como curadoria de conhecimento geral,
+não verificada — TV/portais/jornais/revistas/rádio/institutos/YouTube),
+depois pediu para "expandir o seed de entities/entity_accounts com o que
+existe nessa lista e não existe no banco de dados atual." Migration
+`supabase/migrations/20260809120000_seed_additional_media_and_legislative_channels.sql`.
+
+- **Comparação item a item contra os 2 seeds anteriores** (`20260731010000`/
+  `20260807010000`) antes de escrever qualquer linha: 39 dos 50 itens da
+  lista já estavam semeados (todos os 30 veículos de imprensa + os 12
+  institutos de pesquisa já cobriam a maior parte de rádio/portal/revista/
+  TV/institutos citados). Restaram 10 itens genuinamente novos + Politize!.
+- **Mesma disciplina de fonte real do seed anterior**: cada um verificado
+  ao vivo nesta sessão contra a API pública do Wikidata
+  (`wbsearchentities` + `Special:EntityData`, P856/P2002/P2003) — nenhum
+  handle completado de memória. Adicionadas **11 Entities**: Record TV,
+  RecordNews, BandNews TV, TV Cultura, Época, CBN, BandNews FM, Flow
+  Podcast (`type = media_outlet`) + TV Câmara/TV Senado (`type =
+  institution` — canais oficiais do Poder Legislativo, não mídia privada/
+  pública comum, por isso `power_branch = 'Legislativo'`, valor já
+  existente no vocabulário de `data-model.md`, não `'Mídia'`).
+- **14 `entity_accounts`** (Twitter/Instagram, mesmo vocabulário de
+  plataforma do seed anterior) + **31 `entity_tags`**
+  (`segment`/`power_branch`/`website`, nenhuma dimensão nova). Época não
+  tem P2002/P2003 no Wikidata — hoje é uma seção de `oglobo.globo.com`,
+  não um veículo com contas próprias, só `website`.
+- **Politize! sem item Wikidata verificável** (buscas em pt/en, com e sem
+  "!", todas vazias ou sem correspondência real) — mesmo tratamento já
+  dado a 10 dos 12 institutos no seed anterior: Entity cadastrada (a
+  existência real da organização não está em dúvida) sem
+  `website`/`entity_accounts`, disponível para cadastro manual depois via
+  `/admin/entities` (quando implementada).
+- **Achado real, decisão deliberada — YouTube fora de `entity_accounts`**:
+  o Wikidata confirmou o P2397 (ID de canal do YouTube) para Record TV/TV
+  Cultura/BandNews FM/Flow Podcast, mas esse campo guarda o ID bruto do
+  canal (`UC...`), não o handle legível que a Brandwatch de fato grava em
+  `mentions.author`/`bw_query_top_authors.author` para publicações do
+  YouTube — gravar o ID bruto como `username` quase certamente nunca
+  casaria no `JOIN` por texto que `author-linking.md` define
+  (`lower(trim(username)) = lower(trim(author))`), diferente de
+  Twitter/Instagram, onde o handle do Wikidata já é o mesmo texto que a
+  Brandwatch usa. Registrar mesmo assim sugeriria um vínculo funcional que
+  não existe na prática — mesmo cuidado já aplicado a `website` (nunca
+  gravado em `entity_accounts`, só em `entity_tags`). Nenhum canal do
+  YouTube foi gravado como conta nesta migration.
+- **Verificação**: parênteses balanceados (66/66) e 11 UUIDs distintos/11
+  linhas de `entities` conferidos programaticamente (script Node) antes de
+  fechar o arquivo. **Não executada contra um banco real** nesta sessão —
+  sem credenciais/deploy neste ambiente, mesma limitação recorrente de
+  toda sessão sem acesso ao Supabase Dashboard já registrada em várias
+  entradas deste arquivo. `git push` para `develop` é o próximo passo.
+
 ### `/narratives` retornando vazio — `page_cache` desabilitado, depois causa raiz real encontrada e corrigida (2026-07-14)
 
 User report: `get-page-narratives` devolvendo `narratives: []` para uma
@@ -8463,17 +8517,270 @@ mostrando "Preparando um resumo executivo das Narrativas deste período."
 no primeiro carregamento e o parágrafo real na carga seguinte (mesmo
 padrão fire-and-forget de sempre).
 
+### Cadastro Nacional de Entidades — CRUD implementado, 3ª guia de Administração (2026-07-15)
+
+User request: "Implemente o frontend de gerenciamento de entities e
+entities account para que seja gerenciado pelo administrador. Crie uma
+nova guia na página de admin para esse gerenciamento." Fecha
+`entities/entity-registration.md` — o único arquivo do módulo `entities`
+que ainda não tinha código (`data-model.md` implementado desde
+2026-07-13, `author-linking.md` desde 2026-08-01) — sem nenhuma migration
+nova, já que o schema (`entities`/`entity_accounts`/`entity_tags` +
+`cargo`/`partido`/`ideologia`/`influence_level`/`is_active`, RLS
+`is_current_user_admin()`) já estava 100% implementado.
+
+- **`/admin/entities`, nova 3ª guia de "Administração"**
+  (`components/intelligence-center/admin-tabs.tsx`, ao lado de
+  "Usuários"/"FinOps") — mesmo gate `is_admin` server-side de
+  `/admin/users`/`/admin/finops` (`page.tsx` lê `user_profiles.is_admin`
+  direto, `redirect('/overview')` sem renderizar nada pra não-admin, nunca
+  confiando só no client). Nenhuma mudança na Sidebar — "Administração" já
+  usa `matchPrefix="/admin"`, então continua destacado em qualquer uma das
+  3 guias.
+- **Desvio deliberado do texto original da spec**: `entity-registration.md`
+  ("Dependências técnicas") descrevia o padrão de exceção "chave
+  publicável + JWT do usuário encaminhado" (o mesmo de `communications`).
+  Implementado, em vez disso, com o padrão **já estabelecido por toda tela
+  `/admin/*` deste projeto** (`admin-invite-user` e as
+  `create/update/delete-finops-manual-cost`, o precedente mais recente) —
+  chave secreta + `Bearer` token, `supabaseAdmin.auth.getUser(token)`. RLS
+  (`is_current_user_admin()`) continua sendo a garantia real de qualquer
+  forma — só a convenção de qual chave a Edge Function usa mudou, por
+  consistência com o código real já existente, não com o texto da spec.
+- **3 Edge Functions** (`create-entity`/`update-entity`/`delete-entity`).
+  `update-entity` é um único endpoint pros 3 usos do "Fluxo principal"
+  (edição completa, Desativar, Reativar) — distingue os casos por quais
+  chaves o corpo da requisição inclui: `accounts`/`tags` presentes (mesmo
+  `[]`) substituem por completo o conjunto já cadastrado daquela Entity
+  (delete-all + reinsert, sem diff — exatamente o item 6 do "Fluxo
+  principal"); ausentes (Desativar/Reativar só envia `{ id, is_active }`),
+  nenhuma das duas tabelas é tocada. Mesmo mecanismo campo a campo pra
+  `type`/`name`/`cargo`/`partido`/`ideologia`/`photo_url`/
+  `influence_level` — só atualiza o que a chave correspondente presente no
+  corpo indica.
+- **Conflito de handle duplicado traduzido e localizado na linha certa**:
+  violação de `entity_accounts_unique_handle` (SQLSTATE 23505) — a Edge
+  Function faz parse do `details` que o Postgres já devolve (`Key
+  (platform, username)=(x, y) already exists.`) e responde `{ error,
+  conflict_account: { platform, username } }`; `EntityFormModal` destaca a
+  linha de conta correspondente (borda vermelha + texto inline), não só
+  um erro genérico de topo. Isso exigiu ampliar
+  `lib/supabase/call-function.ts`: o `Error` lançado por `callFunction()`
+  agora carrega (`Object.assign`) qualquer campo extra do corpo JSON de
+  erro, não só `.message` — mudança aditiva/retrocompatível, todo
+  consumidor existente (todo `admin-*`/`communications`/`finops` já em
+  produção) só lê `.message` hoje, nenhum comportamento muda pra eles.
+- **Formulário com 3 seções** (`EntityFormModal`, `max-w-2xl` — mais campo
+  que o padrão `max-w-md`, mesmo `maxWidthClassName` já usado por
+  `communication-form-modal.tsx`): Dados básicos (Tipo/Nome/Cargo/Partido/
+  Ideologia/URL da foto/Nível de influência — Cargo/Partido desabilitados
+  quando `type = 'party'`, não se aplica ao próprio partido), Contas nas
+  redes (repetível — plataforma/usuário/URL, "+ Adicionar conta"/"✕" por
+  linha) e Classificação adicional (repetível — dimensão/valor, mesmo
+  padrão). Nenhum componente de "lista repetível" equivalente já existia
+  no código (verificado antes de construir um novo, per "não duplicar
+  UI") — as duas seções usam arrays de `useState` locais, sem
+  abstração extra pra 2 usos. Sugestões de Partido/Dimensão/Valor via
+  `<datalist>` nativo (texto livre + sugestões, exatamente o texto da
+  spec) — mais simples que replicar `NarrativeCombobox`
+  (`communications/`, que é single-select estrito, não o caso aqui);
+  nenhuma chamada de rede nova, as sugestões vêm da própria listagem já
+  carregada. Ideologia usa os 5 valores já em uso
+  (`esquerda`/`centro-esquerda`/`centro`/`centro-direita`/`direita`) mais
+  "Outra..." em texto livre, já que a coluna não é enum/CHECK.
+- **Badges novos, por pedido explícito da spec** (`entity-registration.md`,
+  "Interface": "implementar como um componente novo... não reaproveitar
+  `RiskBadge` diretamente") — `InfluenceBadge` usa os mesmos tokens
+  `risk-*`/`risk-*-bg` só pela cor, com rótulos próprios
+  ("Baixa"/"Média"/"Alta"/"Muito alta", não "Baixo"/"Médio"/"Alto"/
+  "Crítico", pra não confundir influência com risco); `IdeologiaBadge`/
+  `EntityTypeBadge` são locais a `entities-admin-view.tsx` (não
+  reaproveitam `ideologyBadgeClass`/`entityTypeLabel` de
+  `author-color.ts` na tabela — esse arquivo é o helper de cor pra
+  `/authors`, uma superfície visual diferente; o formulário, sim, reusa os
+  `*_LABEL`/`*_OPTIONS` de `entities/types.ts`, que espelham o vocabulário
+  já fixado em `data-model.md`).
+- **Leitura direta via `supabase-js`** (RLS abre SELECT a qualquer
+  autenticado — catálogo global, mesmo padrão de `use-organizations.ts`/
+  `communications`) — 3 queries em paralelo
+  (`entities`/`entity_accounts`/`entity_tags`) mescladas no client, sem
+  Edge Function; escrita sempre pelas 3 functions acima (Princípio técnico
+  2). Filtros (nome/tipo/partido/ideologia/mostrar inativas) e sugestões
+  de `<datalist>` são 100% client-side sobre a listagem já carregada — sem
+  chamada nova por tecla digitada/filtro trocado, mesmo padrão de
+  `user-management.md`.
+- **Verificação**: `npx tsc --noEmit` e `npm run build` (`rm -rf .next`
+  antes) passam limpos — 23 rotas, `/admin/entities` nova. Sem ambiente
+  Supabase real nesta sessão — nenhuma das 3 Edge Functions foi testada
+  contra um deploy de verdade (mesma limitação recorrente de toda sessão
+  sem credenciais de deploy já registrada em várias entradas deste
+  arquivo); `git push` para `develop` é o próximo passo. Sem automação de
+  browser disponível — a tabela/formulário/filtros não foram confirmados
+  visualmente num navegador real.
+
+## Módulo `sync-console` — spec criada (2026-07-15), não implementada
+
+Pedido do usuário: "Crie a spec para gerenciar o pipeline de integração
+da Brandwatch, basicamente com a lógica da bw_sync. Como administrador eu
+quero poder acompanhar a fase da integração, quando rolou, quando será a
+próxima execução, em que passo que está. Além disso, quero conseguir
+executar partes específicas da integração, por exemplo: identifiquei que
+tópicos está inconsistente, posso executar apenas essa parte do
+pipeline." Sessão só de spec (Fase 1) — nenhuma migration/Edge Function/UI
+escrita. 4 arquivos novos em `.dev/specs/sync-console/` (`overview.md`,
+`data-model.md`, `pipeline-monitoring.md`, `manual-step-execution.md`),
+todos `status: pronto`; registrado em `_index.md` (tabela de Módulos,
+transversal/admin-only, sem Sprint própria — mesmo padrão de `finops`),
+`_architecture.md` (nó amarelo/`pronto` no diagrama + tabela-resumo) e
+`_glossary.md` (2 termos novos: "Fase (Sync Step)", "Execução manual de
+fase").
+
+**Decisão de design principal**: a execução manual de uma fase reaproveita
+literalmente as 16 funções `run<Fase>Step()` que já existem em
+`bw-sync/index.ts` (nunca uma segunda cópia da lógica de sincronização em
+outra Edge Function, que reabriria a mesma classe de bug de propagação já
+documentada várias vezes neste arquivo para `aggregated-metrics-service.ts`
+— só que no arquivo mais crítico do projeto). Mecanismo: uma nova Edge
+Function `trigger-sync-step` (admin-only, Bearer+`is_admin`, mesmo padrão
+de auth de `finops`/`admin-*`) valida a requisição e faz uma chamada
+server-to-server para a própria `bw-sync` com um novo campo opcional no
+corpo, `manualStep: { projectId, queryId, step, triggeredByUserId }` — o
+navegador nunca chama `bw-sync` diretamente, preservando o invariante já
+documentado em `supabase/config.toml` ("bw-sync é acionada só por
+pg_cron... nunca pelo frontend"); a autorização acontece inteiramente em
+`trigger-sync-step`, antes de `bw-sync` ser invocada. Uma execução manual
+sempre respeita o lock de concorrência (`bw_sync_lock`) e os gates de
+orçamento de chamadas Brandwatch — nunca um bypass de emergência — e
+**nunca escreve em `sync_cursors.next_step`/`last_synced_at`**, para não
+interferir na rotação automática das 16 fases; fica registrada só como
+uma linha em `sync_log` (`trigger_source = 'manual'`).
+
+**Gap de dado real, identificado durante a pesquisa**: `sync_log`
+(existente desde `foundation`) já grava uma linha por fase executada, mas
+sem nenhuma coluna indicando qual fase foi, duração, ou se foi automática
+— insuficiente para a tela de histórico pedida. `data-model.md` propõe 5
+colunas novas (`step`, `duration_ms`, `stop_reason`, `trigger_source`,
+`triggered_by_user_id`) + um índice `(project_id, query_id, created_at
+desc)` (mesma cautela já documentada mais de uma vez neste arquivo para
+tabelas sem retenção — `bw_query_metrics_daily*`/o statement timeout do
+`event-radar`) — nenhuma migration foi escrita ainda, é só a proposta de
+schema para quando o módulo for implementado.
+
+Pedido de follow-up do usuário na mesma sessão: incluir no frontend uma
+explicação breve de como a integração funciona + tooltips ("?") nas
+informações técnicas, para facilitar quem for sustentar a tela no dia a
+dia. Incorporado em `pipeline-monitoring.md`: um card fixo "Como funciona
+a integração" sempre visível no topo da página (texto estático em
+linguagem simples, sem jargão de implementação) + uma tabela completa de
+tooltips (reaproveitando `components/ui/tooltip.tsx`, mesmo padrão já
+usado nos KPIs da Visão Geral e nos cabeçalhos de `NarrativesTable`,
+Cross-cutting UX rule 8) para cada campo técnico da tela (fase atual,
+última/próxima sincronização, lock, backoff de rate limit, uso do
+orçamento de chamadas, origem/motivo de parada no histórico) + um
+accordion colapsável com a lista de referência das 16 fases.
+
+⚠️ Nenhuma linha de código foi escrita nesta sessão — `foundation/sync-brandwatch.md`
+continua sendo o único pipeline realmente em produção. Próximo passo,
+quando o usuário pedir a implementação: migration de `sync_log`, as 2
+Edge Functions novas (`get-sync-console-status`/`trigger-sync-step`), o
+branch `manualStep` dentro de `bw-sync/index.ts`, e a página
+`/admin/sync-console` (+ item de menu "Sincronização" em CONFIGURAÇÕES).
+
+**Follow-up, mesma sessão** — usuário pediu para verificar se
+`foundation/sync-brandwatch.md` (a spec-fonte que `sync-console` cita e
+depende) ainda batia com o código real do `bw-sync`, exatamente para não
+herdar nenhuma divergência no processo manual recém-documentado.
+Auditoria linha a linha (16 `SYNC_STEPS`, os 5 gates do "Fluxo
+principal", a lógica de encadeamento de fases/`stopReason`, os schemas de
+`sync_cursors`/`bw_sync_lock`/`sync_log`, os nomes das 16 funções
+`run*Step()`) confirmou que tudo bate — com **uma divergência real
+encontrada**: o documento ainda descrevia o heartbeat do `pg_cron` como
+"a cada 15 minutos" em várias seções (Fluxo principal passo 1, o
+trade-off de round-robin, "Dependências técnicas"), desatualizado desde a
+migration `20260809070000` que apertou a cadência real para **1
+minuto** (ver "Heartbeat de `bw-sync` apertado de 15min pra 1min" acima —
+já estava certo naquela entrada, só nunca tinha sido propagado de volta
+para `sync-brandwatch.md`). Corrigido em todas as passagens que descrevem
+o comportamento **atual** (mantidas como histórico as passagens já
+datadas de 2026-07-22/2026-08-06 que descrevem corretamente o estado *da
+época*); frontmatter `atualizado` avançado de `2026-08-06` para
+`2026-08-09` (data da migration que este ajuste finalmente incorpora). As 2 specs novas de `sync-console` já citavam "1 minuto"
+corretamente desde o início (conferido por grep, sem nenhuma menção a
+"15 min" propagada) — a divergência estava isolada em
+`sync-brandwatch.md`, não se espalhou para o módulo novo.
+
+Também: as datas usadas nos arquivos novos de `sync-console` e nas
+edições de `_index.md`/`_glossary.md`/`_architecture.md` foram corrigidas
+de `2026-08-10` (erro meu, tentando "adivinhar" uma data consistente com
+o restante deste arquivo) para `2026-07-15` — a data real informada pelo
+usuário. Os campos `atualizado:` de topo de `_index.md`/`_glossary.md`/
+`_architecture.md` foram restaurados aos valores que já tinham antes
+desta sessão (2026-07-25/2026-07-25/2026-08-05, todos já posteriores a
+hoje) em vez de sobrescritos com "hoje" — sobrescrever teria feito esses
+arquivos parecerem desatualizados em relação ao próprio conteúdo que já
+tinham antes desta sessão sequer começar.
+
+**Segundo follow-up, mesma sessão**: usuário pediu (1) reconfirmar que a
+spec de `sync-console` está alinhada com a versão já corrigida de
+`sync-brandwatch.md` e (2) garantir que o módulo também permita "verificar
+todas as execuções que ocorreram e quantos registros foram sincronizados
+em cada etapa" — um gap real em relação ao desenho anterior, que só
+previa uma "lista recente" limitada (não o histórico completo) e não
+tratava explicitamente da contagem de registros por etapa.
+
+**Item (1)**: confirmado, sem nenhuma nova divergência — as specs de
+`sync-console` já citavam "1 minuto" corretamente em todo lugar relevante
+(cálculo de "próxima execução", explicação em linguagem simples, etc.).
+
+**Item (2) — gap real encontrado no próprio código do `bw-sync`, não só
+na spec nova**: o dispatcher grava `sync_log.rows_processed:
+result.mentionsCount ?? 0` — `mentionsCount` só é populado pelo
+`StepResult` da fase `mentions`; as outras 15 fases sempre gravam `0`
+nessa coluna hoje, mesmo sincronizando dado real. Sem corrigir isso, a
+tela de histórico pedida mostraria "0 registros" para 15 das 16 fases,
+não atendendo o pedido de verdade. `sync-console/data-model.md` passa a
+exigir generalizar `StepResult.mentionsCount` para um `recordsSynced?:
+number` devolvido por **toda** função `run<Fase>Step()` (com uma tabela
+de convenção "o que conta como registro sincronizado" por fase — ex:
+linhas upsertadas em `bw_query_topics` para `topics`, em
+`bw_query_metrics_daily` para `daily_metrics`, etc.) — o dispatcher passa
+a gravar `rows_processed: result.recordsSynced ?? 0` para qualquer fase,
+cron ou manual.
+
+Redesenho da funcionalidade de monitoramento: a antiga "linha expansível
+com últimas execuções" (implicitamente capada, nunca "todas") virou um
+widget dedicado e sempre visível, "Histórico de execuções" — tabela
+paginada (`DEFAULT_PAGE_SIZE = 10`), filtrável por par (ou "Todos os
+pares"), nova coluna "Registros sincronizados", sem nenhum teto de
+janela — literalmente todo `sync_log` já registrado, navegável até a
+primeira execução que o sistema já fez. Nova Edge Function dedicada,
+`get-sync-console-history` (`get-sync-console-status` ficou só com o
+estado atual/snapshot da tabela de pares, sem histórico embutido) — usa o
+índice novo `(project_id, query_id, created_at desc)` quando escopada a 1
+par, e o índice já existente `idx_sync_log_created_at` quando pedido o
+histórico de todos os pares combinados (nenhum índice novo necessário
+para esse segundo caso). Resolve o nome de quem disparou uma execução
+manual via `left join user_profiles` direto (chave secreta já bypassa
+RLS) — sem precisar de uma function auxiliar tipo
+`list-organization-members`, já que este recurso é admin-only/global, não
+escopado por organização.
+
+Ainda spec-only — nenhuma migration/Edge Function/UI escrita.
+
 ## Directory structure
 
 ```
 app/(intelligence-center)/    Every authenticated page (overview, narratives,
-                               sentiment, platforms, themes, admin/{users,finops},
-                               perfil) — shares one shell (Sidebar/header/footer),
+                               sentiment, platforms, themes,
+                               admin/{users,finops,entities}, perfil) — shares
+                               one shell (Sidebar/header/footer),
                                see layout.tsx; nested (analytics)/ route group adds
                                the org-required gate for the 5 analytics pages
                                plus communications/ (Sprint 2.1 — also org-scoped).
-                               admin/finops (module `finops`, platform-wide, not
-                               org-scoped) sits alongside admin/users, same
+                               admin/finops and admin/entities (modules `finops`/
+                               `entities`, platform-wide, not org-scoped) sit
+                               alongside admin/users, all 3 tabbed via
+                               components/intelligence-center/admin-tabs.tsx, same
                                is_admin gate
 app/{login,forgot-password,reset-password}/   Public auth pages, outside the shell
 components/intelligence-center/   Shared UI for the 5 analytics pages (table,

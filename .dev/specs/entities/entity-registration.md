@@ -2,22 +2,88 @@
 tipo: feature-spec
 módulo: entities
 funcionalidade: entity-registration
-status: pronto
-atualizado: 2026-07-13
+status: implementado
+atualizado: 2026-07-15
 ---
 
 # Cadastro de Entidades (CRUD)
 
-> ✅ **Campos reorganizados (2026-07-13)**, pedido do usuário: "renomeie o
-> campo descrição para cargo, inclua um novo campo chamado partido, crie
-> um campo chamado ideologia... e reorganize os dados nessas novas
-> colunas." O formulário abaixo já reflete o schema atualizado
-> (`data-model.md`, migration `20260731050000`) — `Descrição` (textarea
-> livre) deixou de existir como campo próprio; `Cargo`/`Partido`/
-> `Ideologia` são campos estruturados de "Dados básicos", não mais linhas
-> de "Classificação" (`entity_tags`). Este arquivo continua `pronto`, não
-> implementado — a UI/Edge Functions descritas abaixo ainda não têm
-> código.
+> ✅ **Implementado (2026-07-15)**, pedido do usuário: "Implemente o
+> frontend de gerenciamento de entities e entities account para que seja
+> gerenciado pelo administrador. Crie uma nova guia na página de admin
+> para esse gerenciamento." Nenhuma migration nova — o schema já estava
+> 100% implementado desde `data-model.md` (2026-07-13); esta sessão só
+> escreveu a UI e as Edge Functions que faltavam.
+>
+> - **`/admin/entities`** — nova 3ª guia de "Administração"
+>   (`components/intelligence-center/admin-tabs.tsx`, ao lado de
+>   "Usuários"/"FinOps"), mesmo gate `is_admin` server-side de
+>   `/admin/users`/`/admin/finops` (`page.tsx` redireciona pra `/overview`
+>   sem renderizar nada pra não-admin). Nenhuma mudança na Sidebar — o item
+>   "Administração" já usa `matchPrefix="/admin"`, então continua
+>   destacado em qualquer uma das 3 guias sem precisar de ajuste.
+> - **3 Edge Functions** (`create-entity`/`update-entity`/`delete-entity`)
+>   — **um desvio deliberado do texto original da spec**: a seção
+>   "Dependências técnicas" abaixo descrevia o padrão de exceção "chave
+>   publicável + JWT do usuário encaminhado" (o mesmo de `communications`).
+>   Implementado, em vez disso, com o padrão **já estabelecido por toda
+>   tela `/admin/*` deste projeto** (`admin-invite-user` e as
+>   `create/update/delete-finops-manual-cost` mais recentes) — chave
+>   secreta + `Bearer` token, `supabaseAdmin.auth.getUser(token)` — por
+>   consistência com o precedente real do código, não com o texto da spec.
+>   RLS (`is_current_user_admin()`) continua sendo a garantia real de
+>   qualquer forma, então o resultado de segurança é idêntico; só a
+>   convenção de qual chave a função usa mudou.
+> - **`update-entity` é um único endpoint pros 3 usos do "Fluxo
+>   principal"** (edição completa, Desativar, Reativar) — distingue os
+>   casos por quais chaves o corpo da requisição inclui: `accounts`/`tags`
+>   presentes (mesmo `[]`) substituem por completo o conjunto já
+>   cadastrado daquela Entity (delete-all + reinsert, sem diff — exatamente
+>   como o item 6 do "Fluxo principal" pede); ausentes (Desativar/Reativar
+>   só envia `{ id, is_active }`), nenhuma das duas tabelas é tocada.
+>   Qualquer outro campo (`type`/`name`/`cargo`/`partido`/`ideologia`/
+>   `photo_url`/`influence_level`) só é atualizado quando a chave
+>   correspondente está presente no corpo — mesmo mecanismo.
+> - **Conflito de handle duplicado (`entity_accounts_unique_handle`,
+>   SQLSTATE 23505) é traduzido e localizado na linha certa**, não só numa
+>   mensagem genérica de topo — a Edge Function faz parse do `details` que
+>   o Postgres já devolve (`Key (platform, username)=(x, y) already
+>   exists.`) e retorna `{ error, conflict_account: { platform, username }
+>   }`; o formulário (`EntityFormModal`) destaca a linha de conta
+>   correspondente com borda vermelha + texto inline, além do erro de
+>   topo. Isso exigiu ampliar `lib/supabase/call-function.ts` — o `Error`
+>   lançado por `callFunction()` agora carrega qualquer campo extra do
+>   corpo JSON de erro (`Object.assign`), não só `.message` — mudança
+>   aditiva/retrocompatível, nenhum consumidor existente lê algo além de
+>   `.message` hoje.
+> - **`EntityFormModal` reaproveita, não reimplementa**, os helpers de
+>   rótulo/cor já existentes de `/authors`
+>   (`components/intelligence-center/author-color.ts`) onde fazia sentido
+>   — mas os componentes de exibição da tabela (`EntityTypeBadge`/
+>   `IdeologiaBadge`/`InfluenceBadge`, em `entities-admin-view.tsx`) são
+>   novos, por pedido explícito da spec ("implementar como um componente
+>   novo... não reaproveitar `RiskBadge` diretamente" — `InfluenceBadge`
+>   usa os mesmos tokens `risk-*`/`risk-*-bg` só pela cor, com rótulos
+>   próprios "Baixa/Média/Alta/Muito alta").
+> - **Sugestões de Partido/Dimensão/Valor são `<datalist>` nativo**, não um
+>   componente de combobox novo — texto livre com sugestões, exatamente o
+>   texto da spec ("texto livre com sugestões"), e mais simples que
+>   replicar `NarrativeCombobox` (`communications/`, que é single-select
+>   estrito, não o caso aqui). Nenhuma chamada de rede nova para essas
+>   sugestões — vêm da própria listagem já carregada.
+> - **Campos reorganizados (2026-07-13)**, pedido do usuário anterior:
+>   "renomeie o campo descrição para cargo, inclua um novo campo chamado
+>   partido, crie um campo chamado ideologia... e reorganize os dados
+>   nessas novas colunas." O formulário implementado já reflete o schema
+>   atualizado (`data-model.md`, migration `20260731050000`) —
+>   `Cargo`/`Partido`/`Ideologia` são campos estruturados de "Dados
+>   básicos", desabilitados quando `type = 'party'` (não se aplica ao
+>   próprio partido).
+> - Não verificado contra um Supabase real nesta sessão (sem credenciais
+>   de deploy neste ambiente, mesma limitação recorrente de toda sessão
+>   sem acesso ao Supabase Dashboard já registrada em `CLAUDE.md`) — `npx
+>   tsc --noEmit` e `npm run build` (23 rotas, `/admin/entities` nova)
+>   passam limpos; `git push` pra `develop` é o próximo passo.
 
 ## Objetivo
 

@@ -2,7 +2,7 @@
 tipo: data-model
 módulo: entities
 status: implementado
-atualizado: 2026-07-13
+atualizado: 2026-07-15
 ---
 
 # Modelo de Dados — Cadastro de Entidades
@@ -125,6 +125,43 @@ atualizado: 2026-07-13
 > colisão de `(platform, username)` com o seed de deputados) — **não
 > executada contra um banco real**.
 >
+> ✅ **Complemento de veículos de mídia/TV/rádio + canais legislativos
+> (2026-07-15)** — usuário pediu uma lista dos "50 canais mais relevantes
+> de notícias e política" (curadoria de conhecimento geral desta mesma
+> conversa, não verificada) e depois pediu para expandir o seed com o que
+> da lista ainda não existia no banco — migration
+> `supabase/migrations/20260809120000_seed_additional_media_and_legislative_channels.sql`.
+> Comparado item a item contra os 2 seeds anteriores: 39 dos 50 itens já
+> existiam (os 30 veículos + os 12 institutos já cobrem a maior parte de
+> rádio/portal/revista/TV). Adicionados os 10 itens genuinamente novos +
+> Politize! = **11 Entities**, mesma disciplina de fonte real (Wikidata
+> `wbsearchentities`/`Special:EntityData`, P856/P2002/P2003, consultado
+> ao vivo nesta sessão): Record TV, RecordNews, BandNews TV, TV Cultura,
+> Época, CBN, BandNews FM, Flow Podcast (todos `media_outlet`) e TV
+> Câmara/TV Senado (`institution` — canais oficiais do Legislativo, não
+> mídia privada/pública comum, por isso `power_branch = 'Legislativo'`,
+> não `'Mídia'`). **14 `entity_accounts`** (Twitter/Instagram só, ver
+> exclusão de YouTube abaixo) e **31 `entity_tags`** (`segment`/
+> `power_branch`/`website`, nenhuma dimensão nova). Época não tem
+> P2002/P2003 no Wikidata (hoje é uma seção de `oglobo.globo.com`, não um
+> veículo com contas próprias) — só `website`. Politize! não teve nenhum
+> item Wikidata encontrado (buscas em pt/en, com e sem "!") — mesmo
+> tratamento já dado a 10 dos 12 institutos no seed anterior: Entity
+> cadastrada (existência real e conhecida, fora de dúvida) sem
+> `website`/`entity_accounts`, para permitir cadastro manual depois.
+> ⚠️ **Deliberadamente fora de `entity_accounts`**: os canais do YouTube
+> confirmados via P2397 para Record TV/TV Cultura/BandNews FM/Flow
+> Podcast — esse campo do Wikidata guarda o ID bruto do canal (`UC...`),
+> não o handle legível que a Brandwatch grava em `mentions.author`/
+> `bw_query_top_authors.author` para YouTube, então gravar o ID quase
+> certamente nunca casaria no JOIN por texto de `author-linking.md` —
+> gravar mesmo assim sugeriria um vínculo que não funciona na prática
+> (mesmo cuidado já aplicado a `website`, nunca gravado em
+> `entity_accounts`). Revisão manual (contagem de UUIDs distintos/linhas
+> conferida programaticamente, parênteses balanceados) — **não executada
+> contra um banco real**, mesma limitação recorrente de toda sessão sem
+> credenciais de deploy.
+>
 > ✅ **Reorganização de campos (2026-07-13, mesmo dia)**, pedido do
 > usuário: "renomeie o campo descrição para cargo, inclua um novo campo
 > chamado partido, crie um campo chamado ideologia (popule com direita,
@@ -149,8 +186,8 @@ atualizado: 2026-07-13
 > editorial, composição de blocos parlamentares, posicionamento em pautas
 > econômicas/de costumes), não uma fonte única verificável como as
 > migrations anteriores — **classificação de melhor esforço, revisável
-> pelo admin a qualquer momento** (`/admin/entities`, quando implementada),
-> ver a nota completa no topo da migration para a lista partido→ideologia
+> pelo admin a qualquer momento** (`/admin/entities`, implementada desde
+> 2026-07-15, ver `entity-registration.md`), ver a nota completa no topo da migration para a lista partido→ideologia
 > usada. Os 593 parlamentares **herdam a ideologia do próprio partido**
 > (`entities.partido` → busca o `ideologia` do partido correspondente) —
 > não é uma avaliação individual por parlamentar. Revisão manual da mesma

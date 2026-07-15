@@ -1,8 +1,8 @@
 ---
 tipo: module-overview
 módulo: entities
-status: pronto
-atualizado: 2026-07-13
+status: implementado
+atualizado: 2026-07-15
 ---
 
 # Módulo: Cadastro de Entidades
@@ -33,9 +33,16 @@ atualizado: 2026-07-13
 > fora do seed (contas de rede social, nível de influência, espectro
 > político — tudo sem fonte confiável em lote ou explicitamente subjetivo).
 > `entity-registration.md` (tela de CRUD) e `author-linking.md` (vínculo
-> com o ranking de Autores) continuam só especificados, não implementados
-> — o catálogo já existe e já está populado, mas ainda só editável via SQL
-> direto, não pela UI.
+> com o ranking de Autores) continuavam só especificados nesta revisão,
+> não implementados — o catálogo já existia e já estava populado, mas
+> ainda só editável via SQL direto, não pela UI. **Ambos fechados desde**:
+> `author-linking.md` em 2026-08-01 (`LEFT JOIN` real em
+> `get_authors_ranking`, redesenho interativo de `/authors`) e
+> `entity-registration.md` em 2026-07-15 (`/admin/entities`, 3ª guia de
+> Administração, + `create-entity`/`update-entity`/`delete-entity`) — ver
+> os próprios arquivos e `CLAUDE.md` para o detalhe completo de cada um. O
+> módulo `entities` como um todo está **implementado** por completo desde
+> 2026-07-15.
 >
 > ✅ **`entity_accounts` dos 512 Deputados Federais também populada no
 > mesmo dia** (migration `20260731030000`) — fonte oficial real
@@ -111,8 +118,8 @@ aqui.
 | Funcionalidade | Descrição resumida | Status | Spec |
 |---|---|---|---|
 | Modelo de dados (`entities`, `entity_accounts`, `entity_tags`) | Estrutura EAV — pessoa/veículo/partido/instituição/empresa/movimento, contas por plataforma, classificação extensível por dimensão | **implementado** (2026-07-13, migration `20260731000000` + seed de partidos/parlamentares `20260731010000` — ver `data-model.md`) | [data-model.md](data-model.md) |
-| Cadastro de Entidades (CRUD) | Tela `/admin/entities`, admin-only — criar/editar/desativar/excluir | pronto | [entity-registration.md](entity-registration.md) |
-| Vínculo com Autores e Influenciadores | Como uma Entity se conecta ao ranking nativo de autores da Brandwatch (`get_authors_ranking`) e habilita cadastro rápido a partir de um autor já visto | pronto | [author-linking.md](author-linking.md) |
+| Cadastro de Entidades (CRUD) | Tela `/admin/entities`, admin-only — criar/editar/desativar/excluir | **implementado** (2026-07-15 — ver `entity-registration.md` e `CLAUDE.md`) | [entity-registration.md](entity-registration.md) |
+| Vínculo com Autores e Influenciadores | Como uma Entity se conecta ao ranking nativo de autores da Brandwatch (`get_authors_ranking`) e habilita cadastro rápido a partir de um autor já visto | **implementado** (2026-08-01 — ver `author-linking.md`) | [author-linking.md](author-linking.md) |
 
 ## Dependências
 
