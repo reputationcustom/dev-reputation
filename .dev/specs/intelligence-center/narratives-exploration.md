@@ -8,6 +8,28 @@ atualizado: 2026-08-08
 
 # Exploração de Narrativas (lista + detalhe)
 
+> ✅ **"Resumo executivo das Narrativas" acima da tabela (2026-07-14,
+> sessão seguinte)** — pedido do usuário: "Crie um resumo executivo para
+> colocá-lo acima da tabela de narrativa na página de narrativas. Esse
+> resumo será um resumo executivo de todas as narrativas daquele
+> período." Novo widget `WidgetCard` ("Resumo executivo das Narrativas"),
+> posicionado imediatamente acima de "Todas as Narrativas" — sempre
+> visível, independente do modo de exibição (Tabela/Cards). **Distinto**
+> do "Resumo executivo da página" já existente no fim da página (esse
+> lê `narrative_text`/`highlights`, ai-synthesis Camada 0/1, sobre
+> eventos do radar): este novo widget é ai-synthesis **Camada 2**
+> (`ui_meta.narratives_overview_text`, `aggregated-metrics-service.ts`),
+> nova seção `page = 'narratives'` / `section = 'overview'` (mesmo
+> mecanismo genérico já usado por `platforms`/`themes`/`authors` — ver
+> `aggregated-metrics/ai-synthesis.md`, "Camada 2"). Justificativa da
+> Camada 2 (exigida pela própria regra da spec): o conjunto agregado de
+> scores de **todas** as Narrativas de uma vez (contagem total,
+> distribuição de sentimento, maiores SOV/risco/momentum) não é um
+> evento discreto do radar — é uma leitura composta do próprio bloco
+> `narratives` já buscado por esta página, sem chamada nova. Mesmo
+> componente `ExpandableText` ("mostrar mais"/"mostrar menos") de todo
+> outro texto de IA do produto.
+
 > ✅ **"Resumo executivo da página" + admin force-refresh (2026-07-14)** —
 > pedido do usuário: "atualizar o resumo executivo de todas as narrativas.
 > Além disso, inclua um resumo executivo da página." Duas mudanças

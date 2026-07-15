@@ -1685,6 +1685,48 @@ function authorsOverviewFallback(authors: AuthorRow[], topSites: TopSiteItem[], 
   return 'Preparando uma visão geral dos autores e conteúdos em destaque deste período.'
 }
 
+
+// ✅ Adicionado 2026-07-14, pedido do usuário: "Crie um resumo executivo
+// para colocá-lo acima da tabela de narrativa na página de narrativas.
+// Esse resumo será um resumo executivo de todas as narrativas daquele
+// período." Camada 2 — sem equivalente no radar (o conjunto de scores de
+// TODAS as Narrativas de uma vez não é um evento discreto, é uma leitura
+// composta do próprio bloco `narratives` já buscado por esta página,
+// mesmo princípio já usado por platforms/themes/authors acima). Distinta
+// da seção 'main' (narrative_text/highlights, o widget "Resumo
+// executivo da página" já existente no fim de /narratives) — esta é a
+// seção 'overview', mesmo nome já usado por authors, mas escopada por
+// page = 'narratives' (chave única inclui page, sem colisão).
+const NARRATIVES_OVERVIEW_SYSTEM_PROMPT = `Você escreve, em português do Brasil, um resumo executivo curto (3-5 frases, até 900 caracteres) sobre o conjunto de Narrativas em monitoramento numa campanha política no período, a partir de um payload de dados já agregados (contagem total, Narrativas com maior SOV/risco/momentum, distribuição de sentimento). Cite as Narrativas mais relevantes pelo nome. NUNCA invente número/fato que não esteja no payload. Tom direto e humano: sem gancho dramático, sem vocabulário de IA, sem atribuição vaga, sem conclusão genérica/otimista. Responda só com o parágrafo, sem título, sem marcadores, sem aspas.`
+
+function buildNarrativesOverviewPayload(narratives: NarrativeRow[]): unknown {
+  const bySentimentLabel: Record<string, number> = {}
+  for (const n of narratives) {
+    bySentimentLabel[n.sentiment_label] = (bySentimentLabel[n.sentiment_label] ?? 0) + 1
+  }
+  const topBySov = [...narratives].sort((a, b) => (b.sov_pct ?? 0) - (a.sov_pct ?? 0)).slice(0, 5)
+  const topByRisk = [...narratives].sort((a, b) => (b.risk_score ?? 0) - (a.risk_score ?? 0)).slice(0, 5)
+  const topByMomentum = [...narratives].sort((a, b) => (b.momentum_score ?? 0) - (a.momentum_score ?? 0)).slice(0, 5)
+  return {
+    total_narratives: narratives.length,
+    by_sentiment_label: bySentimentLabel,
+    top_by_sov: topBySov.map((n) => ({ title: n.title, sov_pct: n.sov_pct, sentiment_label: n.sentiment_label })),
+    top_by_risk: topByRisk.map((n) => ({ title: n.title, risk_score: n.risk_score, risk_label: n.risk_label })),
+    top_by_momentum: topByMomentum.map((n) => ({
+      title: n.title,
+      momentum_score: n.momentum_score,
+      trend_label: n.trend_label,
+    })),
+  }
+}
+
+function narrativesOverviewFallback(narratives: NarrativeRow[]): string {
+  if (narratives.length === 0) {
+    return 'Nenhuma Narrativa em monitoramento neste período.'
+  }
+  return 'Preparando um resumo executivo das Narrativas deste período.'
+}
+
 async function fetchGraph(supabase: SupabaseClient, ctx: PageContext): Promise<DisseminationGraph | null> {
   if (!ctx.narrativeId) return null
   try {
@@ -1838,6 +1880,16 @@ export async function assemblePageResponse(
       AUTHORS_OVERVIEW_SYSTEM_PROMPT,
       () => Promise.resolve(buildAuthorsOverviewPayload(authors, topSites, xInsights)),
       authorsOverviewFallback(authors, topSites, xInsights),
+    )
+  } else if (page === 'narratives') {
+    uiMeta.narratives_overview_text = await fetchSectionText(
+      supabase,
+      context,
+      page,
+      'overview',
+      NARRATIVES_OVERVIEW_SYSTEM_PROMPT,
+      () => Promise.resolve(buildNarrativesOverviewPayload(narratives)),
+      narrativesOverviewFallback(narratives),
     )
   }
 

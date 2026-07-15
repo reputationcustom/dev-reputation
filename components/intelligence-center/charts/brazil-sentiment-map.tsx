@@ -1,5 +1,5 @@
 import type { BreakdownItem } from "@reputation/shared-types";
-import { BRAZIL_STATES, BRAZIL_MAP_VIEWBOX, type BrazilStateShape } from "@/lib/geo/brazil-states";
+import { BRAZIL_STATES, BRAZIL_MAP_VIEWBOX, findBrazilState } from "@/lib/geo/brazil-states";
 import { sentimentFillFromScore } from "@/components/intelligence-center/score-badges";
 import { EmptyState } from "@/components/ui/empty-state";
 
@@ -12,28 +12,12 @@ import { EmptyState } from "@/components/ui/empty-state";
 // ⚠️ Mesma ressalva já registrada em `get_region_breakdown`/
 // `foundation/data-model.md`: o texto exato que a Brandwatch devolve pra
 // cada estado (dimensão `regions`) nunca foi confirmado contra um payload
-// real. `findState()` abaixo tenta casar por nome completo, por sigla (UF)
-// e, em último caso, por substring — qualquer item que não case com
-// nenhum dos 27 estados é listado abaixo do mapa em vez de descartado
-// silenciosamente (mesmo princípio de honestidade já aplicado a outros
-// gaps de mapeamento neste projeto).
-function normalize(value: string): string {
-  return value
-    .normalize("NFD")
-    .replace(/\p{Diacritic}/gu, "")
-    .toLowerCase()
-    .trim();
-}
-
-function findState(label: string): BrazilStateShape | undefined {
-  const norm = normalize(label);
-  return (
-    BRAZIL_STATES.find((s) => normalize(s.name) === norm) ??
-    BRAZIL_STATES.find((s) => s.code.toLowerCase() === norm) ??
-    BRAZIL_STATES.find((s) => norm.includes(normalize(s.name)) || normalize(s.name).includes(norm))
-  );
-}
-
+// real. `findBrazilState()` (lib/geo/brazil-states.ts, reusada também pela
+// tabela do mesmo widget desde 2026-07-14) tenta casar por nome completo,
+// por sigla (UF) e, em último caso, por substring — qualquer item que não
+// case com nenhum dos 27 estados é listado abaixo do mapa em vez de
+// descartado silenciosamente (mesmo princípio de honestidade já aplicado a
+// outros gaps de mapeamento neste projeto).
 const LEGEND_SAMPLES = [
   { score: 70, label: "Muito positivo" },
   { score: 30, label: "Positivo" },
@@ -52,7 +36,7 @@ export function BrazilSentimentMap({ items }: { items: BreakdownItem[] }) {
   const byCode = new Map<string, BreakdownItem>();
   const unmatched: BreakdownItem[] = [];
   for (const item of items) {
-    const state = findState(item.label);
+    const state = findBrazilState(item.label);
     if (state) {
       byCode.set(state.code, item);
     } else {

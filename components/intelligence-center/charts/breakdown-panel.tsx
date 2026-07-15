@@ -1,4 +1,5 @@
 import type { Breakdown } from "@reputation/shared-types";
+import { findBrazilState } from "@/lib/geo/brazil-states";
 import { EmptyState } from "@/components/ui/empty-state";
 
 const SENTIMENT_ORDER = ["positive", "neutral", "negative"];
@@ -129,8 +130,26 @@ const NAME_COLUMN_LABEL: Partial<Record<Breakdown["type"], string>> = {
 // nenhum; agora é uma `<table>` real, mesmo padrão de cabeçalho
 // (`font-bold text-text-primary`, Regra 7 transversal) já usado por
 // `NarrativesTable`/`XInsightsPanel`.
+// ✅ 2026-07-14 (pedido do usuário: "retire da tabela de estados os estados
+// que não são brasileiros"; e, mesmo dia, "coloque nomes mais amigáveis no
+// estado, ex: BRA.SP deve ser São Paulo") — pra `breakdown.type === 'region'`
+// especificamente, cada label bruto é resolvido contra os 27 estados via
+// `findBrazilState()` (lib/geo/brazil-states.ts, mesma função já usada pelo
+// mapa deste widget); o que não casar com nenhum estado é descartado da
+// tabela (o mapa já sinaliza esses casos separadamente, como "não
+// localizado", em vez de escondê-los silenciosamente — a tabela, por
+// pedido explícito, só lista estados brasileiros de verdade) e o que casar
+// mostra o nome completo do estado (`state.name`), não o código bruto.
 function ScoreList({ breakdown }: { breakdown: Breakdown }) {
-  const items = breakdown.items.filter((item) => item.pct > 0);
+  const isRegion = breakdown.type === "region";
+  const items = breakdown.items
+    .filter((item) => item.pct > 0)
+    .map((item) => {
+      if (!isRegion) return { key: item.label, displayLabel: item.label, item };
+      const state = findBrazilState(item.label);
+      return state ? { key: item.label, displayLabel: state.name, item } : null;
+    })
+    .filter((row): row is { key: string; displayLabel: string; item: Breakdown["items"][number] } => row !== null);
 
   if (items.length === 0) {
     return <EmptyState message="Nenhuma menção no período selecionado." />;
@@ -149,9 +168,9 @@ function ScoreList({ breakdown }: { breakdown: Breakdown }) {
           </tr>
         </thead>
         <tbody>
-          {items.map((item) => (
-            <tr key={item.label} className="border-b border-border-subtle-2 last:border-0">
-              <td className="py-2 pr-4 text-text-primary">{item.label}</td>
+          {items.map(({ key, displayLabel, item }) => (
+            <tr key={key} className="border-b border-border-subtle-2 last:border-0">
+              <td className="py-2 pr-4 text-text-primary">{displayLabel}</td>
               <td className="px-4 py-2 text-right text-xs text-text-tertiary">{item.pct}% das menções</td>
               <td
                 className={`px-4 py-2 text-right font-semibold ${

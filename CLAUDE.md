@@ -8407,6 +8407,62 @@ disponível neste ambiente — a nova ordem visual não foi confirmada num
 navegador real, mesma limitação já registrada em toda sessão anterior de
 `intelligence-center` neste arquivo.
 
+### "Resumo executivo das Narrativas" — nova seção Camada 2 acima da tabela em `/narratives` (2026-07-14)
+
+User request: "Crie um resumo executivo para colocá-lo acima da tabela de
+narrativa na página de narrativas. Esse resumo será um resumo executivo
+de todas as narrativas daquele período." Distinto do "Resumo executivo da
+página" já existente no fim da mesma página (esse é `narrative_text`/
+`highlights`, ai-synthesis Camada 0/1, sobre eventos do radar) — o pedido
+descreve um resumo sobre o **conjunto de Narrativas** (SOV/sentimento/
+risco/momentum agregados), sem equivalente no radar — exatamente o caso
+que a Camada 2 já cobre (mesmo padrão implementado no dia anterior pra
+`platforms`/`themes`/`authors`).
+
+**4ª seção Camada 2**: `narratives:overview` (`section = 'overview'`,
+mesma tabela/mecanismo genérico `fetchSectionText`/`composeAndPersistSection`
+de sempre — nenhum schema novo). `buildNarrativesOverviewPayload()` monta
+o payload a partir do próprio bloco `narratives` já buscado por
+`/narratives` (nenhuma chamada extra): contagem total, distribuição por
+`sentiment_label`, top 5 por `sov_pct`/`risk_score`/`momentum_score`.
+Wiring em `assemblePageResponse`: novo branch `else if (page ===
+'narratives')`, anexado a `ui_meta.narratives_overview_text`.
+
+**Frontend**: novo `WidgetCard` ("Resumo executivo das Narrativas"),
+posicionado imediatamente acima de "Todas as Narrativas" — sempre
+visível, independente do toggle Tabela/Cards. Mesmo `ExpandableText` de
+todo outro texto de IA do produto.
+
+**Propagação (Princípio técnico 5)**: antes de propagar pros 8 arquivos
+deployados, confirmado por `grep` que os 8 ainda tinham o mesmo corpo de
+`authorsOverviewFallback`/o branch `assemblePageResponse` do canônico
+(uma sessão concorrente havia tocado este mesmo arquivo compartilhado
+recentemente — `entity_name`, ajuste de truncamento de "Conteúdo em
+destaque" — por isso essa checagem prévia, mesma cautela já registrada na
+entrada anterior sobre o fix do template de "Diário"). Confirmado 1:1 em
+todos os 8, então a propagação (script Node, função nova + branch de
+wiring, 2 substituições por arquivo) foi aplicada com segurança — desta
+vez escrita com strings delimitadas por aspas duplas (nunca crases) pra
+evitar o mesmo erro de escaping já documentado antes nesta sessão (ver
+"As mensagens ainda aparecem cortadas" acima).
+
+**Especificações atualizadas**: `intelligence-center/narratives-exploration.md`
+(novo blockquote de topo, distinguindo os 2 "resumos executivos" desta
+página), `aggregated-metrics/ai-synthesis.md` ("Camada 2" — 3→4 seções),
+`standard-json-envelope.md` (`ui_meta` — 3→4 chaves).
+
+**Verificação**: `npx tsc --noEmit` e `npm run build` (`rm -rf .next`
+antes) passam limpos desta vez (sem conflito de processo concorrente) —
+21 rotas, mesma contagem de antes. Diff da function
+`buildNarrativesOverviewPayload` extraída de 3 dos 8 arquivos deployados
+contra o canônico — idêntica em todos. Sem ambiente Deno/Supabase/Anthropic
+real nesta sessão — não testado contra uma chamada real, mesma limitação
+recorrente de toda sessão sem credenciais de deploy; `git push` para
+`develop` é o próximo passo, e o sinal a acompanhar é o novo widget
+mostrando "Preparando um resumo executivo das Narrativas deste período."
+no primeiro carregamento e o parágrafo real na carga seguinte (mesmo
+padrão fire-and-forget de sempre).
+
 ## Directory structure
 
 ```

@@ -12,6 +12,7 @@ import { NarrativeCard } from "@/components/intelligence-center/narrative-card";
 import { NarrativeCategoryLanes } from "@/components/intelligence-center/narrative-category-lanes";
 import { TopicSentimentList } from "@/components/intelligence-center/term-signals-list";
 import { NarrativeTextPanel } from "@/components/intelligence-center/insights-panel";
+import { ExpandableText } from "@/components/ui/expandable-text";
 import { Toast } from "@/components/ui/toast";
 import { callFunction } from "@/lib/supabase/call-function";
 
@@ -100,6 +101,27 @@ export default function NarrativesListPage() {
             </button>
           ))}
         </div>
+
+        {/* ✅ Adicionado 2026-07-14 (pedido do usuário: "Crie um resumo
+            executivo para colocá-lo acima da tabela de narrativa... Esse
+            resumo será um resumo executivo de todas as narrativas daquele
+            período") — ai-synthesis Camada 2 (`ui_meta.narratives_overview_text`),
+            a partir do próprio bloco `narratives` já buscado por esta
+            página (contagem total, distribuição de sentimento, maiores
+            SOV/risco/momentum) — nunca uma segunda chamada. Distinto do
+            "Resumo executivo da página" no fim da página (esse é
+            Camada 0/1, baseado em `highlights`/eventos do radar; este é
+            Camada 2, baseado nos scores agregados de todas as Narrativas
+            listadas). Sempre visível, independente do modo de exibição
+            (Tabela/Cards) — não é parte da tabela em si, só posicionado
+            imediatamente acima dela. */}
+        <WidgetCard title="Resumo executivo das Narrativas" status={status} onRetry={retry}>
+          {envelope?.ui_meta && typeof envelope.ui_meta.narratives_overview_text === "string" ? (
+            <ExpandableText text={envelope.ui_meta.narratives_overview_text} />
+          ) : (
+            <p className="text-sm text-text-tertiary">Síntese automática indisponível no momento.</p>
+          )}
+        </WidgetCard>
 
         {showTable && (
           <div className={`grid grid-cols-1 gap-6 ${selected ? "lg:grid-cols-[minmax(0,1fr)_400px]" : ""}`}>

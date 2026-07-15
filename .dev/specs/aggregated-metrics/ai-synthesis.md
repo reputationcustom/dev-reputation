@@ -498,16 +498,23 @@ comentário qualitativo). Antes de implementar a Camada 2 para qualquer página,
 deve registrar no spec da página por que a Camada 0 ou 1 não foram suficientes — mesma regra de
 "justificar chamada extra de IA" que já vale para o `event-radar`.
 
-✅ **Implementada (2026-07-14)** — 3 seções reais, cada uma numa página específica, nenhuma
+✅ **Implementada (2026-07-14)** — 4 seções reais, cada uma numa página específica, nenhuma
 compartilhada entre páginas. Diferente da Camada 1 (`narrative_text`, sempre a seção `'main'` de
 `page_narrative_synthesis`), cada seção da Camada 2 usa seu próprio valor de `section` — mesma
 tabela, mesma janela de frescor (`AI_SYNTHESIS_REFRESH_HOURS`), mesmo mecanismo
 persistência/staleness (`fetchSectionText`/`composeAndPersistSection` em
 `aggregated-metrics-service.ts`), só sem o gatilho de "evento novo do radar" (essas seções não
-dependem de `highlights`, só do tempo). Ver o blockquote de topo deste arquivo pro detalhamento
-completo de cada seção (`platforms:featured_content`, `themes:period_comparison`,
-`authors:overview`) e das páginas correspondentes (`intelligence-center/platform-analysis.md`,
-`electoral-themes.md`, `authors-and-influencers.md`) pra justificativa por página.
+dependem de `highlights`, só do tempo). `platforms:featured_content`/`themes:period_comparison`/
+`authors:overview` — ver o blockquote de topo deste arquivo pro detalhamento completo de cada uma
+e das páginas correspondentes (`intelligence-center/platform-analysis.md`, `electoral-themes.md`,
+`authors-and-influencers.md`) pra justificativa por página. ✅ **`narratives:overview`
+adicionada (2026-07-14, sessão seguinte)** — "Resumo executivo das Narrativas", acima da tabela
+em `/narratives`: payload = contagem total + distribuição de sentimento + top 5 por SOV/risco/
+momentum, tudo do próprio bloco `narratives` já buscado pela página (`buildNarrativesOverviewPayload`).
+Justificativa: o conjunto agregado de scores de todas as Narrativas de uma vez não é um evento
+discreto do radar. Ver `intelligence-center/narratives-exploration.md` pro detalhamento completo
+e a distinção com o "Resumo executivo da página" (Camada 0/1, seção `'main'`) já existente no fim
+da mesma página.
 
 ## Fluxo principal
 

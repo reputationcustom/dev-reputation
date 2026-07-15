@@ -59,7 +59,12 @@ export default function SentimentPage() {
             plataforma") — "por plataforma" e "por pauta" agora empilhados
             na mesma coluna (direita), "por narrativa" sozinha na coluna
             esquerda, em vez de "por pauta" abaixo das duas como uma linha
-            própria de largura cheia. */}
+            própria de largura cheia.
+            ✅ Reordenado de novo, mesmo dia (pedido do usuário: "Drivers de
+            sentimento e Insights deve vir logo após Sentimento por pauta do
+            lado direito") — os dois passaram a viver DENTRO da coluna
+            direita, empilhados logo abaixo de "Sentimento por pauta", em
+            vez de widgets de largura cheia abaixo da grade inteira. */}
         <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
           <WidgetCard title="Sentimento por narrativa" status={status} onRetry={retry}>
             <BreakdownPanel
@@ -80,31 +85,22 @@ export default function SentimentPage() {
                 emptyMessage="Nenhuma Pauta em monitoramento ainda."
               />
             </WidgetCard>
+
+            {/* ✅ Unificado 2026-07-14 (pedido do usuário: "no mesmo frente
+                mudando apenas a cor") — antes "Drivers positivos"/"Drivers
+                negativos" em 2 WidgetCards separados. */}
+            <WidgetCard title="Drivers de sentimento" status={status} onRetry={retry}>
+              <TopicSentimentList signals={envelope?.term_signals ?? []} />
+            </WidgetCard>
+
+            {/* "Insights" só mostra highlights aqui — narrative_text já
+                ocupa o widget "Mudança de sentimento" acima (não duplicado,
+                mesmo padrão de dedup de /overview). */}
+            <WidgetCard title="Insights" status={status} onRetry={retry}>
+              <HighlightsPanel highlights={envelope?.highlights ?? []} />
+            </WidgetCard>
           </div>
         </div>
-
-        {/* ✅ Reordenado 2026-07-14 (pedido do usuário: "subir o Drivers de
-            sentimento para abaixo de Sentimento por pauta e Insights abaixo
-            de Sentimento por Pauta") — os dois vieram de mais abaixo na
-            página (depois de "Sentimento por estado"/"Menções que mais
-            influenciaram") pra logo após a linha "por narrativa"/"por
-            plataforma"/"por pauta" acima. "Sentimento por estado" e
-            "Menções que mais influenciaram o sentimento" mantiveram sua
-            posição relativa entre si, só passaram a vir depois destes
-            dois. */}
-        {/* ✅ Unificado 2026-07-14 (pedido do usuário: "no mesmo frente
-            mudando apenas a cor") — antes "Drivers positivos"/"Drivers
-            negativos" em 2 WidgetCards separados. */}
-        <WidgetCard title="Drivers de sentimento" status={status} onRetry={retry}>
-          <TopicSentimentList signals={envelope?.term_signals ?? []} />
-        </WidgetCard>
-
-        {/* "Insights" só mostra highlights aqui — narrative_text já ocupa o
-            widget "Mudança de sentimento" acima (não duplicado, mesmo
-            padrão de dedup de /overview). */}
-        <WidgetCard title="Insights" status={status} onRetry={retry}>
-          <HighlightsPanel highlights={envelope?.highlights ?? []} />
-        </WidgetCard>
 
         {/* ✅ Repivotado 2026-07-25 (pedido do usuário: "breakdown por
             estado brasileiro") — get_region_breakdown lê dimension_type='region'
