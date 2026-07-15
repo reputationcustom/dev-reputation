@@ -8385,6 +8385,28 @@ qualquer outro widget de `narrative_text`) em período "Diário" começar
 com "O dia registrou N menções" em vez de "Sem eventos relevantes
 detectados no período. Volume cresceu/caiu...".
 
+### `/sentiment` — "Drivers de sentimento"/"Insights" reordenados pra logo abaixo de "Sentimento por pauta" (2026-07-14)
+
+User request: "subir o Drivers de sentimento para abaixo de Sentimento
+por pauta e Insights abaixo de Sentimento por Pauta." Puramente
+reordenação de widgets em `app/(intelligence-center)/(analytics)/sentiment/page.tsx`
+— nenhuma mudança de dado/componente. Os dois widgets vieram de mais
+abaixo na página (antes vinham depois de "Sentimento por estado" e
+"Menções que mais influenciaram o sentimento") pra logo após a linha
+"Sentimento por narrativa"/"por plataforma"/"por pauta". Ordem final:
+Distribuição geral/Mudança de sentimento → Evolução temporal → por
+narrativa/plataforma/pauta → **Drivers de sentimento** → **Insights** →
+Sentimento por estado → Menções que mais influenciaram. "Sentimento por
+estado" e "Menções que mais influenciaram" mantiveram sua posição
+relativa entre si, só passaram a vir depois dos dois widgets movidos.
+
+**Verificação**: `npx tsc --noEmit` e `npm run build` (`rm -rf .next`
+antes) passam limpos — 21 rotas, mesma contagem de antes. Sem mudança de
+backend/migration — reordenação de JSX pura. Sem automação de browser
+disponível neste ambiente — a nova ordem visual não foi confirmada num
+navegador real, mesma limitação já registrada em toda sessão anterior de
+`intelligence-center` neste arquivo.
+
 ## Directory structure
 
 ```

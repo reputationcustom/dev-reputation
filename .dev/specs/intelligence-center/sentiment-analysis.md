@@ -8,6 +8,14 @@ atualizado: 2026-07-14
 
 # Análise de Sentimento
 
+> ✅ **Ordem dos widgets reorganizada (2026-07-14, mesmo dia)** — pedido
+> do usuário: "subir o Drivers de sentimento para abaixo de Sentimento
+> por pauta e Insights abaixo de Sentimento por Pauta." Reordenação pura
+> de JSX, nenhuma mudança de dado/componente. Ordem atual da página:
+> Distribuição geral/Mudança de sentimento → Evolução temporal → por
+> narrativa/plataforma/pauta → **Drivers de sentimento** → **Insights** →
+> Sentimento por estado → Menções que mais influenciaram o sentimento.
+
 > ✅ **2 ajustes de layout + bug real de escopo em "Insights" corrigido
 > (2026-07-14)**, pedidos do usuário: (1) mover a tabela "Sentimento por
 > pauta" pra baixo de "Sentimento por plataforma" (empilhadas na mesma

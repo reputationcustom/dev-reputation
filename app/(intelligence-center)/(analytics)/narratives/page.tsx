@@ -79,14 +79,12 @@ export default function NarrativesListPage() {
       <PageHeaderBar title="Narrativas" subtitle="Explore todas as Narrativas em monitoramento." />
 
       <div className="flex flex-col gap-6 p-8">
-        {/* ✅ Adicionado 2026-07-14 (pedido do usuário: "atualizar o resumo
-            executivo de todas as narrativas... permita que eu consiga
-            executar a atualização... por algo disponível na sessão do
-            administrador") — força narratives.description a ser
-            recomposto AGORA pra toda Narrativa ativa desta organização,
-            sem esperar o cron de 30min/janela de staleness (ver
-            admin-refresh-narrative-summaries). Só admins veem o botão. */}
-        <RefreshNarrativeSummariesButton />
+        {/* Botão "Atualizar resumos executivos das Narrativas"
+            (RefreshNarrativeSummariesButton, admin-refresh-narrative-summaries)
+            ocultado a pedido do usuário 2026-07-14 — componente mantido no
+            arquivo, só não renderizado aqui; reativar é só descomentar a
+            linha abaixo. */}
+        {/* <RefreshNarrativeSummariesButton /> */}
 
         <div className="flex flex-wrap items-center gap-2 self-start rounded-md border border-border-default p-0.5">
           {DISPLAY_MODE_OPTIONS.map((option) => (

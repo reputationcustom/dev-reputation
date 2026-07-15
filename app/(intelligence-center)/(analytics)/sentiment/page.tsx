@@ -83,6 +83,29 @@ export default function SentimentPage() {
           </div>
         </div>
 
+        {/* ✅ Reordenado 2026-07-14 (pedido do usuário: "subir o Drivers de
+            sentimento para abaixo de Sentimento por pauta e Insights abaixo
+            de Sentimento por Pauta") — os dois vieram de mais abaixo na
+            página (depois de "Sentimento por estado"/"Menções que mais
+            influenciaram") pra logo após a linha "por narrativa"/"por
+            plataforma"/"por pauta" acima. "Sentimento por estado" e
+            "Menções que mais influenciaram o sentimento" mantiveram sua
+            posição relativa entre si, só passaram a vir depois destes
+            dois. */}
+        {/* ✅ Unificado 2026-07-14 (pedido do usuário: "no mesmo frente
+            mudando apenas a cor") — antes "Drivers positivos"/"Drivers
+            negativos" em 2 WidgetCards separados. */}
+        <WidgetCard title="Drivers de sentimento" status={status} onRetry={retry}>
+          <TopicSentimentList signals={envelope?.term_signals ?? []} />
+        </WidgetCard>
+
+        {/* "Insights" só mostra highlights aqui — narrative_text já ocupa o
+            widget "Mudança de sentimento" acima (não duplicado, mesmo
+            padrão de dedup de /overview). */}
+        <WidgetCard title="Insights" status={status} onRetry={retry}>
+          <HighlightsPanel highlights={envelope?.highlights ?? []} />
+        </WidgetCard>
+
         {/* ✅ Repivotado 2026-07-25 (pedido do usuário: "breakdown por
             estado brasileiro") — get_region_breakdown lê dimension_type='region'
             (estado), não mais 'country'. Ver sql-aggregation.md.
@@ -110,22 +133,8 @@ export default function SentimentPage() {
           </div>
         </WidgetCard>
 
-        {/* ✅ Unificado 2026-07-14 (pedido do usuário: "no mesmo frente
-            mudando apenas a cor") — antes "Drivers positivos"/"Drivers
-            negativos" em 2 WidgetCards separados. */}
-        <WidgetCard title="Drivers de sentimento" status={status} onRetry={retry}>
-          <TopicSentimentList signals={envelope?.term_signals ?? []} />
-        </WidgetCard>
-
         <WidgetCard title="Menções que mais influenciaram o sentimento" status={status} onRetry={retry}>
           <EmptyState message="Lista de menções em destaque ainda não implementada — sem bloco correspondente no envelope atual." />
-        </WidgetCard>
-
-        {/* "Insights" só mostra highlights aqui — narrative_text já ocupa o
-            widget "Mudança de sentimento" acima (não duplicado, mesmo
-            padrão de dedup de /overview). */}
-        <WidgetCard title="Insights" status={status} onRetry={retry}>
-          <HighlightsPanel highlights={envelope?.highlights ?? []} />
         </WidgetCard>
       </div>
     </>
