@@ -9760,6 +9760,158 @@ posicionamento do tooltip no rail não foram confirmados visualmente num
 navegador real, mesma limitação já registrada em toda sessão anterior de
 `intelligence-center` neste arquivo.
 
+### AI text panels stuck on the same message — `is_final` computed with the wrong timezone, not `page_cache` (2026-07-16)
+
+User report: "a tabela page_cache não está atualizando, as mensagens
+permanecem sempre a mesma." Investigation ruled out `page_cache`
+immediately and with certainty: `getPageEnvelopeWithCache()` has called
+`assemblePageResponse()` directly (bypassing the cache entirely) since
+2026-07-14 — confirmed byte-identical in the canonical file and all 8
+deployed Edge Functions, and confirmed via a repo-wide grep (frontend
+included) that nothing else reads or writes that table. A dead, bypassed
+cache literally cannot be the cause of stale content — if anything, its
+absence means every request is already computing everything live.
+Follow-up `AskUserQuestion` narrowed the actual symptom to the AI text
+panels ("Insights"/"O que os gráficos mostram"/"Conteúdos de destaque"),
+which are served by a completely different table, `page_narrative_synthesis`
+(ai-synthesis Camadas 0-2).
+
+**Real bug found there**: all 3 write sites
+(`composeAndPersistLayer1`/`composeNarrativeSynthesisOnDemand`/
+`composeAndPersistSection` in `aggregated-metrics-service.ts`) computed
+`is_final: isPeriodClosed(ctx.period.end)` unconditionally —
+`period_end < todaySaoPaulo()`, hardcoded to América/São_Paulo. But for
+`daily`/`weekly`/`monthly` modes, `period.end` is computed on the
+**frontend** using the requesting **user's own** configured timezone
+(`user_profiles.timezone`, `header-context.tsx`/`getLastNDaysRange`) —
+always "today" in that user's timezone, a rolling window that should
+never be treated as "closed." América/São_Paulo is only the *default*
+for `user_profiles.timezone`, not the only possible value (`/perfil`
+lets a user change it) — for any user whose configured timezone reads
+"today" as an earlier calendar date than São Paulo's (any US/Canada
+timezone, for example), this comparison resolved `is_final: true` on the
+very first composition of the day. Since `is_final: true` permanently
+locks the `!row.is_final` refresh gate in `fetchNarrativeText`/
+`fetchSectionText`, no automatic recomposition — neither the
+`AI_SYNTHESIS_REFRESH_HOURS` time window nor a new radar highlight —
+could ever fire again for the rest of that calendar day: the morning's
+one-time AI text stayed frozen until the date rolled over, exactly
+matching "as mensagens permanecem sempre a mesma."
+
+**Fix**: new `isFinalForPeriod(ctx)` — only a `custom` period (an
+arbitrary range explicitly chosen by the user, which can legitimately be
+entirely in the past) can ever be `is_final: true`; `daily`/`weekly`/
+`monthly` are never closed, by definition, since they always end "today"
+in whichever timezone. This sidesteps the timezone-mismatch entirely
+rather than trying to thread the user's timezone through to the backend
+(the backend doesn't currently receive it, and `todaySaoPaulo()` has no
+other caller that would need it). Propagated (Principle 5) from the
+canonical file to all 8 deployed Edge Functions via a Node script that
+extracts the new `isPeriodClosed`/`isFinalForPeriod` block from the
+canonical source and swaps it into each deployed copy — verified with an
+isolated diff against the canonical prefix afterward (only the 2
+already-known, already-expected differences — the `createClient` import,
+comment backtick formatting — remained; no new drift, and specifically
+confirmed the `createClient` import wasn't clobbered, the exact failure
+mode that broke this same propagation technique twice before, see
+"`[get-page-*] unhandled error ReferenceError: createClient is not
+defined`" above). `npx tsc --noEmit` clean.
+
+⚠️ Not tested against a live Supabase/Deno environment this session (no
+credentials) — same recurring caveat as every session in this file
+without deploy access. `git push` to `develop` is the next step; the
+signal to check afterward is a `page_narrative_synthesis` row for
+`daily`/`weekly`/`monthly` never showing `is_final: true` again, and the
+AI text actually changing over the course of a day (via the time or
+new-highlight trigger) for a user whose profile timezone isn't
+América/São_Paulo. `page_cache` (the table the user actually named)
+remains intentionally disabled — it was never the cause and wasn't
+touched.
+
+### ai-synthesis (Camada 0) + KPI cards — mesmo bug de "dia incompleto vs. dia completo" já corrigido no event-radar (2026-07-16)
+
+User request, mesma sessão do fix de janelas do `event-radar` acima: "com
+essa mesma perspectiva que foi corrijida no radar, verifique na
+ai-sinthesys se também precisa dessa melhoria de considerar as ultimas
+24h, semanal os ultimos 7 dias e mensal os últimos 30 dias, uma vez que
+através dessa funcionalidades que são criadas as sinteses das páginas."
+
+**Confirmado, exatamente a mesma classe de bug**: `get_volume_delta`
+(fonte do texto "Volume cresceu/caiu X% em relação ao período anterior"
+da Camada 0 de `ai-synthesis.md`) sempre soma `current_value` sobre
+`[período.start, período.end]` — e o header (Diário/Semanal/Mensal,
+`getLastNDaysRange`, `header-context.tsx`) sempre fixa `período.end =
+hoje`. `previous_value` é sempre um período histórico inteiramente
+fechado, de mesma duração — mesma assimetria do bug de `event-radar`, só
+que aqui o "período atual" sempre inclui hoje como parte de uma janela
+maior (100% do período pra "Diário", ~1/7 pra "Semanal", ~1/30 pra
+"Mensal"), em vez de ser inteiramente o dia de hoje.
+
+**Achado adicional, escopo ampliado com confirmação do usuário (`AskUserQuestion`)**:
+o MESMO bug existe em `get_metrics_cards` — os cards de KPI ("Total de
+Menções" etc., "vs. período anterior") mostrados em **toda página**, não
+só o texto do ai-synthesis. Corrigir só `get_volume_delta` deixaria o
+card de KPI e o texto da síntese, lado a lado na mesma tela, discordando
+um do outro — mesma classe de inconsistência já encontrada e corrigida
+várias vezes neste projeto (ver "Narrative card border/table Sentimento
+column disagreeing..." acima). Usuário optou por corrigir os dois juntos.
+
+**Desenho do fix, deliberadamente diferente do `event-radar`**: o
+`event-radar` é um motor de detecção sem nenhuma obrigação de "mostrar o
+valor ao vivo pro usuário" — pôde simplesmente EXCLUIR hoje das janelas
+de comparação (ancorar em "ontem"). Aqui, `current_value` é um número
+exibido ao vivo num dashboard — o usuário espera ver "hoje até agora" ao
+selecionar "Diário", e mudar isso pra "ontem" seria uma regressão de
+produto, não uma correção. Confirmado pelo próprio `get_volume_trend`
+(seu grão "hour" pra período Diário, 2026-07-19, já trata "Diário" como
+dia corrido — meia-noite até agora — nunca uma janela rolante de 24h
+real): mudar `current_value` aqui criaria uma NOVA divergência com o
+gráfico de tendência da mesma página.
+
+Migration `20260809190000_ai_synthesis_and_kpi_cards_partial_day_fix.sql`
+— fix real: `current_value` nunca muda. `previous_value` (a base de
+comparação) passa a truncar o ÚLTIMO DIA do período anterior na MESMA
+fração do dia já decorrida hoje — via `bw_query_metrics_hourly` (janela
+móvel de 30 dias, grão horário) — comparação "parcial vs. parcial", nunca
+"parcial vs. inteiro". Generaliza uniformemente pros 3 modos sem precisar
+de um branch por modo (só ativa quando `p_period_end = current_date`,
+funciona também pra um período `custom` que termine hoje por
+coincidência): pra "Diário", o único dia do período anterior vira 100%
+parcial (equivalente a "ontem, só até a mesma hora de agora"); pra
+"Semanal", 6 dias completos + 1 parcial; pra "Mensal", 29 dias completos
++ 1 parcial. Aplicado às duas functions: `get_volume_delta` (ai-synthesis
+Camada 0) e `get_metrics_cards` (KPI cards).
+
+⚠️ **Limitação real, documentada**: `bw_query_metrics_hourly` só tem
+`total_mentions`/`sentiment_*`/`net_sentiment` em grão horário — não tem
+`reach_estimate`/`engagement_score`/`unique_authors`. Em
+`get_metrics_cards`, só `total_mentions`/`net_sentiment` recebem o ajuste
+de dia parcial; os outros 3 KPIs continuam com o mesmo viés de antes
+(gap honesto, sem fonte horária pra corrigir — não inventada uma
+aproximação).
+
+⚠️ **Trade-off aceito**: se `bw_query_metrics_hourly` não tiver dado pro
+último dia do período anterior (ex: fora da janela de retenção de 30
+dias no caso "Mensal", ou um gap de sync pontual), a fração parcial soma
+0 — `previous_value` fica levemente subestimado (um falso "cresceu" em
+vez de "caiu"), mesma classe de degradação graciosa já aceita em outras
+partes deste módulo quando falta dado horário.
+
+**Documentação**: `aggregated-metrics/ai-synthesis.md` (novo blockquote
+na seção "Camada 0"), `aggregated-metrics/sql-aggregation.md` (novo
+blockquote logo após a nota de 2026-07-21 sobre `get_metrics_cards`).
+
+**Verificação**: balanço de parênteses/`$$` da migration conferido via
+script Node (2 pares, mesmo proxy de verificação de toda sessão sem
+acesso a Deno/Supabase real). Sem ambiente Supabase real disponível nesta
+sessão — a migration não foi executada contra um banco real, mesma
+limitação recorrente de toda sessão sem credenciais de deploy neste
+ambiente. `git push` para `develop` é o próximo passo; o sinal a
+acompanhar depois do deploy é o card "Total de Menções" (e o texto "O que
+os gráficos mostram?" ao lado) deixarem de mostrar uma queda no início do
+dia/semana/mês quando o volume real, comparável hora-a-hora, está estável
+ou crescendo.
+
 ## Directory structure
 
 ```

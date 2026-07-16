@@ -3,10 +3,60 @@ tipo: feature-spec
 módulo: aggregated-metrics
 funcionalidade: ai-synthesis
 status: implementado
-atualizado: 2026-07-14
+atualizado: 2026-07-16
 ---
 
 # Síntese Narrativa da Página (`narrative_text`)
+
+> ⚠️➡️✅ **Bug real encontrado e corrigido (2026-07-16)** — user report:
+> "a tabela page_cache não está atualizando, as mensagens permanecem
+> sempre a mesma." Investigação descartou `page_cache` de cara — confirmado
+> por leitura de código + grep no repo inteiro (frontend incluso) que
+> `getPageEnvelopeWithCache()` está desabilitada desde 2026-07-14 em todas
+> as 8 Edge Functions/no arquivo canônico, byte-a-byte idêntico, sem
+> nenhum leitor/escritor restante em lugar nenhum — a tabela genuinamente
+> não pode ser a causa, já que nada a consulta. A causa real estava em
+> `page_narrative_synthesis` (o mecanismo que de fato serve as "mensagens"
+> — Insights/"O que os gráficos mostram"/Camada 2): as 3 gravações
+> (`composeAndPersistLayer1`/`composeNarrativeSynthesisOnDemand`/
+> `composeAndPersistSection`) calculavam `is_final` via
+> `isPeriodClosed(ctx.period.end)` — `period_end < todaySaoPaulo()` — sem
+> olhar `ctx.period.mode`. Pra `daily`/`weekly`/`monthly`,`period.end` é
+> calculado no **frontend** usando o fuso do **próprio usuário**
+> (`user_profiles.timezone`, `header-context.tsx`/`getLastNDaysRange`) —
+> sempre "hoje" nesse fuso, uma janela corrida que nunca deveria ser
+> considerada "fechada". `todaySaoPaulo()`, porém, é fixo em
+> América/São_Paulo, sem nenhuma noção de qual usuário está pedindo —
+> `América/São_Paulo` é só o *default* de `user_profiles.timezone`, não o
+> único valor possível (`/perfil` permite trocar). Pra qualquer usuário
+> cujo fuso configurado leia "hoje" como uma data anterior à de São Paulo
+> (qualquer fuso dos EUA/Canadá, por exemplo), essa comparação resolvia
+> `is_final: true` já na primeiríssima composição do dia — e como
+> `is_final: true` trava pra sempre o gate `!row.is_final` de
+> `fetchNarrativeText`/`fetchSectionText`, nenhum refresh automático
+> (nem por `AI_SYNTHESIS_REFRESH_HOURS`, nem por evento novo do radar)
+> conseguia mais acontecer pelo resto daquele dia — a composição da manhã
+> ficava congelada até a virada de data, reproduzindo exatamente "as
+> mensagens permanecem sempre a mesma". Fix: nova `isFinalForPeriod(ctx)`
+> — só um período `custom` (intervalo arbitrário escolhido pelo usuário,
+> que pode legitimamente estar inteiro no passado) pode ser "fechado" de
+> verdade; `daily`/`weekly`/`monthly` nunca são, por definição, já que
+> sempre terminam "hoje" em qualquer fuso — elimina a dependência de fuso
+> por completo em vez de tentar sincronizar `todaySaoPaulo()` com o fuso
+> de cada usuário. Propagado (Princípio técnico 5) do arquivo canônico
+> pras 8 Edge Functions deployadas, verificado por diff isolado contra o
+> canônico (só as diferenças já conhecidas/esperadas — import de
+> `createClient`, formatação de comentário — sobraram, nenhuma nova
+> divergência). `npx tsc --noEmit` limpo. Sem ambiente Deno/Supabase real
+> nesta sessão — não testado contra produção, mesma limitação recorrente
+> de toda sessão sem credenciais de deploy neste ambiente; `git push` para
+> `develop` é o próximo passo, e o sinal a acompanhar é uma linha de
+> `page_narrative_synthesis` para `daily`/`weekly`/`monthly` nunca mais
+> gravar `is_final: true`, e o texto voltando a mudar ao longo do dia
+> (via o gatilho de tempo ou de evento novo) para usuários fora do fuso
+> América/São_Paulo. `page_cache` (a tabela literalmente nomeada pelo
+> usuário) permanece intencionalmente desabilitada — não fazia parte
+> deste bug e não foi reativada.
 
 > ✅ **Recomposição acompanha o radar + janela reduzida pra 1h (2026-07-14,
 > mesmo dia da mudança acima)** — pedido do usuário: "esse resumo
@@ -149,6 +199,37 @@ atualizado: 2026-07-14
 > chegou a ter um comentário afirmando que a Camada 0 "já cobria o texto
 > determinístico" quando na verdade `narrative_text` era gravado `null`
 > incondicionalmente — corrigido junto com a implementação real desta vez.
+>
+> ⚠️ **Bug real corrigido (2026-07-16)** — user request, mesma sessão do
+> fix de janelas no `event-radar`: "com essa mesma perspectiva... verifique
+> na ai-synthesis se também precisa dessa melhoria de considerar as
+> últimas 24h, semanal os últimos 7 dias e mensal os últimos 30 dias."
+> Confirmado: `get_volume_delta` (fonte do texto acima) sempre soma
+> `current_value` sobre `[período.start, período.end]` — e o header
+> (Diário/Semanal/Mensal, `getLastNDaysRange`) sempre fixa `período.end =
+> hoje`. `previous_value` é sempre um período histórico inteiramente
+> fechado — mesma assimetria já corrigida no `event-radar`, pior quanto
+> menor a janela. **Achado adicional, confirmado com o usuário via
+> `AskUserQuestion`**: o mesmo bug existe em `get_metrics_cards` (os cards
+> de KPI "vs. período anterior" em toda página) — corrigir só esta função
+> deixaria o card e o texto da síntese, na mesma tela, discordando um do
+> outro. Migration
+> `20260809190000_ai_synthesis_and_kpi_cards_partial_day_fix.sql` corrige
+> as duas juntas: diferente do fix do `event-radar` (que pôde simplesmente
+> excluir "hoje" das janelas de comparação, sem nenhuma obrigação de
+> "mostrar o valor ao vivo"), `current_value` aqui nunca muda — o usuário
+> espera ver "hoje até agora" ao selecionar "Diário" (confirmado pelo
+> próprio `get_volume_trend`, cujo grão "hour" pra período Diário já trata
+> isso como dia corrido, não uma janela rolante de 24h real — mudar
+> `current_value` aqui criaria uma nova divergência com o gráfico de
+> tendência da mesma página). O fix real trunca o ÚLTIMO DIA do período
+> anterior na mesma fração já decorrida de hoje, via
+> `bw_query_metrics_hourly` (grão horário) — comparação "parcial vs.
+> parcial", nunca "parcial vs. inteiro" — generalizando uniformemente pros
+> 3 modos sem precisar de um branch por modo. `get_metrics_cards`'s
+> `reach_estimate`/`engagement_score`/`unique_authors` continuam com o
+> mesmo viés de antes — `bw_query_metrics_hourly` não tem esses 3 campos em
+> grão horário (gap honesto, sem fonte pra corrigir).
 >
 > ✅ **Camada 1 implementada (2026-08-02, event-radar/fluxo-aggregated-metrics.md
 > "Fase B", A3, migrations `20260802010000`/`20260802020000`)** —
@@ -550,8 +631,10 @@ da mesma página.
      - Linha não existe → fallback imediato é a Camada 0 (enquanto a composição não termina),
        dispara a composição assíncrona em background (`scheduleBackground`), grava o resultado
        ao terminar (só em caso de sucesso — ver "Fluxos alternativos e erros").
-3. Ao gravar, `is_final` é calculado como `period_end < current_date` (timezone
-   `America/Sao_Paulo`, mesmo padrão do resto do produto) — período fechado vira permanente.
+3. Ao gravar, `is_final` só pode ser `true` para um período `custom` (`period_end < current_date`,
+   timezone `America/Sao_Paulo`) — período fechado vira permanente. **`daily`/`weekly`/`monthly`
+   nunca são `is_final`, mesmo que `period_end` já leia como "ontem" em São Paulo** — ver
+   `isFinalForPeriod()` e o blockquote de topo (bug real, 2026-07-16).
 4. `narrative_text` é copiado para o envelope cacheado (mesmo TTL de sempre) a partir do que
    está em `page_narrative_synthesis` — o envelope nunca é a fonte, só um espelho de leitura
    rápida.

@@ -1080,6 +1080,31 @@ function isPeriodClosed(periodEnd: string): boolean {
   return periodEnd < todaySaoPaulo()
 }
 
+// ⚠️ Bug real encontrado e corrigido (2026-07-16) — as 3 gravações em
+// page_narrative_synthesis chamavam isPeriodClosed(ctx.period.end) direto,
+// sem olhar ctx.period.mode. period.end pra daily/weekly/monthly é
+// calculado no FRONTEND usando o fuso do próprio usuário
+// (user_profiles.timezone, header-context.tsx/getLastNDaysRange) — sempre
+// "hoje" nesse fuso, nunca um período genuinamente fechado. todaySaoPaulo()
+// acima, porém, é fixo em América/São_Paulo, sem nenhuma noção de qual
+// usuário está pedindo. Pra qualquer usuário cujo fuso configurado leia
+// "hoje" como uma data anterior à de São Paulo (qualquer fuso dos
+// EUA/Canadá, por exemplo — América/São_Paulo é só o default, não o único
+// valor possível em /perfil), isPeriodClosed(ctx.period.end) resolvia
+// incorretamente `true` já na primeiríssima composição do dia — e como
+// is_final: true trava pra sempre o gate `!row.is_final` de
+// fetchNarrativeText/fetchSectionText, nenhum refresh automático (nem por
+// AI_SYNTHESIS_REFRESH_HOURS, nem por evento novo do radar) conseguia mais
+// acontecer pelo resto daquele dia: a mesma composição da manhã ficava
+// congelada até a troca de data, reproduzindo exatamente "as mensagens
+// permanecem sempre a mesma". Só um período `custom` (intervalo arbitrário
+// escolhido pelo usuário, que pode legitimamente estar inteiro no passado)
+// pode ser "fechado" de verdade — daily/weekly/monthly nunca são, por
+// definição, já que sempre terminam "hoje" em qualquer fuso.
+function isFinalForPeriod(ctx: PageContext): boolean {
+  return ctx.period.mode === 'custom' && isPeriodClosed(ctx.period.end)
+}
+
 interface PageNarrativeSynthesisRow {
   narrative_text: string
   is_final: boolean
@@ -1288,7 +1313,7 @@ async function composeAndPersistLayer1(
       filters_hash: filtersHashValue,
       narrative_text: text,
       layer: 'layer_1',
-      is_final: isPeriodClosed(ctx.period.end),
+      is_final: isFinalForPeriod(ctx),
       generated_at: new Date().toISOString(),
     },
     { onConflict: 'organization_id,page,section,period_start,period_end,filters_hash' },
@@ -1433,7 +1458,7 @@ async function composeNarrativeSynthesisOnDemand(
         filters_hash: hash,
         narrative_text: text,
         layer: 'layer_1',
-        is_final: isPeriodClosed(ctx.period.end),
+        is_final: isFinalForPeriod(ctx),
         generated_at: new Date().toISOString(),
       },
       { onConflict: 'organization_id,page,section,period_start,period_end,filters_hash' },
@@ -1558,7 +1583,7 @@ async function composeAndPersistSection(
       filters_hash: filtersHashValue,
       narrative_text: text,
       layer: 'layer_2',
-      is_final: isPeriodClosed(ctx.period.end),
+      is_final: isFinalForPeriod(ctx),
       generated_at: new Date().toISOString(),
     },
     { onConflict: 'organization_id,page,section,period_start,period_end,filters_hash' },

@@ -125,6 +125,33 @@ observado — **sem `query_id`** (revertido 2026-07-13, ver nota abaixo).
 > sincronizando…" pra `value === null`, em vez do "0"/queda de -100%
 > enganosos de antes.
 
+> ⚠️ **Bug real de "dia incompleto vs. dia completo" corrigido
+> (2026-07-16)** — mesma classe de bug já corrigida no `event-radar`
+> (`detection-engine.md`), encontrada aqui por pedido explícito do
+> usuário ao revisar `ai-synthesis.md`. `get_metrics_cards`'s
+> `current_value` soma `[período.start, período.end]`, sempre terminando
+> hoje (Diário/Semanal/Mensal, `getLastNDaysRange`) — `previous_value` é
+> sempre um período histórico inteiramente fechado, de mesma duração,
+> nunca incluindo o dia em andamento. Isso subestima sistematicamente
+> "hoje" e produz um falso "-X% vs. período anterior", mais grave quanto
+> menor o período (100% do "Diário" é o dia incompleto). Migration
+> `20260809190000_ai_synthesis_and_kpi_cards_partial_day_fix.sql`:
+> `current_value` **não muda** (o usuário espera ver "hoje até agora" ao
+> selecionar "Diário" — mudar isso seria uma regressão de produto, não uma
+> correção, e divergiria do próprio grão "hour" de `get_volume_trend` pra
+> esse mesmo modo). Só `previous_value` é corrigido: o último dia do
+> período anterior é truncado na mesma fração já decorrida de hoje, via
+> `bw_query_metrics_hourly` (grão horário) — "parcial vs. parcial", nunca
+> "parcial vs. inteiro". Só `total_mentions`/`net_sentiment` recebem esse
+> ajuste (únicos com grão horário disponível);
+> `reach_estimate`/`engagement_score`/`unique_authors` continuam com o
+> mesmo viés de antes (gap honesto, sem fonte horária pra corrigir). Mesmo
+> fix aplicado a `get_volume_delta` (Camada 0 de `ai-synthesis.md`) na
+> mesma migration — os dois foram corrigidos juntos porque um card de KPI
+> e o texto da síntese, discordando um do outro na mesma tela, seria uma
+> nova instância exata da classe de bug já vista várias vezes neste
+> projeto ("Narrative card border/table Sentimento column disagreeing").
+
 > ✅ **"Sentimentos de narrativas estão predominante neutros" —
 > reauditado, nenhum bug novo encontrado (2026-07-21)** — mesmo pedido do
 > usuário repetido (verbatim igual ao de 2026-07-20). Reconfirmado nesta
