@@ -228,6 +228,21 @@ isso deixa o gráfico de SOV ilegível.
   `narratives.bw_category_id`), mas nomes alinhados evitam confusão numa
   auditoria manual.
 
+> ⚠️ **Categoria raiz "Pautas" (obrigatória pra `/themes` — Pautas
+> Eleitorais)**: crie **uma** Category raiz nomeada literalmente `Pautas`
+> (case/espaço-insensitive) cujas Subcategories sejam os temas eleitorais
+> reais do cliente (ex: `Educação`, `Saúde`, `Segurança`, `Transporte`,
+> `Economia`). A página `/themes` resolve essa Category por nome
+> (`pautas_root_category_id()`, ver `aggregated-metrics/sql-aggregation.md`)
+> e mostra só as Subcategories dela — outras Categories raiz do Project
+> (ex: `Pesquisas`, `Diplomacia`, `Banco Master` no exemplo abaixo) **não**
+> contam como pautas eleitorais e não aparecem em `/themes`, mesmo que
+> também tenham Subcategories. Não há UI de configuração pra apontar qual
+> Category é "a de Pautas" neste MVP — se o nome for digitado errado ou a
+> Category for renomeada depois, a página simplesmente não encontra nada
+> até o nome ser corrigido na Brandwatch (ver
+> `intelligence-center/electoral-themes.md`).
+
 ### Exemplo 1 — "Pesquisas" (narrativa recorrente, baixo risco, alto volume previsível)
 
 ```json
@@ -399,6 +414,12 @@ crie a Category correspondente e promova a narrativa para `bw_aggregate`.
       `bw-sync` (opcional — default `3` se omitido; controla de quanto em
       quanto tempo cada par `(project_id, query_id)` é recapturado, ver
       `sync-brandwatch.md` passo 0.5b)
+- [ ] `BW_METRICS_INCREMENTAL_WINDOW_DAYS` cadastrado como secret da Edge
+      Function `bw-sync` (opcional — default `30` se omitido; só se aplica
+      depois que o backfill histórico de mentions de um par já terminou —
+      controla a janela móvel usada pelas chamadas de métricas
+      (`data/volume/...`, topics, top-authors, SOV etc.), ver
+      `sync-brandwatch.md` passo 6, correção 2026-07-19)
 - [x] Heartbeat de `pg_cron` (`bw-sync-heartbeat`, a cada 15min) já vem
       pronto na migration `20260711020000` — URL da function hardcoded na
       migration (não é segredo, mesmo valor já exposto via
@@ -413,6 +434,9 @@ crie a Category correspondente e promova a narrativa para `bw_aggregate`.
       "Pesquisas"/"Diplomacia"/"Banco Master")
 - [ ] `narratives.bw_category_id` populado no Supabase apontando para a
       Category correspondente (ver tabela de vínculo acima)
+- [ ] Category raiz `Pautas` criada, com 1 Subcategory por tema eleitoral
+      real do cliente — pré-requisito pra `/themes` (Pautas Eleitorais)
+      mostrar qualquer dado (ver §5, nota "Categoria raiz 'Pautas'")
 - [ ] Nenhuma Author/Site/Location List criada (fora de escopo)
 
 ## Referências relacionadas

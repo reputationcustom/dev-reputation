@@ -2,11 +2,64 @@
 tipo: feature-spec
 módulo: intelligence-center
 funcionalidade: platform-analysis
-status: pronto
-atualizado: 2026-07-12
+status: implementado
+atualizado: 2026-07-18
 ---
 
 # Análise por Plataforma
+
+> ✅ **"Conteúdos de destaque" fechado via ai-synthesis Camada 2, movido pro
+> início da página (2026-07-14)** — gap desde que a página existe (nunca
+> teve fonte de "mentions em destaque", ver `_pending.md`). Em vez de
+> construir uma lista de mentions individuais (fora de escopo — não existe
+> agregado oficial da Brandwatch pra isso, e a premissa do projeto proíbe
+> derivar isso localmente sobre `mentions` amostrada), fechado como um
+> resumo qualitativo gerado por IA a partir do que a própria página já
+> busca (breakdown de plataforma + `term_signals`) — ver
+> `aggregated-metrics/ai-synthesis.md`, "Camada 2". Widget movido pro topo
+> da página, pedido explícito do usuário. A lista de mentions individuais
+> continua como gap real, não fechado por esta mudança — ver `_pending.md`.
+
+> ✅ **Movidos para `/authors` (2026-07-25)**, pedido do usuário: "Perfis
+> relevantes" e "X Themes" (Top Hashtags/Most Mentioned X Posters/Top
+> Stories/Top Emojis) — conceitualmente são sobre autores, não sobre
+> plataformas, e agora vivem na página "Autores e Influenciadores" (ver
+> [authors-and-influencers.md](authors-and-influencers.md)), alimentados
+> por uma nova Edge Function (`get-page-authors`). As 2 seções
+> correspondentes abaixo ("Perfis relevantes"/"X Themes") ficam como
+> **histórico** — descrevem o dado/fonte, que continuam válidos, só não
+> mais renderizados nesta página. A tabela "Narrativas" (lista geral, sem
+> quebra por plataforma — nunca fez parte do documento de estrutura do
+> protótipo, era conteúdo extra desta implementação) também foi removida
+> do fim desta página pelo mesmo pedido; isso **não** fecha o gap
+> "Narrativas dominantes por plataforma" abaixo (uma feature diferente,
+> ainda não implementada).
+>
+> ✅ **Implementado (2026-07-18)**: "X Themes" (Top Hashtags/Top Emojis/Top
+> Stories/Most Mentioned X Posters) — o que a nota "💡 Oportunidade futura"
+> abaixo deixava como planejado, não desenhado. Achado numa auditoria
+> pedida pelo usuário a partir de screenshots reais do dashboard nativo da
+> Brandwatch: o dado (`bw_query_x_insights`) já era capturado corretamente
+> desde `foundation` (2026-07-11), mas nenhuma function/bloco do envelope
+> jamais o expunha — sincronizado e parado, sem nenhum consumidor a
+> jusante. Fechado com `get_x_insights` (breakdown/bloco `x_insights`, só
+> nesta página) — ver `aggregated-metrics/sql-aggregation.md`. Nomes de
+> campo (`volume`/`tweets`/`retweets`/`impressions`/`reachEstimate`)
+> reconfirmados ao vivo contra `developers.brandwatch.com/docs/twitter-insights`
+> nesta sessão (iguais aos já documentados em `foundation/data-model.md`
+> desde 2026-07-11/13, agora com uma segunda confirmação independente).
+>
+> ✅ **"Principais tópicos positivos"/"Principais tópicos negativos"
+> adicionados (2026-07-14)** — pedido do usuário: "em todas as páginas é
+> importante existir os principais tópicos positivos e negativos".
+> `PAGE_BLOCKS.platforms` ganhou `term_signals`; novo widget logo antes do
+> painel "Insights" (`get_term_signals` sem filtro de Narrativa — cobre a
+> Query inteira). ✅ **Unificado num único frame (2026-07-14, mesma
+> sessão)** — pedido seguinte: "no mesmo frame mudando apenas a cor".
+> Passou de 2 `WidgetCard`s lado a lado (`PositiveDriversList`/
+> `NegativeDriversList`) para um único "Principais tópicos positivos e
+> negativos" (`TopicSentimentList`), pills coloridas por sentimento
+> (verde/vermelho/neutro) na mesma lista.
 
 > Cobre "Página 4 — Análise por Plataforma" / item "10. Visualizações
 > recomendadas" do documento de estrutura do protótipo. Sem protótipo
@@ -29,7 +82,6 @@ Mesmo público das demais páginas deste módulo.
    - Evolução do volume por plataforma.
    - Narrativas dominantes por plataforma.
    - Velocidade de propagação por plataforma (⚠️ gap, ver abaixo).
-   - Perfis relevantes (ranking de autores).
    - Conteúdos de destaque (cards de mentions específicas).
 3. Engajamento médio e Autores únicos por plataforma têm captura própria
    desde 2026-07-12 (ver "Regras de negócio" abaixo) — resolvidos.
@@ -43,6 +95,16 @@ Mesmo público das demais páginas deste módulo.
 
 ## Interface (UI)
 
+- ✅ **Toggle "Perspectiva: Tendência/Volume" (2026-08-09, migration
+  `20260809130000`)** — no `PageHeaderBar`, controla o ranking de
+  "Principais tópicos positivos e negativos" (`term_signals`) exibido ao
+  usuário — `trending` (crescimento, default) ou `volume` (menções
+  absolutas). ⚠️ **Não afeta o payload de IA** de "Conteúdos em destaque"
+  (`ai-synthesis.md`, Camada 2) — o texto gerado sempre descreve os termos
+  pela perspectiva Trending, independente do que está selecionado pra
+  exibição (pedido explícito do usuário). Ver
+  `aggregated-metrics/sql-aggregation.md`, "Perspectiva de ranking
+  Trending × Volume".
 - **Participação por plataforma**: donut/barras de
   `bw_query_metrics_daily_by_platform` (`category_id is null`, agregado por
   `page_type`) somado no período — sem gap.
@@ -56,7 +118,9 @@ Mesmo público das demais páginas deste módulo.
   `sync-brandwatch.md`). Sem gap, mas depende dessa fase já ter rodado para
   cada Narrativa (pode estar parcialmente populado logo após uma Narrativa
   ser criada).
-- **Perfis relevantes**: ranking de `bw_query_top_authors` por
+- **Perfis relevantes** (histórico — ver nota no topo do arquivo, movido
+  para [authors-and-influencers.md](authors-and-influencers.md)/`/authors`
+  em 2026-07-25): ranking de `bw_query_top_authors` por
   `reach_estimate`/`impact`/`volume` (⚠️ não quebrado por plataforma — o
   endpoint Top Authors não expõe breakdown por `page_type`; mostrar como
   "perfis mais relevantes da Query/Narrativa", não "por plataforma
@@ -72,24 +136,32 @@ Mesmo público das demais páginas deste módulo.
   distinto de "Top Sites" (de onde as mentions vêm); mede que domínios são
   mais linkados/compartilhados dentro do conteúdo. Útil como widget
   adicional desta página se o produto quiser.
-- 💡 **Oportunidade futura, não desenhada ainda** (2026-07-13, pedido do
-  usuário — "a Brandwatch usa [hashtags/emojis/URLs/autores citados] pra
-  criar nuvem de palavras, podemos incorporar no frontend mais adiante"):
-  `bw_query_x_insights` (`foundation/data-model.md` — confirmado
-  2026-07-13 que cobre exatamente os 4 endpoints documentados em
+- ✅ **"X Themes"** (histórico — ver nota no topo do arquivo, movido para
+  [authors-and-influencers.md](authors-and-influencers.md)/`/authors` em
+  2026-07-25) — implementado 2026-07-18, 4 listas lado a lado (Top
+  Hashtags/Most Mentioned X Posters/Top Stories/Top Emojis), espelhando o
+  dashboard nativo da Brandwatch mesmo shape/colunas (`Posts`/`Reposts`/
+  `All Posts`/`Impressions` = `tweets`/`retweets`/`volume`/`impressions`).
+  `bw_query_x_insights` (`foundation/data-model.md`, os 4 endpoints de
   `developers.brandwatch.com/docs/twitter-insights`: hashtags, emoticons,
-  stories/URLs, mentioned authors) já tem tudo que uma nuvem de
-  palavras/hashtags específica de X precisaria (`name`, `volume`,
-  `sentiment_positive/neutral/negative` por item) — não implementado nesta
-  spec porque não foi desenhado no protótipo, mas o dado já está
-  capturado e pronto quando o produto quiser essa visualização. Ver
-  também `bw_query_topics` (tematização geral, todas as plataformas) em
-  [sentiment-analysis.md](sentiment-analysis.md), "Drivers de sentimento" —
-  mesma ideia, escopo mais amplo.
+  stories/URLs, mentioned authors) via `get_x_insights` (breakdown/bloco
+  `x_insights`, ver `aggregated-metrics/sql-aggregation.md`) →
+  `components/intelligence-center/x-insights-panel.tsx`. Substituiu a nota
+  "💡 Oportunidade futura, não desenhada ainda" registrada em 2026-07-13 —
+  o dado já estava capturado e pronto, só faltava o wiring (mesmo padrão
+  do gap de "Sentimento por Narrativa" fechado um dia antes, ver
+  `CLAUDE.md`). Ver também `bw_query_topics` (tematização geral, todas as
+  plataformas) em [sentiment-analysis.md](sentiment-analysis.md), "Drivers
+  de sentimento" — mesma ideia, escopo mais amplo, não substituída por
+  esta.
 - **Conteúdos de destaque**: cards com preview de mentions específicas
   (autor, plataforma, sentimento, alcance, narrativa) — dado por mention
   individual (`mentions`/`content_source`/`reach_estimate`), mesmo padrão de
-  "menções relevantes" já usado em `narratives-exploration.md`.
+  "menções relevantes" já usado em `narratives-exploration.md`. ⚠️ Ainda um
+  gap real (nunca implementado) — o widget de mesmo nome foi fechado de
+  outra forma (ver blockquote de topo): um resumo textual gerado por IA
+  (`ui_meta.featured_content_text`, `envelope.md`), não uma lista de cards
+  de mentions individuais.
 
 ## Regras de negócio
 

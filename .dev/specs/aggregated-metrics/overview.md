@@ -1,9 +1,36 @@
 ﻿---
 tipo: module-overview
 módulo: aggregated-metrics
-status: pronto
-atualizado: 2026-07-12
+status: implementado
+atualizado: 2026-08-03
 ---
+
+> ✅ **Corrigido nesta revisão (2026-07-25)**: este arquivo e as 6 specs
+> filhas ficaram com `status: pronto` (spec pronta, não implementada) por
+> meses depois do módulo já estar genuinamente implementado (ver
+> `_architecture.md`, corrigido em 2026-07-16, e `CLAUDE.md`) —
+> `_index.md`'s tabela de módulos também estava com a mesma defasagem,
+> ambas corrigidas agora. Na mesma sessão, 4 gaps técnicos + 1 decisão
+> pendente foram fechados: termo de interação em `risk_score` (decisão
+> #3), breakdown de região, trend de plataforma/pauta ao longo do tempo,
+> cache de página (TTL) e a Camada 0 de `ai-synthesis` — ver `_pending.md`
+> pros detalhes de cada um.
+>
+> ✅ **Atualizado (2026-08-03)** — o parágrafo acima ("Únicos gaps reais
+> que continuam pendentes: `get_active_highlights`... e
+> `page_narrative_synthesis`...") ficou desatualizado e foi removido: os
+> dois foram implementados em 2026-08-02 (`event-radar/
+> fluxo-aggregated-metrics.md`, "Fase B") — `get_active_highlights` é a
+> function real por trás do bloco `highlights`, e `page_narrative_synthesis`
+> é a tabela da Camada 1 de `ai-synthesis`. As 10/10 functions SQL do
+> módulo estão completas; `ai-synthesis` tem Camadas 0 e 1 implementadas
+> (Camada 2 continua não implementada por desenho — exceção que precisa de
+> justificativa por página, não um gap, ver `ai-synthesis.md`). Achado de
+> passagem, corrigido na mesma revisão: a linha de `edge-functions-per-page`
+> na tabela abaixo ainda dizia "cache de página com TTL" — `page_cache`
+> está **desabilitado** desde a investigação de `/narratives` retornando
+> vazio (ver `CLAUDE.md`, "`page_cache` desabilitado"), não só "sem
+> invalidação manual".
 
 # Módulo: Métricas Agregadas (camada de síntese para frontend + IA)
 
@@ -37,11 +64,11 @@ prompt da IA. É um único contrato (`envelope`), reaproveitado nos dois consumo
 
 | Funcionalidade              | Descrição resumida                                              | Status   | Spec                                                              |
 |------------------------------|--------------------------------------------------------------------|----------|--------------------------------------------------------------------|
-| `standard-json-envelope`     | Contrato único de resposta usado por todas as páginas            | pronto   | [standard-json-envelope.md](standard-json-envelope.md)                |
-| `sql-aggregation`            | Views/functions Postgres que calculam cada bloco atomicamente    | pronto   | [sql-aggregation.md](sql-aggregation.md)                               |
-| `service-layer-aggregation`  | Camada TS que monta o envelope a partir dos blocos SQL           | pronto   | [service-layer-aggregation.md](service-layer-aggregation.md)           |
-| `edge-functions-per-page`    | Uma Edge Function fina por página, só orquestra os blocos        | pronto   | [edge-functions-per-page.md](edge-functions-per-page.md)       |
-| `ai-synthesis`               | Envio do envelope para a IA gerar o texto explicativo da página  | pronto   | [ai-synthesis.md](ai-synthesis.md)                                     |
+| `standard-json-envelope`     | Contrato único de resposta usado por todas as páginas            | implementado | [standard-json-envelope.md](standard-json-envelope.md)                |
+| `sql-aggregation`            | Views/functions Postgres que calculam cada bloco atomicamente    | implementado — 10/10 functions, incl. `get_active_highlights` (2026-08-02) | [sql-aggregation.md](sql-aggregation.md)                               |
+| `service-layer-aggregation`  | Camada TS que monta o envelope a partir dos blocos SQL           | implementado | [service-layer-aggregation.md](service-layer-aggregation.md)           |
+| `edge-functions-per-page`    | Uma Edge Function fina por página, só orquestra os blocos        | implementado — `page_cache` (TTL) desabilitado desde a investigação de `/narratives` vazio, ver `CLAUDE.md` | [edge-functions-per-page.md](edge-functions-per-page.md)       |
+| `ai-synthesis`               | Envio do envelope para a IA gerar o texto explicativo da página  | implementado — Camadas 0 e 1 (Camada 2 não implementada por desenho, exceção por página) | [ai-synthesis.md](ai-synthesis.md)                                     |
 
 ## Dependências
 
@@ -49,14 +76,16 @@ prompt da IA. É um único contrato (`envelope`), reaproveitado nos dois consumo
   `narratives` popula `narratives`/`narrative_metrics`), `event-radar` (popula `feed_events`
   — fonte de `highlights` e base de `narrative_text`; ver
   [standard-json-envelope.md](standard-json-envelope.md), seção "Integração com event-radar").
-  `entities` (Sprint 2, ainda não spec'd) enriquece o bloco `authors` quando existir, mas não é
+  ✅ **`entities` especificado (2026-07-13)** — [../entities/overview.md](../entities/overview.md)
+  enriquece o bloco `authors` de forma aditiva (`get_authors_ranking`, ver
+  [../entities/author-linking.md](../entities/author-linking.md)) quando implementado, mas não é
   um bloqueador — o ranking em si já vem de `bw_query_top_authors`/`bw_query_top_tweeters`
   (nativos da Brandwatch, ver `sql-aggregation.md`).
 - **Módulos que dependem deste**: `intelligence-center` (todas as suas páginas, incl.
-  `executive-overview.md`, passam a ler o envelope em vez de montar a consulta inline — ver nota
-  de rotas abaixo), e os módulos ainda sem spec própria `entities` (página Autores), `event-radar`
-  (página Alertas — leitura, não escrita) e `executive-reports` (página Relatórios, Sprint 4,
-  reaproveita o mesmo envelope agregado por período maior).
+  `executive-overview.md`/`authors-and-influencers.md`, passam a ler o envelope em vez de montar a
+  consulta inline — ver nota de rotas abaixo), `event-radar` (página Alertas — leitura, não
+  escrita, ainda sem spec própria) e `executive-reports` (página Relatórios, Sprint 4, ainda sem
+  spec própria, reaproveita o mesmo envelope agregado por período maior).
 
 ## Rotas/Páginas
 
@@ -64,12 +93,16 @@ prompt da IA. É um único contrato (`envelope`), reaproveitado nos dois consumo
 > `intelligence-center/executive-overview.md`/`intelligence-center/overview.md` — a
 > primeira versão desta spec usava rotas em português (`/visao-geral`,
 > `/narrativas`, `/pautas-eleitorais`...), divergentes das já aprovadas.
-> Autores/Alertas/Relatórios são rotas novas (sem spec de página própria
-> ainda — pertencem a `entities`/`event-radar`/`executive-reports`), nomeadas
-> em inglês pelo mesmo padrão. **Correção (2026-07-12)**: `/overview` tinha
+> **Correção (2026-07-12)**: `/overview` tinha
 > `foundation` como "módulo dono da página" — inconsistente, já que
 > `foundation` é só backend (ver `foundation/overview.md`). Corrigido para
-> `intelligence-center`, mesmo dono de todas as outras páginas do frontend.
+> `intelligence-center`, mesmo dono de todas as outras páginas do frontend
+> (mesmo critério aplicado a `/authors` abaixo — a página em si é sempre
+> `intelligence-center`, mesmo quando o **dado** que ela mostra vem
+> enriquecido por outro módulo). ✅ **`/authors` implementada (2026-07-25)**
+> — ver `intelligence-center/authors-and-influencers.md`; `/alerts`/
+> `/reports` continuam sem spec de página própria (dependem de
+> `event-radar`/`executive-reports`, Sprint 3-4).
 
 | Rota                 | Edge Function            | Página                              | Módulo dono da página |
 |-----------------------|---------------------------|--------------------------------------|--------------------------|
@@ -79,7 +112,7 @@ prompt da IA. É um único contrato (`envelope`), reaproveitado nos dois consumo
 | `/sentiment`          | `get-page-sentiment`      | Análise de Sentimento                | `intelligence-center` |
 | `/platforms`          | `get-page-platforms`      | Análise por Plataforma               | `intelligence-center` |
 | `/themes`             | `get-page-themes`         | Pautas Eleitorais                    | `intelligence-center` |
-| `/authors`            | `get-page-authors`        | Autores e Influenciadores            | `entities` (sem spec própria ainda) |
+| `/authors`            | `get-page-authors`        | Autores e Influenciadores            | `intelligence-center` (implementada — ver `authors-and-influencers.md`; classificação por `entities` ainda não ligada, gap conhecido) |
 | `/alerts`             | `get-page-alerts`         | Alertas                              | `event-radar` |
 | `/reports`            | `get-page-reports`        | Relatórios                           | `executive-reports` (sem spec própria ainda) |
 

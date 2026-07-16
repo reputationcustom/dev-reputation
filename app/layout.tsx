@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Manrope } from "next/font/google";
+import { ChunkErrorListener } from "@/components/chunk-error-listener";
 import "./globals.css";
 
 const manrope = Manrope({
@@ -9,7 +10,7 @@ const manrope = Manrope({
 });
 
 export const metadata: Metadata = {
-  title: "Digital Intelligent Communication",
+  title: "Comunicação Inteligente",
   description: "Plataforma de inteligência reputacional",
 };
 
@@ -20,7 +21,10 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="pt-BR" className={manrope.variable}>
-      <body className="bg-bg-page font-sans text-text-primary">{children}</body>
+      <body className="bg-bg-page font-sans text-text-primary">
+        <ChunkErrorListener />
+        {children}
+      </body>
     </html>
   );
 }

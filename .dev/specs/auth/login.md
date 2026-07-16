@@ -20,6 +20,19 @@ atualizado: 2026-07-13
 > cor de `_design-tokens.md` a `tailwind.config.ts`/`app/layout.tsx` (antes
 > inexistentes no projeto) — reaproveitável pelas páginas de
 > `intelligence-center` quando forem implementadas.
+>
+> ⚠️ **Bug real encontrado e corrigido na mesma revisão** (ver CLAUDE.md,
+> "Deploy (Hostinger) — regras globais"): a versão original deste
+> `middleware.ts` redirecionava **toda** requisição não-autenticada,
+> incluindo o health check da Hostinger batendo em `/`, para `/login`. Um
+> 307 em `/` é lido como "app não saudável" pela hospedagem, que reinicia o
+> container em loop — nunca chega a ficar disponível (503 persistente).
+> Corrigido com um `return NextResponse.next()` antecipado quando
+> `pathname === "/"`, antes de qualquer checagem de auth, e `app/page.tsx`
+> virou client component (renderiza vazio, redireciona via
+> `router.replace()` num `useEffect` — só depois do servidor já ter
+> respondido 200). Essa regra (`/` nunca redireciona no servidor) passou a
+> valer pra qualquer rota nova que precise de redirect condicional.
 
 ## Objetivo
 

@@ -1,6 +1,6 @@
 ---
 tipo: design-tokens
-atualizado: 2026-07-12
+atualizado: 2026-07-22
 ---
 
 # Tokens de Design — Protótipo "Comunicação Inteligente"
@@ -47,7 +47,7 @@ atualizado: 2026-07-12
 | `accent-blue` | `#2f6fed` | Marca, navegação, série "volume total"/elemento neutro-informativo em gráficos |
 | `accent-blue-bg` | `#eef2ff` | Chips/badges sobre fundo claro |
 
-## Cores — funcionais (sentimento, momentum, velocidade e risco)
+## Cores — funcionais (sentimento, momentum, tendência e risco)
 
 ✅ **Reescrito 2026-07-13** — os 4 scores da tabela de Narrativas
 (Sentimento, Momentum, Velocidade, Risco) agora têm fórmula e faixas
@@ -69,16 +69,43 @@ faixa/score que o envelope já devolve (Princípio técnico 2).
 | -20 a -49 | Negativo | `sentiment-negative` | `#e0483e` | `#fdecea` |
 | ≤ -50 | Muito negativo | `sentiment-very-negative` | `#a52820` | `#fbe3e1` |
 
-### Momentum e Velocidade (0-100, 5 faixas — mesma rampa de cor pras duas;
-### a diferença visual entre elas é o ícone/seta e o rótulo, não a cor)
+### Momentum (0-100, 5 faixas)
 
-| Faixa | Momentum | Velocidade | Token | Hex |
-|---:|---|---|---|---|
-| 0–19 | Muito baixo | ↓ Encolhendo rapidamente | `intensity-1` | `#c9cdd3` |
-| 20–39 | Baixo | ↘ Diminuindo | `intensity-2` | `#a8c5f5` |
-| 40–59 | Moderado | → Estável | `intensity-3` | `#2f6fed` (= `accent-blue`) |
-| 60–79 | Alto | ↑ Crescendo | `intensity-4` | `#f2811d` |
-| 80–100 | Explosivo | ↗ Viralizando | `intensity-5` | `#e0483e` |
+| Faixa | Momentum | Token | Hex |
+|---:|---|---|---|
+| 0–19 | Muito baixo | `intensity-1` | `#c9cdd3` |
+| 20–39 | Baixo | `intensity-2` | `#a8c5f5` |
+| 40–59 | Moderado | `intensity-3` | `#2f6fed` (= `accent-blue`) |
+| 60–79 | Alto | `intensity-4` | `#f2811d` |
+| 80–100 | Explosivo | `intensity-5` | `#e0483e` |
+
+### Tendência (0-100, 3 faixas)
+
+✅ **Substitui "Velocidade" (2026-07-22)** — ver
+`aggregated-metrics/sql-aggregation.md`, "Tendência", para a fórmula
+(regressão linear de 14 dias, não mais snapshot 3h-vs-3h). 3 faixas em vez
+de 5 — reusa um subconjunto da mesma rampa `intensity-*` de Momentum acima
+(sem token novo), não as pontas 1/5 (reservadas pra "muito baixo"/
+"explosivo" de Momentum, que não têm equivalente semântico aqui):
+
+| Faixa | Tendência | Token | Hex |
+|---:|---|---|---|
+| 0–39 | ↓ Tendência de queda | `intensity-2` | `#a8c5f5` |
+| 40–59 | → Estável | `intensity-3` | `#2f6fed` (= `accent-blue`) |
+| 60–100 | ↑ Tendência de alta | `intensity-4` | `#f2811d` |
+
+<details>
+<summary>Histórico — "Velocidade" (5 faixas, usadas até 2026-07-22)</summary>
+
+| Faixa | Velocidade | Token | Hex |
+|---:|---|---|---|
+| 0–19 | ↓ Encolhendo rapidamente | `intensity-1` | `#c9cdd3` |
+| 20–39 | ↘ Diminuindo | `intensity-2` | `#a8c5f5` |
+| 40–59 | → Estável | `intensity-3` | `#2f6fed` (= `accent-blue`) |
+| 60–79 | ↑ Crescendo | `intensity-4` | `#f2811d` |
+| 80–100 | ↗ Viralizando | `intensity-5` | `#e0483e` |
+
+</details>
 
 ### Risco (`risk_score`, 0-100, 4 faixas)
 
@@ -95,6 +122,27 @@ diferentes?") — sim, `risk-high` e `risk-critical` são tons distintos:
 
 `neutral-gray` (`#c9cdd3` / `#8a8f98`) segue disponível pra outros usos
 neutros fora dos 4 scores acima (ex: estado vazio, texto secundário).
+
+### Ideologia (`entities.ideologia`, 5 faixas — esquerda → direita)
+
+✅ **Adicionado 2026-08-01** — `intelligence-center/authors-and-influencers.md`,
+"Redesenho interativo" (dispersão/badges de Autores e Influenciadores).
+Diverging de 2 polos (violeta↔teal) com neutro cinza no centro —
+**deliberadamente não reusa vermelho/verde** (já significam sentimento
+negativo/positivo neste produto) nem laranja/vermelho de risco, pra não
+sugerir "esquerda é ruim"/"direita é boa" ou confundir com as outras 2
+escalas quando aparecem juntas (ex: um autor de esquerda com sentimento
+negativo não deve ler como "duplo vermelho"). Ordem sempre fixa
+esquerda→direita nos gráficos (nunca reordenado por valor) — é o próprio
+eixo político, não um ranking.
+
+| Ideologia | Token | Hex (texto/ícone) | Hex (fundo) |
+|---|---|---|---|
+| Esquerda | `ideology-left` | `#6d28d9` | `#f3ecfd` |
+| Centro-esquerda | `ideology-center-left` | `#a78bda` | `#f5f1fb` |
+| Centro | `ideology-center` | `#8a8f98` | `#f3f4f6` (= `neutral-gray`) |
+| Centro-direita | `ideology-center-right` | `#5fb8ba` | `#eaf7f7` |
+| Direita | `ideology-right` | `#0d9488` | `#e3f6f4` |
 
 ## Cores — plataformas
 

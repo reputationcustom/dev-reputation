@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "humanizer-pt-br": {
+      "source": "mackswendhell/humanizer-pt-br",
+      "sourceType": "github",
+      "skillPath": "SKILL.md",
+      "computedHash": "27bcf19f9ec0422cd5f15eb8c4bd80fc5d5184ed6b630b16da020feb1738cdb6"
+    }
+  }
+}

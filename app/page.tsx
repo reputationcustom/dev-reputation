@@ -13,9 +13,19 @@ export default function HomePage() {
 
   useEffect(() => {
     const supabase = createClient();
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      router.replace(session ? "/overview" : "/login");
-    });
+    supabase.auth
+      .getSession()
+      .then(({ data: { session } }) => {
+        router.replace(session ? "/overview" : "/login");
+      })
+      .catch((error) => {
+        // Falha de comunicação com o Supabase (rede/timeout) — sem este
+        // catch, a promise rejeitada nunca chama router.replace() e a
+        // página fica em branco para sempre (ver CLAUDE.md, "Falha de
+        // comunicação com o Supabase no middleware", 2026-07-16).
+        console.error("[HomePage] getSession failed", error);
+        router.replace("/backend-unavailable");
+      });
   }, [router]);
 
   return null;

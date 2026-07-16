@@ -1,11 +1,19 @@
 ---
 tipo: module-overview
 módulo: foundation
-status: pronto
-atualizado: 2026-07-06
+status: implementado
+atualizado: 2026-07-14
 ---
 
 # Módulo: Fundação (Sprint 1)
+
+> ✅ **Status corrigido 2026-07-14** (premissa do projeto: spec concluída
+> deve ficar `implementado`, ver CLAUDE.md "Close the loop"): este arquivo
+> ficava `pronto` mesmo com o módulo inteiro em produção desde
+> 2026-07-07/13 — defasagem de tracking, não do código. `sync-brandwatch`
+> está rodando via `pg_cron` (heartbeat 15min), `narratives` auto-semeadas
+> e com métricas agendadas — ver `CLAUDE.md`, "Brandwatch sync model", para
+> o histórico completo de implementação/bugs corrigidos.
 
 ## Objetivo
 
@@ -306,6 +314,16 @@ tipo "Narrativa × partido" ou "Narrativa × espectro político" direto em BI
 como fonte. Quando isso existir, adicionar `reporting.narrative_entities`
 como terceira view da camada de BI (ver abaixo) — não faz parte do Sprint 1,
 só fica registrado aqui para o módulo `entities` não redesenhar do zero.
+
+> ✅ **`entities` especificado (2026-07-13)** — ver
+> [entities/overview.md](../entities/overview.md)/[entities/data-model.md](../entities/data-model.md).
+> `mentions.author_handle_normalized` → `entity_accounts.username` → `entities` → `entity_tags`
+> confirmado exatamente como previsto acima (`entity_accounts.username`, mesmo nome de coluna já
+> antecipado aqui). `narrative_entities` (cross-tab materializado) **não** entrou nesta rodada —
+> deliberadamente fora de escopo (o pedido do usuário era o CRUD de Entidades + o vínculo com o
+> ranking de Autores, não a otimização de relatório) — continua registrado aqui como recomendação
+> para quando um relatório concreto precisar dela, ver `entities/overview.md`, "Notas para
+> implementação".
 
 ## Camada de reporting (BI externo)
 

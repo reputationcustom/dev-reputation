@@ -2,11 +2,77 @@
 tipo: feature-spec
 módulo: event-radar
 funcionalidade: agent-orchestrator
-status: rascunho
-atualizado: 2026-07-12
+status: implementado
+atualizado: 2026-07-16
 ---
 
 # Orquestrador de Agent (única chamada à IA por evento)
+
+> ✅ **2 `event_type` novos (2026-07-16)** — `emerging_topic`/`notable_mention`
+> (ver `detection-engine.md` pro contexto completo). `feedEventType()`
+> ganhou os 2 mapeamentos diretos (mesmo enum `feed_event_type`, 2 valores
+> novos). `event_radar_build_agent_payload()` ganhou branches pra
+> `scope_type in ('topic', 'mention')`, adicionando 2 chaves novas ao
+> payload — `topic_detail` (label/tipo/volume/trending do assunto) e
+> `mention_detail` (autor/domínio/fonte/alcance/impacto/texto da menção,
+> sempre `coalesce(full_text, snippet)` truncado — nunca o campo bruto sem
+> fallback). `SYSTEM_PROMPT` ganhou uma exceção deliberada à sua própria
+> regra "nunca texto bruto de menções individuais": quando o payload traz
+> `mention_detail` (evento `notable_mention`), esse É o conteúdo da menção
+> sendo reportada — a IA usa esse texto pra descrever do que se trata, mas
+> é instruída a não generalizar a partir dele como se representasse todo o
+> volume/sentimento da conversa (é uma amostra individual, não uma
+> estatística) — mesma disciplina já usada por `narrative-summary-composer`'s
+> `sample_mentions` (`CLAUDE.md`, "Amostragem de mentions via Brandwatch").
+
+> ✅ **Implementado (2026-07-31)** — Edge Function
+> `supabase/functions/event-radar-agent-orchestrator/index.ts` (migration
+> `20260731020000_event_radar_agent_orchestrator.sql`), primeira e única
+> etapa do módulo com chamada de IA (1.1/1.2/1.3/1.6 são 100% SQL). Fluxo
+> igual ao descrito abaixo: lê `radar_staging_events` já dentro do cap
+> diário (`queued_for_agent_at is not null`, 1.6) e ainda não processados
+> (`agent_processed_at is not null` marca "IA já rodou" — coluna nova, não
+> antecipada em `data-model.md`), monta o payload via
+> `event_radar_build_agent_payload()` (SQL), faz a chamada e grava em
+> `feed_events` quando `should_publish=true` — que **também** foi criada
+> nesta migration (nunca tinha `data-model.md`/migration antes, mesmo
+> tabela documentada desde a "Fusão de módulos"). Agendada via `pg_cron` a
+> cada 15min, mesmo padrão `net.http_post` de `bw-sync-heartbeat`.
+>
+> **Modelo: Claude Haiku 4.5** (`claude-haiku-4-5`) — decisão explícita do
+> usuário (2026-07-31), dado que este módulo já declara "cada chamada de
+> IA tem custo" como princípio (`overview.md`) — conflitava com o default
+> geral de assistente de sempre usar o modelo mais capaz, por isso essa
+> escolha específica foi levada ao usuário em vez de decidida
+> silenciosamente. Configurável via `EVENT_RADAR_AGENT_MODEL` (secret da
+> Edge Function), sem precisar de nova migration/deploy de código.
+>
+> ⚠️ **Dedup semântico ("Regras de negócio") implementado como contexto no
+> payload, não como um prompt com múltiplos eventos simultâneos** — o
+> desenho é uma chamada por evento, então não há como literalmente "juntar
+> vários eventos no mesmo prompt". Em vez disso,
+> `event_radar_build_agent_payload()` inclui `sibling_events` (outros
+> eventos ativos agora no mesmo escopo) e `recent_related_cards` (cards já
+> publicados nas últimas 24h pra mesma Narrativa, só escopo `narrative` —
+> `feed_events` não tem uma coluna de `scope_id` própria, só
+> `related_narrative_id`) — o prompt instrui a IA a retornar
+> `should_publish: false` quando o evento não traz nada novo em relação a
+> esse contexto. Decisão de escopo documentada, não um gap silencioso.
+>
+> **Fora desta leva, deliberadamente**: "Resumo executivo" em lote (1x/dia
+> — feature separada, não descrita no "Fluxo principal" abaixo) e
+> `feed_event_feedback`/`schema-integration.md` item 2 (retroalimentação
+> pós-publicação do analista — precisa de UI própria, não pedida ainda).
+>
+> **Coluna nova em `feed_events`, não antecipada em `data-model.md`**:
+> `severity_explanation` — o "Schema de saída" abaixo já exigia esse campo
+> da IA ("por que essa severidade, em linguagem natural"), mas
+> `data-model.md` nunca tinha uma coluna pra guardá-lo (distinto de
+> `description`, que guarda o `explanation` — causa provável do evento em
+> si, não da severidade).
+>
+> ⚠️ Não testado contra a API real da Anthropic nem do Supabase nesta
+> sessão (sem credenciais/ambiente disponíveis) — revisado manualmente.
 
 ## Objetivo
 
@@ -16,7 +82,8 @@ legível para a equipe de comunicação — com exatamente uma chamada de IA por
 ## Usuários afetados
 
 Consumido indiretamente por qualquer usuário autenticado que visualize uma página com
-`highlights` (ver módulo `aggregated-metrics`) ou a fila de aprovação de `cases` pendentes.
+`highlights` (ver módulo `aggregated-metrics`) — todo evento aprovado pela IA publica direto,
+sem fila de aprovação humana intermediária (✅ decisão do usuário, 2026-07-25).
 
 ## Fluxo principal
 
@@ -42,6 +109,14 @@ Consumido indiretamente por qualquer usuário autenticado que visualize uma pág
 - Prompt-base deve reforçar: não inventar números/causas, diferenciar correlação de causa, usar
   linguagem como "associado a" quando a evidência for insuficiente, títulos ≤ 90 caracteres,
   resumo ≤ 300 caracteres.
+- ✅ **Tom padronizado via skill `humanizer-pt-br` (2026-08-06)** — pedido do usuário, aplicado
+  aos 3 pontos de geração de texto por IA do produto (este, `narrative-summary-composer` e a
+  Camada 1 de `aggregated-metrics/ai-synthesis.md`), não só a este. Objetivo/direto/eficiente,
+  sem os tiques de escrita de IA (aberturas de preenchimento, "além disso", atribuição vaga a
+  "especialistas", conclusão genérica/otimista, gerúndio final de falsa profundidade, regra dos 3
+  forçada) — instrução destilada da skill (`.agents/skills/humanizer-pt-br/SKILL.md`, um guia
+  interativo de edição, não um trecho colável direto na API) direto no `SYSTEM_PROMPT`. Ver
+  `aggregated-metrics/ai-synthesis.md`, "Dependências técnicas", pro detalhe completo da skill.
 - Resumo executivo (antigo "Agent 4") roda separado, em lote — uma chamada por dia agregando
   todos os cards publicados nas últimas 72h, nunca uma chamada por evento.
 
@@ -76,12 +151,13 @@ Consumido indiretamente por qualquer usuário autenticado que visualize uma pág
 ## Dados envolvidos
 
 - **Lê**: `radar_staging_events` (deduplicados, com severidade, dentro do cap diário).
-- **Escreve**: via [schema-integration.md](schema-integration.md) — `feed_events` e,
-  quando aplicável, linha pendente em `cases`.
+- **Escreve**: via [schema-integration.md](schema-integration.md) — `feed_events`, qualquer
+  severidade.
 
 ## Referências relacionadas
 
 - [overview.md](overview.md)
+- [data-model.md](data-model.md)
 - [severity.md](severity.md)
 - [volume-limits.md](volume-limits.md)
 - [schema-integration.md](schema-integration.md)

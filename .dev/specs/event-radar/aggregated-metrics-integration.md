@@ -2,11 +2,23 @@
 tipo: feature-spec
 módulo: event-radar
 funcionalidade: aggregated-metrics-integration
-status: rascunho
-atualizado: 2026-07-12
+status: implementado
+atualizado: 2026-08-02
 ---
 
 # Integração com `aggregated-metrics`
+
+> ✅ **Implementado (2026-08-02, "Fase B" de `fluxo-aggregated-metrics.md`,
+> migrations `20260802010000`/`20260802020000`)** — os 5 pontos de contrato
+> abaixo estão todos em código: `get_active_highlights` (ponto 1), nomes de
+> campo idênticos entre `AgentOutput`/`Highlight` (ponto 2, inalterado desde
+> 1.4), Camada 0/1 de `ai-synthesis.md` implementadas (ponto 3),
+> `risk_score = greatest(...)` em `get_narratives_table` (ponto 4, texto
+> abaixo já descrevia exatamente o que foi implementado), cap diário
+> compartilhado (ponto 5, inalterado desde 1.6). Nenhum texto deste arquivo
+> precisou mudar além do status — a spec já descrevia com precisão o que
+> viria a ser construído. Ver `CLAUDE.md`, "Fase B implementada", e
+> `aggregated-metrics/sql-aggregation.md`, "Risco".
 
 ## Objetivo
 
@@ -46,11 +58,12 @@ qualquer PR que altere o formato de saída de um dos dois módulos deve revisar.
 ## Ordem de implementação entre os dois módulos
 
 > Ver diagrama completo em
-> [`.dev/specs/_fluxo-event-radar-aggregated-metrics.md`](../_fluxo-event-radar-aggregated-metrics.md).
+> [fluxo-aggregated-metrics.md](fluxo-aggregated-metrics.md).
 
 1. `aggregated-metrics` pode ser implementado e entregue **completo** sem este módulo —
    `metrics`, `breakdowns`, `trends`, `authors`, `graph`, `term_signals` e a tabela `narratives`
-   (incl. `sentiment`/`momentum_score`/`velocity_score`/`risk_score`, todos calculados 100% a
+   (incl. `sentiment`/`momentum_score`/`trend_score` (antes `velocity_score`, ver
+   `sql-aggregation.md`, "Tendência")/`risk_score`, todos calculados 100% a
    partir de `foundation`, sem depender de `event-radar`) não dependem deste módulo.
 2. `highlights`, `narrative_text` e o boost de `risk_score` via evento ativo ficam vazios/em
    fallback até este módulo estar publicando em `feed_events`.
@@ -69,6 +82,7 @@ qualquer PR que altere o formato de saída de um dos dois módulos deve revisar.
 ## Referências relacionadas
 
 - [overview.md](overview.md)
+- [data-model.md](data-model.md)
 - [agent-orchestrator.md](agent-orchestrator.md)
 - [severity.md](severity.md)
 - [volume-limits.md](volume-limits.md)

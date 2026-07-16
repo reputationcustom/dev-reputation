@@ -2,11 +2,58 @@
 tipo: feature-spec
 módulo: event-radar
 funcionalidade: severity
-status: rascunho
-atualizado: 2026-07-12
+status: implementado
+atualizado: 2026-07-16
 ---
 
 # Severidade (SQL, sem IA)
+
+> ⚠️ **Bug real corrigido + 2 branches novos (2026-07-16)** — migration
+> `20260809160000_event_radar_topics_and_notable_mentions.sql`, ver
+> `detection-engine.md` pro contexto completo (sessão que também acrescentou
+> `emerging_topic`/`notable_mention`). **Bug**: `event_radar_volume_severity`/
+> `event_radar_sentiment_severity` tinham o mesmo problema já corrigido em
+> `run_event_detection()` por uma sessão anterior (2026-07-16, ver
+> `detection-engine.md`) — o fallback usado quando não há z-score horário
+> (ou seja, **sempre** pra escopo `platform`, que nunca tem grão horário)
+> comparava `current_date - 2..current_date` (hoje, incompleto) contra
+> `current_date - 5..current_date - 3` (histórico fechado). Corrigido para
+> `current_date - 3..current_date - 1` vs. `current_date - 6..current_date - 4`
+> (3 dias completos vs. 3 dias completos), igual à janela de detecção já
+> corrigida. **Branches novos**: `event_radar_reach_engagement_severity`
+> ganhou ramos pra `scope_type in ('topic', 'mention')` — sem eles, os 2
+> novos tipos de evento sempre cairiam no `coalesce(fator, 50)` neutro
+> neste fator de 15% (o maior entre os que se aplicam a eles, já que
+> Sentimento/Velocidade/Relevância de autores/Risco de narrativa
+> relacionada não têm sinal nenhum pra `topic`/`mention`). `topic`: volume
+> do assunto relativo ao maior volume entre assuntos frescos (72h) da
+> organização. `mention`: `reach_estimate` da menção relativa ao maior
+> `reach_estimate` entre mentions das últimas 72h da organização.
+
+> ✅ **Implementado (2026-07-29)** — migration
+> `20260729000000_event_radar_severity.sql`. Anexado dentro do próprio
+> `run_event_detection()` (mais um `CREATE OR REPLACE`, não uma função/
+> pg_cron separado) pela mesma razão que 1.2 foi: dois jobs agendados pro
+> mesmo horário de `pg_cron` não têm ordem garantida entre si, o que
+> deixaria a severidade até 15min desatualizada em relação à
+> detecção/fechamento mais recente — evitável sem custo real, já que 1.3
+> só precisa rodar depois de 1.1/1.2 gravarem na mesma transação.
+>
+> ⚠️ Nenhuma fórmula exata é dada abaixo pra cada fator (só os pesos) —
+> cada fator tem sua própria inferência de MVP documentada na migration
+> (`event_radar_volume_severity`/`_sentiment_severity`/`_velocity_severity`/
+> `_reach_engagement_severity`/`_author_influence_severity`/
+> `_related_narrative_risk`), reaproveitando o máximo possível do que 1.1
+> já calcula (z-scores de `event_radar_hourly_zscore`, janelas de
+> `event_radar_hourly_symmetric`/`event_radar_daily_range`) em vez de
+> inventar uma segunda fonte. Fator ausente pro escopo (ex: `platform` não
+> tem breakdown de autores nem "narrativa relacionada", `platform` só tem
+> `negative_share` via fallback nenhum) retorna `null` — `coalesce(fator,
+> 50)` no cálculo final, 50 = neutro, mesma convenção de `norm_growth`
+> (`aggregated-metrics/sql-aggregation.md`). Mapeamento score→categoria
+> reaproveita as 4 faixas exatas de `risk_score` (0-33 low, 34-59 medium,
+> 60-84 high, 85-100 critical) — "não criar uma segunda escala de risco em
+> paralelo", como pedido abaixo em "Regras de negócio".
 
 ## Objetivo
 
@@ -43,6 +90,17 @@ esse score para a categoria de risco já existente no schema (`low`/`medium`/`hi
 > operacional) foi introduzido, com pesos muito mais parecidos aos de
 > `severity_score` (volume/sentimento/velocidade/alcance/autores/persistência)
 > do que os de Momentum.
+>
+> ⚠️ **Nota (2026-07-22)**: o indicador de Narrativa antes chamado
+> "Velocidade" (`get_narratives_table().velocity_score`, snapshot 3h-vs-3h)
+> foi substituído por "Tendência" (`trend_score`, regressão estatística de
+> 14 dias) — ver `sql-aggregation.md`, "Tendência". O fator "Velocidade" da
+> tabela de pesos acima **não** foi renomeado junto: este módulo ainda é
+> `rascunho`/não implementado, e o fator aqui é conceitualmente sobre a
+> rapidez de escalada do **evento** detectado (janela curta, mais próximo
+> do desenho antigo de Velocidade do que da nova regressão de 14 dias da
+> Narrativa) — decisão de nome/fórmula fica para quando `event-radar` for
+> de fato especificado/implementado, não decidida por tabela aqui.
 
 `severity_score` (por evento, só existe enquanto há um evento ativo pra
 aquela Narrativa) e `risk_score` (por Narrativa, sempre calculado, ver
@@ -53,6 +111,35 @@ combiná-los (ex: usar o maior dos dois, ou uma média ponderada quando há
 evento ativo) — essa combinação fica registrada em
 [aggregated-metrics-integration.md](aggregated-metrics-integration.md),
 não aqui, pra não duplicar a mesma decisão em dois arquivos.
+
+> ⚠️ **Nota (2026-08-07), corrigida no dia seguinte** — dizia aqui que a
+> regra `momentum_spike` "não muda esta fórmula de severidade... um evento
+> `momentum_spike` é severidade-calculado exatamente como qualquer outro".
+> Isso se revelou um problema real, não uma decisão neutra: o fator
+> "Velocidade" (20% do peso) sempre recalcula uma janela **fixa de
+> 3h-vs-3h**, totalmente desconectada da janela "3d"/do sinal que
+> `momentum_spike` de fato detecta. Um card de Momentum "Explosivo" cujo
+> crescimento já tinha acontecido mais cedo na janela de 3 dias (volume já
+> estabilizado num platô alto nas últimas 3h) recomputava "Velocidade"
+> perto de **zero** — não neutro (50), um valor real e baixo — no exato
+> fator de 20% que deveria refletir a força do sinal do evento. Achado via
+> screenshot real do usuário: card com "crescimento de mais de 1.000% em
+> volume de menções nos últimos 3 dias" e tag "momentum_crescente"
+> renderizando `severity = 'high'` (78), não `'critical'` — "tenho um
+> event é critico momentum alto e não ficou vermelho".
+>
+> ✅ **Corrigido (2026-08-08, migration
+> `20260808000000_event_radar_severity_velocity_momentum_alignment.sql`)**:
+> `event_radar_velocity_severity()` ganhou `p_event_type`/`p_metric_value`
+> — quando o evento é `momentum_spike`, o fator "Velocidade" passa a ser o
+> próprio `momentum_score` já calculado na detecção (`radar_staging_events.
+> metric_value`, já 0-100, escala idêntica à do fator) em vez de
+> recalcular um 3h-vs-3h sem relação com o sinal real. Para todo outro
+> `event_type`, o comportamento é idêntico a antes — nenhuma mudança de
+> severidade fora de `momentum_spike`. O fator "Risco da narrativa
+> relacionada" (10%, via `risk_score`, que embute Momentum a 25%
+> amortecido) continua sendo um caminho indireto adicional, agora somado a
+> este caminho direto e muito mais forte.
 
 ## Regras de negócio
 
@@ -72,6 +159,7 @@ não aqui, pra não duplicar a mesma decisão em dois arquivos.
 ## Referências relacionadas
 
 - [overview.md](overview.md)
+- [data-model.md](data-model.md)
 - [deduplication-grouping.md](deduplication-grouping.md)
 - [agent-orchestrator.md](agent-orchestrator.md)
 - [aggregated-metrics-integration.md](aggregated-metrics-integration.md)

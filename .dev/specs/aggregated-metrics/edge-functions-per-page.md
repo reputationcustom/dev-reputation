@@ -2,11 +2,57 @@
 tipo: feature-spec
 módulo: aggregated-metrics
 funcionalidade: edge-functions-per-page
-status: pronto
-atualizado: 2026-07-12
+status: implementado
+atualizado: 2026-07-14
 ---
 
 # Edge Functions por Página
+
+> ✅ **Implementado (2026-07-15)**: as 6 Edge Functions que o Sprint 2
+> precisa (`get-page-{overview,narratives,sentiment,platforms,themes}`,
+> `get-narrative-detail`) estão em produção, seguindo exatamente o padrão
+> de autenticação descrito abaixo (client com a chave publicável + JWT
+> repassado, nunca `SUPABASE_SECRET_KEY`). `get-page-authors`/
+> `get-page-alerts`/`get-page-reports` continuam não implementadas —
+> dependem de `entities`/`event-radar`/`executive-reports` (Sprint 3-4,
+> ainda `rascunho`), por desenho (ver `overview.md`).
+>
+> ✅ **Cache de página implementado (2026-07-25, gap #21)** — tabela
+> `page_cache` (migration `20260725040000`) + `getPageEnvelopeWithCache()`
+> na service layer, chamada por todas as 6 Edge Functions no lugar de
+> `assemblePageResponse()` diretamente. **Escopo reduzido, deliberado**: só
+> o TTL de 5 minutos está implementado — a invalidação antecipada por
+> "sync da Brandwatch concluiu um ciclo" ou "usuário clicou 'Atualizar
+> dados'" descrita na regra de negócio abaixo **não está implementada**,
+> porque nenhum dos dois gatilhos existe hoje no produto (`bw-sync` não
+> conhece `page_cache`; não existe botão "Atualizar dados" no header do
+> frontend). Revisitar se o TTL sozinho se mostrar insuficiente na
+> prática.
+>
+> ⚠️ **Desabilitado 2026-07-14** (pedido do usuário) — investigando um bug
+> real de `/narratives` retornando `narratives: []` mesmo com dado
+> confirmado por SQL direto (Narrativas-folha ativas com
+> `narrative_metrics` reais na janela pedida), `page_cache` era o suspeito
+> ainda não descartado quando o usuário pediu para tirar o cache do
+> caminho e retomar depois. `getPageEnvelopeWithCache()` (service layer +
+> as 7 Edge Functions, incluindo `get-page-authors` que não existia em
+> 2026-07-25) agora só chama `assemblePageResponse()` direto — nunca lê/
+> grava `page_cache`. Tabela/migration/RLS intactas, só não usadas;
+> reativar é restaurar o corpo original da function (ver histórico do
+> git). Ver `_pending.md`, gap #34.
+>
+> ✅ **8ª Edge Function, `compose-narrative-synthesis` (2026-07-14)** —
+> não é um `get-page-*` (não monta o envelope inteiro, não é chamada no
+> carregamento da página) — cobre só o bloco `narrative_text` sob pedido
+> explícito do usuário (botão "Analisar período com IA", só visível pra
+> período personalizado — ver `ai-synthesis.md`). Mesmo padrão de
+> autenticação/validação de membership dos `get-page-*` (client com a
+> chave publicável + JWT repassado), corpo `{ organization_id, page,
+> period, filters?, narrative_id?, pauta_id? }`, resposta `{
+> narrative_text, generated_by_ai }`. Cópia completa de
+> `aggregated-metrics-service.ts` (Princípio técnico 5), reaproveita
+> `composeNarrativeSynthesisOnDemand()` (nova function nesse arquivo) —
+> mesma tabela/chave `page_narrative_synthesis` que `get-page-*` já lê.
 
 ## Objetivo
 

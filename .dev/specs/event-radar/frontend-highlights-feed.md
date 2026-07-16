@@ -1,0 +1,497 @@
+---
+tipo: feature-spec
+módulo: event-radar
+funcionalidade: frontend-highlights-feed
+status: implementado
+atualizado: 2026-07-16
+---
+
+# Radar de Eventos — Feed das Últimas 72h (frontend)
+
+> ✅ **"Resumo executivo" reescrito de novo — combina eventos do radar com
+> o que mudou nas Narrativas monitoradas (2026-07-16)** — pedido do
+> usuário: "o Resumo executivo do radar de eventos deve resumir tudo que
+> aconteceu nas últimas 72h, seja o que apareceu no radar, seja o que
+> ocorreu e estão aparecendo nas categorias... conter associação entre
+> assuntos quentes, com maior engajamento, assuntos que melhoraram ou
+> pioraram o sentimento, algum ponto de vista sobre engajamento das
+> plataformas e autores... falar do momentum, da criticidade e tendência."
+> Até esta sessão, a aba "Resumo executivo" só reaproveitava
+> `envelope.narrative_text` — o mesmo texto período-escopado de "O que os
+> gráficos mostram?" (Camada 0/1 de `ai-synthesis.md`, escopado só a
+> `feed_events`) — que (a) variava com o período do header, o oposto do
+> que "últimas 72h" promete, e (b) nunca lia o snapshot das Narrativas/
+> categorias, então nunca conseguia falar de Momentum/Tendência/Risco por
+> Narrativa nem de mudanças de sentimento reais (só resumia os próprios
+> `feed_events`, reescritos em prosa).
+>
+> Fechado com uma **4ª seção Camada 2** (`ai-synthesis.md`) — `page =
+> 'overview'`, `section = 'radar_summary'` —, a primeira desse módulo com
+> uma característica nova: **janela fixa de 72h, independente do período
+> do header** (mesma regra central deste spec, "Por que não é o bloco
+> `highlights` genérico"), via um `PageContext` próprio
+> (`radarSummaryPeriodContext`, `aggregated-metrics-service.ts`) cuja
+> chave usa só o dia UTC corrente como "balde" (nunca o período de 72h em
+> si, que é sempre relativo a "agora") — uma única linha por organização
+> por dia, recomposta intra-dia pelo mesmo gatilho de tempo
+> (`AI_SYNTHESIS_REFRESH_HOURS`) **e** de evento novo do radar
+> (`anyCreatedAtNewerThan`, mesmo princípio de `highlightsNewerThan` já
+> usado pela Camada 1) já usados por toda outra seção deste módulo.
+> `/overview` e `/radar` chamam a mesma Edge Function (`get-page-overview`)
+> pra este bloco, então o texto é sempre idêntico nas duas telas.
+>
+> O payload (`buildRadarExecutiveSummaryPayload`) combina 2 fontes que
+> nunca tinham sido lidas juntas: (1) até 30 `feed_events` das últimas 72h
+> (`get_recent_highlights`, mesma function já usada pela aba "Lista" —
+> nenhuma chamada nova), agrupados por severidade/tipo + os 10 de maior
+> `severity_score`; (2) um snapshot de TODAS as Narrativas-folha
+> (`get_narratives_table`, `p_scope: 'leaves'`, sem filtro de organização
+> além disso) para as últimas 72h **e** para as 72h imediatamente
+> anteriores (mesmo padrão de `previousPeriodRange`/período-comparação já
+> usado por "Comparação entre períodos" de `/themes`) — o delta real entre
+> as 2 janelas é o que permite identificar de verdade "quais Narrativas
+> melhoraram/pioraram de sentimento" (`sentiment_delta`), não só o valor
+> do momento, além de top-8 por menções/risco/momentum. Complementado por
+> `get_platform_breakdown` (participação por plataforma) e
+> `get_authors_ranking` (top 5 autores por engajamento — snapshot, mesma
+> limitação estrutural já documentada em `entities/author-linking.md`: o
+> período não filtra de fato essa function). O prompt
+> (`RADAR_EXECUTIVE_SUMMARY_SYSTEM_PROMPT`) instrui a IA a combinar as duas
+> fontes num único relato, nunca tratá-las como 2 seções separadas, e a
+> citar explicitamente Momentum/Tendência/Risco das Narrativas mais
+> relevantes — meta de até 8 frases/1400 caracteres (maior que o padrão de
+> 900 das outras 3 seções Camada 2, dado o escopo mais amplo pedido).
+>
+> Frontend: `RecentEventsPanel` perdeu os props `narrativeText`/`page`/
+> `onGenerated` (não fazem mais sentido pra esta aba — não há botão de
+> atualização manual ainda, ver "Gaps conhecidos" abaixo) e ganhou
+> `radarSummaryText` (`envelope.ui_meta.radar_summary_text`), renderizado
+> com o mesmo `ExpandableText` (não mais `NarrativeTextPanel`) já usado
+> pelas outras seções Camada 2. As KPIs de severidade (linha de
+> `SummaryStat`) continuam exatamente como antes, acima do texto.
+
+> ✅ **Seletor de período escondido em `/radar` + botão "Atualizar resumo
+> executivo" atrás de uma preferência de admin (2026-07-14, mesma data,
+> 3ª sessão)** — 2 pedidos do usuário: (1) "exclusivamente para a página
+> radar de eventos, não mostre a opção de seleção do período" —
+> `PageHeaderBar` ganhou `hidePeriodSelector` (default `false`, esconde só
+> o segmented control Diário/Semanal/Mensal + o `CustomRangePicker`, nunca
+> o seletor de organização/Filtros), passado só por `radar/page.tsx`; o
+> período em si continua existindo no contexto global (herdado da última
+> seleção feita em outra página), só o controle de troca não aparece
+> aqui — coerente com o efeito já majoritariamente invisível do período
+> nesta página (nenhum efeito sobre "Lista", só indireto sobre "Resumo
+> executivo" via `narrative_text`). (2) "Oculte todos os botões
+> 'Atualizar resumo executivo', exceto o botão que aparece na opção
+> custom... coloque uma opção no usuário admin para marcar quando quiser
+> mostrar o botão e desmarcar quando não quiser" — `NarrativeTextPanel`'s
+> `canManuallyRefresh` deixou de ser `periodMode === "custom" || isAdmin`
+> e passou a ser `periodMode === "custom" || (isAdmin &&
+> showAiRefreshButton)`, onde `showAiRefreshButton` é uma preferência
+> pessoal nova (`user_profiles.show_ai_refresh_button`, migration
+> `20260809110000`, default `false` — "o ideal é não aparecer" em
+> apresentação de produto), editável só por admin em `/perfil` (checkbox,
+> toggle imediato) via a Edge Function `update-my-refresh-button-preference`
+> (mesmo padrão self-service de `update-my-timezone`/
+> `update-my-default-organization`, restrita a `is_admin` server-side). O
+> botão em período `custom` ("Analisar período com IA") não foi afetado —
+> continua sempre visível pra qualquer usuário, é uma ação diferente
+> (composição sob demanda pra um intervalo que nunca dispara IA sozinho).
+> Efeito: por padrão, "Atualizar resumo executivo" some em qualquer
+> período fora do `custom` pra todo admin (até que ele mesmo ligue a
+> preferência em `/perfil`) — inclusive no widget "Resumo executivo" desta
+> mesma página (`RecentEventsPanel`/`NarrativeTextPanel`, ver blockquote
+> logo abaixo).
+
+> ✅ **KPIs de "Quantidade de alertas por risco" reintroduzidas na aba
+> "Resumo executivo" (2026-07-14, mesma data, sessão seguinte)** — user
+> report: a reformulação "de estatísticas pra texto" (blockquote logo
+> abaixo) removeu `RecentEventsExecutiveSummary` inteira, incluindo a
+> contagem de eventos por severidade (Total/Críticos/Altos/Médios/Baixos)
+> — a intenção original era só substituir o *texto* ausente pelo
+> `narrative_text` de verdade, não também derrubar as KPIs numéricas, que
+> o usuário pediu de volta. A aba "Resumo executivo" agora mostra os 2
+> juntos: a mesma linha de 5 `SummaryStat`s (`grid-cols-5`, layout já
+> fixado em 2026-08-08, "Radar de Eventos: KPIs em uma linha única") logo
+> acima do `NarrativeTextPanel` — contagem derivada dos mesmos
+> `highlights` de 72h já buscados por `useRecentHighlights` (nenhuma
+> chamada nova, Princípio técnico 2), igual à versão original. Não voltou
+> "Eventos por tipo"/"Principais eventos" (o restante da
+> `RecentEventsExecutiveSummary` antiga) — o texto de IA já cobre esse
+> nível de detalhe em prosa, e o pedido do usuário citou especificamente
+> "quantidade de alertas por risco". Também alterado, mesmo pedido: o
+> widget de `/overview` agora abre direto na aba "Resumo executivo"
+> (`RecentEventsPanel` ganhou um prop opcional `defaultView`, default
+> `"list"` — só a chamada em `overview/page.tsx` passa `"summary"`;
+> `/radar` continua abrindo em "Lista", já que o feed completo de 72h é o
+> propósito da própria página).
+
+> ✅ **"Resumo executivo" reformulado — de estatísticas pra texto
+> período-escopado (2026-07-14, mesmo dia da implementação original)** —
+> 2 problemas reais relatados pelo usuário: (1) "não está aparecendo o
+> texto do resumo executivo do radar de 72h" — a versão original
+> (`RecentEventsExecutiveSummary`) nunca teve um texto de verdade, só
+> contagens/cards, apesar do nome "resumo executivo"; (2) "ao alternar
+> entre mensal, diário e semanal, o resumo permanece considerando os
+> últimos 3 dias" — porque a fonte (`useRecentHighlights`) é,
+> deliberadamente, a janela fixa de 72h deste widget (ver "Regra
+> fundamental" abaixo), nunca o período selecionado no header — o que é
+> correto pra "Lista", mas não é o que "resumo executivo" deveria
+> significar. Resolvido substituindo a aba "Resumo executivo" por
+> `narrative_text` (`aggregated-metrics/ai-synthesis.md`, já
+> período-escopado por construção) — a página hospedeira (`/overview` ou
+> `/radar`) passa `narrativeText`/`page`/`onGenerated` como props pro
+> `RecentEventsPanel`, que renderiza o mesmo `NarrativeTextPanel` usado em
+> "O que os gráficos mostram?"/"Insights" nas outras páginas. `/radar`
+> (que antes não buscava nenhum envelope) passou a chamar
+> `usePageEnvelope("get-page-overview")` só pra isso — não existe
+> `get-page-radar` dedicado, então o texto exibido é o mesmo "Visão Geral"
+> da organização, período-escopado pelo header. Novo prop
+> `blankOnCustom` em `NarrativeTextPanel` faz esta instância específica
+> ficar em branco (só o botão "Analisar período com IA") em período
+> personalizado, em vez do template Camada 0 que todo outro uso desse
+> componente mostra — pedido explícito do usuário só pra este toggle. A
+> aba "Lista" continua exatamente como era (fixa em 72h) —
+> `RecentEventsExecutiveSummary` (contagens por severidade/tipo + top 5
+> eventos) foi removida, sem substituto — a informação relevante já está
+> na aba "Lista".
+
+> ✅ **Duas visualizações alternáveis (2026-07-14)** — pedido do usuário:
+> "Radar de Eventos deve ter duas possibilidades (a lista dos eventos
+> como está hoje e o resumo executivo) o usuário pode alternar entre
+> essas visualizações." `RecentEventsPanel` ganhou um toggle "Lista"/
+> "Resumo executivo" no topo (mesmo estilo visual do toggle de período do
+> header global) — implementado uma única vez no próprio componente
+> compartilhado, não em cada página que o renderiza, já que tanto o
+> widget de `/overview` quanto a página dedicada `/radar` consomem o
+> mesmo `RecentEventsPanel`. "Resumo executivo"
+> (`RecentEventsExecutiveSummary`) não faz nenhuma chamada de rede nova —
+> é inteiramente derivado dos mesmos `highlights` já buscados por
+> `useRecentHighlights` (contagem por severidade, contagem por
+> `event_type`, os 5 eventos de maior `severity_score` em destaque) —
+> agrupamento pra exibição, não um recálculo de score (mesma regra de
+> "Nunca recalcula severidade/detecção" abaixo). Ver "Fluxo principal"
+> item 3 e "Interface (UI)" pra detalhamento completo.
+>
+> ✅ **Implementado (2026-08-02)**, pedido do usuário: "reveja a
+> documentação do frontend do event-radar, se estiver coerente e conciso
+> com o que está desenvolvido, pode seguir com o desenvolvimento do
+> frontend." Revisão encontrou 2 problemas reais de coerência, corrigidos
+> antes do código: (1) a alegação de que `formatRelativeDate`
+> (`lib/date/format.ts`) já produzia "há 3h" era falsa — essa função só
+> tem granularidade de **dia** (Hoje/Ontem/há N dias), sem hora/minuto;
+> resolvido adicionando `formatRelativeTime` (nova função no mesmo
+> arquivo, cai pra `formatRelativeDate` a partir de 24h); (2) a "decisão de
+> implementação em aberto" (Edge Function vs. RPC direta) foi resolvida a
+> favor de **RPC direta do client** (`supabase.rpc('get_recent_highlights', ...)`,
+> sem Edge Function nova) — mesmo padrão já usado por
+> `use-narratives-list.ts`/`use-communication-types.ts` (leitura protegida
+> só por RLS), justificado pelo próprio argumento do spec ("não depende do
+> período/filtros do header como o resto do envelope"). Migration
+> `20260802040000`, `hooks/use-recent-highlights.ts`,
+> `components/intelligence-center/recent-events-panel.tsx`. `npx tsc
+> --noEmit`/`npm run build` confirmados limpos (19 rotas, `/overview`
+> cresceu de 4.85kB pra 6.18kB de First Load JS).
+>
+> Este é o **primeiro spec de frontend do módulo `event-radar`** —
+> `overview.md`, "Rotas/Páginas" foi atualizado — não há uma rota
+> `/eventos` nova, este spec descreve um **widget** dentro de uma página já
+> existente de `intelligence-center` (`/overview`), não uma página nova.
+> Ver "Por que não é o bloco `highlights` genérico" abaixo pro porquê de
+> não bastar reaproveitar o que já está especificado.
+
+## Objetivo
+
+Dar ao usuário uma visão rápida e fácil de tudo que o motor de detecção +
+IA por evento (`event-radar`) publicou nas **últimas 72 horas**, num único
+lugar — sem precisar caçar informação espalhada pelas páginas de
+`intelligence-center`, e sem depender do seletor de período global (que
+pode estar em "Diário"/"Mensal"/qualquer coisa) pra saber "o que aconteceu
+recentemente".
+
+## Por que não é o bloco `highlights` genérico
+
+`aggregated-metrics/standard-json-envelope.md` já especifica um bloco
+`highlights` por página, lido via `get_active_highlights`
+(`aggregated-metrics/sql-aggregation.md`) — mas esse bloco é filtrado pelo
+**período selecionado no header daquela página** (`period.start`/
+`period.end`), o mesmo período que rege `metrics`/`breakdowns`/`trends`.
+Isso é o comportamento certo pra "highlights relevantes à janela que estou
+analisando agora" em cada página — mas é o comportamento **errado** pro
+pedido específico desta sessão: "últimas 72h" tem que significar sempre as
+mesmas 72h corridas, **independente** de qual período o usuário tenha
+selecionado em qualquer página. Por isso este widget usa uma fonte de
+dado própria (`get_recent_highlights`, abaixo), não `get_active_highlights`
+— os dois convivem, servindo propósitos diferentes: um por página/período,
+um fixo/sempre-atual.
+
+## Onde vive
+
+**Visão Geral (`/overview`)**, no lugar que hoje é ocupado pelo
+`HighlightsPanel` vazio (`components/intelligence-center/insights-panel.tsx`,
+logo abaixo do gráfico de volume/sentimento — ver `CLAUDE.md`, "Segundo
+round de UI polish do /overview"). É a página de "primeira tela" do
+produto — o lugar certo pra um resumo rápido, exatamente o que o pedido
+descreve. Renomeado de "Insights"/genérico para **"Radar de Eventos"**
+(mesmo nome em português já usado pro módulo em `_glossary.md`/`_index.md`),
+com o subtítulo "Últimas 72 horas" deixando o escopo temporal explícito na
+própria UI, não só na documentação.
+
+> ✅ **Extensão natural aplicada (2026-08-02)** — pedido do usuário: "a
+> opção do radar no Menu principal não está aparecendo" (esperava um item
+> de menu próprio, não só o widget embutido em `/overview`), seguido de
+> "nessa página nova será possível acompanhar o que ocorreu nas últimas
+> 72h, quais foram as tendências, etc. Basicamente o feed do que foi
+> identificado nas últimas 72h." Nova rota **`/radar`** (item "Radar de
+> Eventos" em `ANALYSIS_ITEMS`, `sidebar.tsx`) — mesmo `RecentEventsPanel`/
+> janela fixa de 72h do widget de `/overview`, reaproveitado como página
+> dedicada, não uma segunda fonte de dado. Os dois convivem: o widget em
+> `/overview` continua sendo o resumo rápido da tela de entrada, `/radar`
+> é o destino completo alcançável pelo menu. `PageHeaderBar` usado por
+> consistência de navegação (organização visível), mas o seletor de
+> período não afeta esta página — a janela permanece sempre fixa.
+
+## Fluxo principal
+
+1. Usuário abre `/overview` (ou já está nela — o widget carrega junto com
+   o resto da página, independente do período selecionado no header).
+2. Widget busca até `RECENT_HIGHLIGHTS_LIMIT` (10, mesma constante de
+   paginação padrão do projeto não se aplica aqui — ver "Regras de
+   negócio") eventos de `feed_events` da organização ativa com
+   `created_at >= now() - interval '72 hours'`, **incluindo eventos já
+   fechados** (`closed_at` preenchido) — "o que aconteceu" é histórico,
+   não "o que está ativo agora"; um evento que já normalizou ainda é um
+   fato que aconteceu nas últimas 72h.
+3. Cards ordenados por `created_at` desc (mais recente primeiro) — é uma
+   linha do tempo, não um ranking por severidade (esse já existe no bloco
+   `highlights` de cada página). Severidade continua visível por card
+   (cor da borda + badge), só não decide a ordem.
+4. Cada card mostra: ícone por `event_type`, badge de severidade
+   (`RiskBadge`, reaproveitado de `score-badges.tsx`), tempo relativo ("há
+   3h", "há 2 dias" — `formatRelativeTime`, `lib/date/format.ts`, nova
+   função com granularidade de hora/minuto; `formatRelativeDate` existente
+   só tem granularidade de dia, insuficiente pra uma janela de 72h onde a
+   maioria dos eventos aconteceu "hoje"), `title`, `summary`, `tags` (chips
+   pequenos), e um link "Ver Narrativa →" quando `related_narrative_id`
+   existe (`next/link` pra `/narratives/[id]`, mesma rota que a
+   intercepting route `@modal/(.)narratives/[id]` já intercepta pra abrir
+   como modal — mesmo padrão de clique já usado em
+   `NarrativeCard`/`NarrativesTable`).
+5. Cada card tem um menu de feedback (ver "Feedback do analista" abaixo).
+6. Um toggle "Lista"/"Resumo executivo" no topo do widget alterna entre a
+   visualização de cards (itens 3-5 acima, sempre 72h fixo) e um texto de
+   IA que também é janela fixa de 72h (`ui_meta.radar_summary_text`, ✅
+   reescrito 2026-07-16 — ver blockquote de topo), combinando os eventos
+   do radar com o snapshot das Narrativas/categorias monitoradas na mesma
+   janela — nunca o `narrative_text` período-escopado da página
+   hospedeira (usado só por "O que os gráficos mostram?").
+
+## Interface (UI)
+
+- **Componente novo**: `RecentEventsPanel`
+  (`components/intelligence-center/recent-events-panel.tsx`), substituindo
+  o uso atual de `HighlightsPanel` em `overview/page.tsx` (`HighlightsPanel`
+  em si não é removido do arquivo — outras páginas ainda podem vir a usar
+  o bloco `highlights` genérico por período no futuro; só `/overview` para
+  de renderizá-lo neste lugar específico).
+- **Cabeçalho do widget**: título "Radar de Eventos" (`font-bold
+  text-text-primary`, mesma convenção de todo título de widget — regra
+  transversal #7 do `CLAUDE.md`) + subtítulo pequeno "Últimas 72 horas".
+- **Toggle "Lista"/"Resumo executivo"** (dentro do próprio
+  `RecentEventsPanel`, acima do conteúdo — mesmo estilo visual do
+  segmented control de período do header global,
+  `bg-accent-blue text-white` no item ativo): alterna qual das duas
+  visualizações abaixo é renderizada. Estado local (`useState`), não
+  persiste entre navegações (mesmo padrão de `filtrosOpen` no header).
+  - **Lista** (default): os cards individuais, exatamente como descrito
+    nos itens 3-5 do "Fluxo principal".
+  - **Resumo executivo** — ✅ **reescrito de novo 2026-07-16** (ver
+    blockquote de topo): 5 KPIs de severidade (`SummaryStat`, "Quantidade
+    de alertas por risco", reintroduzidas 2026-07-14, inalteradas) + um
+    parágrafo de IA (`ExpandableText`, `ui_meta.radar_summary_text`) que
+    combina os eventos do radar das últimas 72h com o snapshot das
+    Narrativas/categorias monitoradas na mesma janela (e na janela de 72h
+    imediatamente anterior, pra comparação) — Momentum/Tendência/Risco/
+    sentimento por Narrativa, participação por plataforma, top autores por
+    engajamento. Janela fixa de 72h por construção (`radarSummaryPeriodContext`,
+    não `ctx.period` do header) — não muda ao trocar Diário/Semanal/Mensal,
+    ao contrário do `narrative_text` que essa aba usava antes. Sem botão de
+    atualização manual por enquanto (`compose-narrative-synthesis` só
+    recompõe a seção `main`, ver "Gaps conhecidos") — o texto se atualiza
+    sozinho pelo mesmo gatilho de tempo/evento novo do radar de qualquer
+    outra seção Camada 2.
+- **Cada card** (reaproveita o padrão visual de borda colorida por
+  severidade já existente em `HighlightsPanel`, não reinventa):
+  - Ícone por `event_type`: `volume_spike` (↑), `volume_drop` (↓),
+    `sentiment_change`/`negative_sentiment_increase`/
+    `negative_sentiment_spike` (mesmo ícone de sentimento, cor pela
+    severidade). Sem ícone novo por regra — reaproveita o vocabulário
+    visual já usado em `score-badges.tsx`.
+  - `RiskBadge` com `severity`/`severity_label` (mapeamento 1:1 já
+    existente — `severity` é o mesmo enum de `risk_level`).
+  - Tempo relativo via `formatRelativeTime(created_at, timezone)` (nova
+    função em `lib/date/format.ts`, mesmo arquivo/convenção de fuso do
+    resto do produto — granularidade de hora/minuto, cai pra
+    `formatRelativeDate` a partir de 24h).
+  - `title` (negrito), `summary` (texto secundário), `tags` (chips,
+    reaproveitando o estilo de pill já usado em `narrative-card.tsx`).
+  - Link "Ver Narrativa →" (só quando `related_narrative_id` existe) —
+    abre o modal de detalhe (intercepting route já existente,
+    `@modal/(.)narratives/[id]`), mesmo comportamento de qualquer outro
+    card/tabela que já linka pra uma Narrativa.
+- **Feedback do analista**: um ícone de "⋮" abrindo 4 opções — Útil /
+  Irrelevante / Severidade errada / Explicação incorreta (`feedback_type`,
+  ver `data-model.md`). ⚠️ **Implementado sem o campo de comentário
+  opcional** (simplificação deliberada, não um esquecimento — clicar numa
+  opção já envia direto, sem um segundo passo de texto livre; a coluna
+  `comment` de `feed_event_feedback` fica disponível no schema pra uma
+  extensão futura, se o produto quiser). Dropdown simples (`absolute`, sem
+  portal) — diferente de `UserRowMenu` (`user-row-menu.tsx`, que usa
+  `createPortal` porque a tabela de usuários vive num container
+  `overflow-x-auto`, que clipa um menu `absolute`); `RecentEventsPanel` é
+  uma lista vertical simples, sem esse problema de clipping, então o
+  padrão mais simples se aplica. Ao enviar: `INSERT` direto em
+  `feed_event_feedback` via `supabase-js` (sem Edge Function — mesma
+  decisão já registrada em `data-model.md`/`CLAUDE.md` quando o schema foi
+  criado: toda validação cabe em RLS/CHECK). Toast de confirmação (regra
+  transversal #3). Depois de enviar, o card mostra um estado "Feedback
+  enviado ✓" no lugar do menu — **suave, só client-side**: não há
+  constraint no banco impedindo múltiplos feedbacks da mesma pessoa no
+  mesmo card (`data-model.md` não define um por design), então um reload
+  da página permite enviar de novo. Aceitável pro MVP — não é um gate de
+  segurança, é só evitar clique duplo acidental.
+- **Estados**: loading = skeleton (regra transversal #1, mesmo padrão de
+  `SKELETON_ROWS` já usado em outras listas); erro = `<ErrorMessage
+  onRetry />` (regra do "Backend communication failures" do `CLAUDE.md`);
+  vazio = mensagem simples "Nenhum evento nas últimas 72 horas" (sem
+  necessidade de mostrar uma ação primária aqui — este widget é
+  complementar à página, não a razão dela existir, então a regra
+  transversal #2 não se aplica da mesma forma que num CRUD principal).
+
+## Fluxos alternativos e erros
+
+| Situação | Comportamento esperado |
+|---|---|
+| Organização sem nenhum evento nas últimas 72h | Estado vazio, mensagem honesta — não esconder o widget inteiro |
+| `event-radar` 1.4/1.5 nunca rodou pra essa organização (`feed_events` sem nenhuma linha) | Mesmo estado vazio — indistinguível de "sem eventos recentes" pro usuário final, não há necessidade de diferenciar as duas causas na UI |
+| Falha ao carregar | `<ErrorMessage retry />`, nunca um spinner preso indefinidamente |
+| Falha ao enviar feedback | Toast de erro, menu de feedback continua disponível pra tentar de novo |
+| Usuário sem `related_narrative_id` no card (evento de escopo `query`/`platform`) | Card renderiza normalmente, só sem o link "Ver Narrativa →" |
+
+## Regras de negócio
+
+- **Janela fixa de 72h, nunca o período do header** — é a regra central
+  deste spec, já justificada acima. `RECENT_HIGHLIGHTS_HOURS = 72`
+  documentado como constante única (SQL e frontend), não um número mágico
+  espalhado.
+- **Limite de itens**: até 10 cards (mesmo `DEFAULT_PAGE_SIZE` já usado
+  como convenção de lista no projeto, `components/ui/pagination.tsx`) —
+  não é uma paginação de verdade (não há "próxima página" neste widget,
+  é um resumo, não uma lista completa), só um teto pra não estourar o
+  card visualmente numa organização com muitos eventos na janela.
+- **Inclui eventos fechados** (`closed_at` preenchido) — diferente do
+  bloco `highlights` genérico, que só mostra eventos ativos dentro do
+  escopo/período da página. Aqui o objetivo é "o que aconteceu", não "o
+  que está acontecendo agora".
+- **Nunca recalcula severidade/detecção** — mesma regra já estabelecida
+  pra `get_active_highlights` (`sql-aggregation.md`): se um evento parecer
+  "errado" ou "faltando", o ajuste é no `event-radar` (thresholds, regras),
+  nunca uma lógica nova aqui.
+- **Feedback é sempre pós-publicação**, nunca um gate — mesma regra já
+  fixada em `schema-integration.md`.
+
+## Dados envolvidos
+
+- **Lê**: `feed_events` (organização ativa, `created_at` dentro da janela
+  de 72h) — ✅ **`get_recent_highlights(p_organization_id uuid, p_hours
+  integer default 72, p_limit integer default 10)` implementada (migration
+  `20260802040000`)**, leitura pura sobre `feed_events`, mesmo princípio de
+  `get_active_highlights` ("nunca recalcula insight, apenas filtra e
+  ordena o que o radar já publicou"). Chamada direto do client
+  (`security invoker`, RLS de `feed_events` aplica normalmente).
+- **Escreve**: `feed_event_feedback` (INSERT direto do cliente, já
+  implementado — ver `data-model.md`).
+- ⚠️ **Mudança necessária no contrato do envelope, ainda não feita**: o
+  tipo `Highlight` (`packages/shared-types/src/envelope.ts` +
+  `standard-json-envelope.md`) **não tem `id` nem `created_at`** hoje —
+  sem `id`, não há como vincular um feedback a um card específico
+  (`feed_event_feedback.feed_event_id`); sem `created_at`, não há como
+  calcular "há Xh" nem ordenar cronologicamente. Este widget não reaproveita
+  o tipo `Highlight`/bloco `highlights` do envelope padrão (ver "Por que
+  não é o bloco `highlights` genérico" acima) — usa sua própria forma de
+  resposta (`get_recent_highlights` já retorna `id`/`created_at` desde o
+  início, sem precisar alterar o contrato do envelope existente e sem
+  arriscar quebrar as páginas que já consomem `Highlight` como está).
+- ✅ **"Resumo executivo" (2026-07-16)** — lê `get_recent_highlights`
+  (mesma function acima, até 30 itens desta vez), `get_narratives_table`
+  (`p_scope: 'leaves'`, janela atual + janela anterior de 72h),
+  `get_platform_breakdown` e `get_authors_ranking` — todas já existentes,
+  nenhuma function nova. Escreve em `page_narrative_synthesis`
+  (`page: 'overview'`, `section: 'radar_summary'`, mesma tabela de toda
+  outra seção Camada 2, ver `ai-synthesis.md`) — chave usa o dia UTC
+  corrente como período (não os 72h em si), então há no máximo 1 linha
+  ativa por organização por dia.
+
+## Permissões
+
+Mesma tabela de `executive-overview.md` — leitura só para membros da
+organização (RLS via `auth_organization_ids()`); feedback: qualquer
+usuário autenticado da organização (RLS já implementada,
+`feed_event_feedback_insert_own`).
+
+## Dependências técnicas
+
+- ✅ Function SQL `get_recent_highlights` (migration `20260802040000`).
+- ✅ **Resolvido**: RPC chamada direto pelo cliente (`supabase.rpc(...)`,
+  `hooks/use-recent-highlights.ts`) — sem Edge Function nova, sem bloco no
+  envelope de `get-page-overview`. Decisão a favor da opção mais simples,
+  já que este widget genuinamente não depende do período/filtros do
+  header como o resto do envelope (mesmo padrão de leitura direta via RLS
+  já usado por `use-narratives-list.ts`/`use-communication-types.ts`).
+- ✅ Componente `RecentEventsPanel`
+  (`components/intelligence-center/recent-events-panel.tsx`) +
+  `hooks/use-recent-highlights.ts` (padrão 3-estados já usado por todo
+  hook de carregamento do projeto).
+- ✅ `formatRelativeTime` — nova função em `lib/date/format.ts`
+  (granularidade de hora/minuto, cai pra `formatRelativeDate` a partir de
+  24h) — a função existente sozinha não bastava, ver blockquote de topo.
+- ✅ Toggle "Lista"/"Resumo executivo" (2026-07-14) — reformulado no mesmo
+  dia pra usar `NarrativeTextPanel`/`narrative_text` (`aggregated-metrics/
+  ai-synthesis.md`) em vez de estatísticas locais; `/radar` ganhou
+  `usePageEnvelope("get-page-overview")`, sem dependência nova além disso.
+- ✅ "Resumo executivo" reescrito de novo (2026-07-16) — nova seção Camada
+  2 `radar_summary` (`ai-synthesis.md`), `buildRadarExecutiveSummaryPayload`/
+  `composeRadarSummaryText`/`fetchRadarSummaryText`
+  (`aggregated-metrics-service.ts`, propagado nas 8 Edge Functions
+  deployadas por Princípio técnico 5). `RecentEventsPanel` trocou
+  `narrativeText`/`page`/`onGenerated` por `radarSummaryText`, renderizado
+  com `ExpandableText` (não mais `NarrativeTextPanel`).
+
+## Gaps conhecidos (fora de escopo deste spec)
+
+- Página dedicada de histórico completo/paginado de eventos (além das
+  72h) — não pedida, não desenhada aqui.
+- Filtro por tipo de evento/severidade dentro do próprio widget — o
+  pedido foi "visão rápida e fácil", um filtro a mais vai contra esse
+  objetivo; o bloco `highlights` genérico de cada página já cobre uma
+  visão mais filtrável quando necessário.
+- Botão de atualização manual do "Resumo executivo" (`radar_summary`) —
+  `compose-narrative-synthesis` (o endpoint por trás de "Analisar período
+  com IA"/"Atualizar resumo executivo" nas outras seções) só recompõe a
+  seção `main`, escopada por `page`/`period` do header; esta seção usa uma
+  chave própria (dia UTC corrente, sem período de header). Estender esse
+  endpoint pra aceitar `section: 'radar_summary'` não foi pedido nesta
+  sessão — o texto já se atualiza sozinho (tempo + evento novo do radar).
+- Notificação em tempo real (push/toast quando um evento novo é
+  publicado) — este spec é só sobre a exibição ao carregar a página, não
+  sobre atualização ao vivo.
+
+## Referências relacionadas
+
+- [overview.md](overview.md)
+- [data-model.md](data-model.md) — `feed_events`/`feed_event_feedback`
+- [agent-orchestrator.md](agent-orchestrator.md)
+- [aggregated-metrics-integration.md](aggregated-metrics-integration.md)
+- [../aggregated-metrics/standard-json-envelope.md](../aggregated-metrics/standard-json-envelope.md) — bloco `highlights` genérico (por página/período)
+- [../aggregated-metrics/sql-aggregation.md](../aggregated-metrics/sql-aggregation.md) — `get_active_highlights`
+- [../intelligence-center/executive-overview.md](../intelligence-center/executive-overview.md)

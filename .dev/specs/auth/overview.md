@@ -1,11 +1,18 @@
 ---
 tipo: module-overview
 módulo: auth
-status: pronto
-atualizado: 2026-07-13
+status: implementado
+atualizado: 2026-07-14
 ---
 
 # Módulo: Autenticação e Administração de Usuários
+
+> ✅ **Status corrigido 2026-07-14** (premissa do projeto, ver CLAUDE.md
+> "Close the loop"): as 4 specs deste módulo (`data-model.md`, `login.md`,
+> `password-recovery.md`, `user-management.md`) estão todas
+> `implementado` desde 2026-07-13 — este overview ficava `pronto` por
+> defasagem de tracking. Ver `CLAUDE.md`, "Módulo auth (Sprint 2)", pro
+> detalhe completo.
 
 > Nasce a partir de pedido explícito do usuário (2026-07-13): "Todas as
 > funcionalidades só poderão ser utilizadas por usuários logados" +

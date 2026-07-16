@@ -2,11 +2,38 @@
 tipo: feature-spec
 módulo: event-radar
 funcionalidade: volume-limits
-status: rascunho
-atualizado: 2026-07-12
+status: implementado
+atualizado: 2026-07-30
 ---
 
 # Limites de Volume
+
+> ✅ **Implementado (2026-07-30)** — migration
+> `20260730000000_event_radar_volume_limits.sql`, anexado dentro do
+> próprio `run_event_detection()` (mais um `CREATE OR REPLACE`, não uma
+> função/pg_cron separado — mesma razão de 1.2/1.3: evita depender de
+> ordem entre dois jobs de `pg_cron` agendados pro mesmo horário).
+>
+> ⚠️ **Implementado antes de 1.4, não depois** — apesar do número "1.6"
+> vir depois de "1.4" na lista de funcionalidades, `overview.md`, "Ordem
+> de implementação" já dizia explicitamente que este filtro "entra... entre
+> 1.3 e 1.4", e o próprio `agent-orchestrator.md` já assume "dentro do cap
+> diário" como pré-condição do seu "Fluxo principal". A numeração é só
+> rótulo de catálogo, não ordem de execução.
+>
+> Cap fixado em **15** (ponto médio do "aproximadamente 10-20" pedido
+> aqui), em `event_radar_config().daily_event_cap` — mesmo lugar/mesma
+> convenção dos outros thresholds de MVP inferidos em 1.1.
+> Coluna nova, não antecipada em `data-model.md`:
+> `radar_staging_events.queued_for_agent_at` — sem `feed_events` existir
+> ainda (1.5 não implementado), não havia nenhuma fonte pra saber "quantos
+> eventos já foram considerados hoje"; e mesmo que `feed_events` existisse,
+> o corte tem que acontecer *antes* da chamada de IA, não poderia ser
+> inferido a partir do que já foi publicado. Marcado nos eventos ativos
+> ainda não marcados hoje (UTC), até o cap, priorizando por
+> `severity_score` desc — uma futura Edge Function de 1.4 deve ler
+> `queued_for_agent_at is not null` para saber o que processar, nunca
+> reimplementar o cap por conta própria.
 
 ## Objetivo
 
@@ -33,5 +60,6 @@ quantos eventos são publicados por organização por dia.
 ## Referências relacionadas
 
 - [overview.md](overview.md)
+- [data-model.md](data-model.md)
 - [severity.md](severity.md)
 - [agent-orchestrator.md](agent-orchestrator.md)

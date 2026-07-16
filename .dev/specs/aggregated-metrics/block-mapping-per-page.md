@@ -2,11 +2,37 @@
 tipo: feature-spec
 módulo: aggregated-metrics
 funcionalidade: block-mapping-per-page
-status: pronto
-atualizado: 2026-07-12
+status: implementado
+atualizado: 2026-07-18
 ---
 
 # Mapeamento de Blocos por Página
+
+> ✅ **Implementado (2026-07-14)**: esta tabela é espelhada 1:1 pela
+> constante `PAGE_BLOCKS` em
+> `supabase/functions-shared-source/aggregated-metrics-service.ts` (ver
+> `service-layer-aggregation.md`). `x_insights` (linha adicionada
+> 2026-07-18) e a coluna `narrative_detail`/`highlights` (deliberadamente
+> sem bloco `highlights`, conferido célula-a-célula em 2026-07-15) já estão
+> refletidos no código. ✅ **`breakdowns` tipo `'region'` e `trends` de
+> plataforma/pauta ao longo do tempo implementados (2026-07-25)** — ver
+> `_pending.md` gaps #9/#10 (resolvidos) e `sql-aggregation.md`,
+> `get_region_breakdown`/`get_platform_volume_trend`/`get_theme_sov_trend`.
+> ⚠️ `region` em `narrative_detail` continua sempre vazio na prática —
+> `bw_query_demographics_daily` não tem `category_id`, sem como escopar
+> por Narrativa (limitação real da tabela de origem, não um gap de
+> código). ✅ **`term_signals` adicionado a `narrative_detail` (2026-07-14)**
+> — pedido do usuário para identificar "termos/phrases mais citados" por
+> Narrativa; a function já suportava escopo por Narrativa, só faltava o
+> wiring em `PAGE_BLOCKS` (ver `narratives-exploration.md`, "Termos e
+> frases mais citados"). ✅ **`term_signals` estendido a `overview`/
+> `narratives`/`platforms` (2026-07-14, mesmo dia)** — segundo pedido do
+> usuário na mesma sessão: "em todas as páginas é importante existir os
+> principais tópicos positivos e negativos"; `themes`/`narrative_detail`
+> ganharam os widgets de Drivers (positivo/negativo) ao lado da nuvem de
+> palavras que já tinham. Ver `sql-aggregation.md`, "Mapeamento
+> tópico↔Narrativa por polaridade", pro campo correspondente por
+> Narrativa (`narratives[].positive_topics`/`negative_topics`).
 
 ## Objetivo
 
@@ -23,13 +49,14 @@ de preencher os marcados como obrigatórios.
 | Bloco \ Página        | Visão Geral (`overview`) | Narrativas — lista (`narratives`) | Narrativa — detalhe (`narrative_detail`) | Sentimento (`sentiment`) | Plataformas (`platforms`) | Pautas Eleitorais (`themes`) | Autores (`authors`) | Alertas (`alerts`) | Relatórios (`reports`) |
 |------------------------|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
 | `metrics`               | ●   | —   | —   | —   | —   | —   | —   | —   | ●   |
-| `breakdowns`             | ● (sentimento) | — | ● (sentimento/plataforma/localização da narrativa) | ● (geral/plataforma/pauta/região) | ● (sentimento por plataforma) | ● (sentimento por pauta) | — | — | ● |
+| `breakdowns`             | ● (sentimento) | — | ● (sentimento/plataforma/localização da narrativa) | ● (geral/plataforma/pauta/**narrativa**/região) | ● (sentimento por plataforma) | ● (sentimento por pauta) | — | — | ● |
 | `trends`                 | ● (volume+sentimento) | — | ● (evolução da narrativa vs. volume geral) | ● (evolução do sentimento) | ● (volume por plataforma) | ● (SOV por pauta ao longo do tempo) | — | — | ● |
 | `narratives`             | ● (top narrativas) | ● (tabela completa) | — | — | ● (narrativas dominantes por plataforma) | ● (narrativas dentro da pauta) | — | — | ● |
 | `authors`                | — | — | ● (principais disseminadores) | — | ● (perfis relevantes por plataforma) | ● (autores/comunidades por pauta) | ● (ranking completo) | — | — |
 | `highlights`             | ● (insights + recomendações) | — | — | ● (mudanças de sentimento) | — | ● (comparação entre períodos) | — | ● (todos os alertas ativos) | ● |
-| `term_signals`           | — | — | — | ● (drivers de sentimento) | — | ● (termos emergentes) | — | — | — |
+| `term_signals`           | ● (drivers de sentimento) | ● (drivers de sentimento) | ● (termos/frases mais citados + drivers) | ● (drivers de sentimento) | ● (drivers de sentimento) | ● (termos emergentes + drivers) | — | — | — |
 | `graph`                  | — | — | ● (obrigatório) | — | — | — | — | — | — |
+| `x_insights`             | — | — | — | — | ● (Top Hashtags/Emojis/Stories/Most Mentioned X Posters) | — | — | — | — |
 | `narrative_text`         | ● | — | ● | ● | ● | ● | — | — | ● |
 
 Legenda: ● = bloco preenchido nessa página · — = bloco retorna vazio (`[]`) ou `null`.

@@ -1,9 +1,16 @@
 ---
 tipo: data-model
 módulo: foundation
-status: pronto
-atualizado: 2026-07-11
+status: implementado
+atualizado: 2026-08-06
 ---
+
+> ✅ **Status corrigido 2026-07-14** (premissa do projeto, ver CLAUDE.md
+> "Close the loop"): schema em produção desde a migration
+> `20260707000000_foundation_schema.sql`, com dezenas de migrations
+> incrementais desde então (ver `CLAUDE.md`, "Brandwatch sync model") —
+> ficava marcado `pronto` por defasagem de tracking, não por estar
+> pendente.
 
 # Modelo de Dados — Foundation
 
@@ -216,9 +223,10 @@ usando join implícito por `project_id in (select id from bw_projects where orga
 | `name`           | `text`        | sim | |
 | `matching_type`  | `text`        | não | `manual` \| `keywords` |
 | `query_ids`      | `bigint[]`    | sim | default `'{}'`. ✅ Adicionado 2026-07-11 (migration `20260711080000`, correção de bug de SOV) — de `queryIds` no payload de `GET .../rulecategories` (confirmado em `developers.brandwatch.com/docs/retrieving-categories`), sem chamada nova. Quais Queries essa Category está associada — usado por `fetchNarrativeCategoryIds()` pra escopar `categoryTargets` corretamente por Query, e por `refresh_narrative_metrics()` pra saber a qual Query o `total_mentions` de uma Narrativa pertence |
+| `status`         | `text`        | sim | default `'active'`. ✅ Adicionado 2026-07-16 (migration `20260716010000`, pedido do usuário: "as categorias permanecem mesmo quando excluídas da brandwatch... status passa para inativo"). `active` \| `inactive` (check constraint). `refreshMetadata()` marca `inactive` toda Category/Subcategory do Project que não veio mais em `GET /rulecategories` na última checagem — a linha nunca é deletada (preserva FK de `bw_query_metrics_daily`/`bw_query_topics`/`bw_query_top_authors`/histórico), só sinaliza que não deve mais ser usada. Reativação é automática se a Category reaparecer num sync futuro. `get_narratives_table`/`get_theme_breakdown` (aggregated-metrics) exigem `status = 'active'`; `fetchNarrativeCategoryIds()` (bw-sync) também, pra não gastar orçamento de rate limit sincronizando novo dado pra Category já removida |
 | `synced_at`      | `timestamptz` | sim | `now()` |
 
-**Índices**: `(project_id)`, `(parent_id)`.
+**Índices**: `(project_id)`, `(parent_id)`, `(project_id, status)`.
 
 **RLS**: mesmo padrão via `project_id`.
 
@@ -632,6 +640,30 @@ ver `ensureBootstrapSeed`/`isGrainStale` em `bw-sync/index.ts`.
 
 ### `bw_query_metrics_hourly`
 
+> ⚠️ **Bug real de captura corrigido (2026-08-09)** — desde que esta tabela
+> foi criada, `total_mentions` só era gravado pra `category_id is null`
+> (linha da Query inteira, via `syncHourlySentimentMetrics`); a única
+> function que gravava linhas com `category_id` preenchido
+> (`syncHourlyNetSentiment("categories", ...)`) só escrevia `net_sentiment`
+> — nunca `total_mentions`, que ficava preso no default `0` da coluna pra
+> sempre. Ou seja: **nenhuma linha desta tabela com `category_id` não-nulo
+> jamais teve um `total_mentions` real**, apesar da tabela/documentação
+> sempre terem descrito `category_id` como "mesmo padrão de
+> `bw_query_metrics_daily`" (que sim é populado por Narrativa). Achado ao
+> investigar por que "SOV por pauta ao longo do tempo"
+> (`intelligence-center/electoral-themes.md`) continuava vazio no modo
+> "Diário" mesmo depois do grão `hour` ser implementado em
+> `get_theme_sov_trend` — o SQL estava correto, o dado que ele lê nunca
+> existiu. `syncHourlySentimentMetrics` ganhou um parâmetro `categoryId`
+> opcional (mesmo padrão de `syncSentimentMetrics`, usado pelos grãos dia/
+> semana/mês desde sempre) e `runHourlyMetricsStep` (`bw-sync/index.ts`)
+> ganhou um loop throttled por Narrativa (round-robin por staleness, mesmo
+> padrão de `daily_metrics`, migration `20260809020000` pro helper SQL de
+> frescor) — ver `CLAUDE.md` pro detalhamento completo. Afeta qualquer
+> consumidor de `category_id` não-nulo nesta tabela, não só Pautas — ex:
+> `get_volume_trend`'s grão `hour` filtrado por Narrativa
+> (`/narratives/[id]` no modo "Diário").
+
 > ✅ **Adicionada 2026-07-13** — resolve a ⚠️ DECISÃO PENDENTE registrada em
 > `event-radar/detection-engine.md` ("as janelas de 'hora atual'/'últimas
 > 3h' exigem grão horário, mais fino que o diário oficial... não existe
@@ -681,11 +713,16 @@ adicionar depois se `event-radar`/`aggregated-metrics` precisarem):
 
 **Janela de captura, deliberadamente curta** (diferente de `daily`/`weekly`/`monthly`, que
 cobrem o histórico completo desde `BRANDWATCH_MENTIONS_START_DATE`): este grão existe só pra
-detecção de curto prazo (`event-radar`) e pra Velocidade (`aggregated-metrics`), não pra
-histórico/BI — `bw-sync` busca **últimos 30 dias** a cada invocação (não só as horas desde o
-último sync). Motivo do tamanho: 30 dias cobre tanto a janela "Últimas 3h" quanto "Hora atual vs.
-média das últimas 4 semanas na mesma hora" (`event-radar/detection-engine.md`) com a **mesma
-tabela** — a segunda janela calcula a média agrupando por hora-do-dia sobre os próprios registros
+detecção de curto prazo (`event-radar`) e pro grão `hour` do gráfico de tendência
+(`get_volume_trend`, `aggregated-metrics`) — não pra histórico/BI. ⚠️ **Não é mais usado por
+Tendência de Narrativa** (`get_narratives_table().trend_score`, antes "Velocidade"/`velocity_score`)
+— desde a migration `20260722010000`, esse indicador passou a usar a série **diária** de
+`narrative_metrics` (regressão sobre 14 dias), não mais o grão horário; ver
+`aggregated-metrics/sql-aggregation.md`, "Tendência". `bw-sync` busca **últimos 30 dias** a cada
+invocação (não só as horas desde o último sync). Motivo do tamanho: 30 dias cobre tanto a janela
+"Últimas 3h" quanto "Hora atual vs. média das últimas 4 semanas na mesma hora"
+(`event-radar/detection-engine.md`) com a **mesma tabela** — a segunda janela calcula a média
+agrupando por hora-do-dia sobre os próprios registros
 já armazenados aqui (`extract(hour from metric_hour)`), sem precisar de uma segunda chamada
 usando a dimensão cíclica `hourOfDay` da Brandwatch. Sem custo extra de chamada por causa disso —
 uma chamada de chart devolve todos os buckets do range pedido numa resposta só (mesmo princípio
@@ -962,12 +999,53 @@ Posters/Emojis, exatamente este shape de dado).
 
 **Índices**: unique `(project_id, query_id, category_id_key, insight_type,
 name, metric_week)`. **Políticas RLS**: select-only via `project_id`, mesmo
-padrão de `bw_query_topics`/`bw_query_top_authors`. Throttle semanal, por
-`categoryTarget` (query inteira + cada Narrativa) — ver `sync-brandwatch.md`
-passo 6.4b. **Salvaguarda de orçamento**: só sincronizado para
+padrão de `bw_query_topics`/`bw_query_top_authors`. Throttle configurável via
+`BW_SYNC_INTERVAL_HOURS` (`getSyncStalenessWindowMs()`, default 3h — não
+mais um throttle semanal fixo, ver "Sincronismo entre fases" em
+`sync-brandwatch.md`), por `categoryTarget` (query inteira + cada
+Narrativa). **Salvaguarda de orçamento**: só sincronizado para
 `categoryTarget`s com volume relevante em `page_type = 'twitter'` (já
 disponível em `bw_query_metrics_daily_by_platform`) — não gasta as 4
 chamadas em Narrativa/Query sem presença em X.
+>
+> ⚠️ **Bug real encontrado e corrigido (2026-08-08)** — usuário relatou que
+> X Themes nunca atualizava, "por mais que execute o bw_sync". Causa raiz:
+> `queryHasTwitterVolume()` (`bw-sync/index.ts`) exigia `page_type =
+> 'twitter'` como comparação exata/case-sensitive — mas o valor real que a
+> Brandwatch devolve pra X/Twitter na dimensão de chart `pageTypes`
+> **nunca foi confirmado contra um payload real** (`syncPlatformMetrics`,
+> mesmo arquivo, já admitia isso desde a implementação original: "não
+> peguei um payload de exemplo específico desta combinação... ainda é
+> inferido pelo padrão geral"). Se o valor real vier com outra caixa
+> (`'Twitter'`/`'X'`) ou já renomeado pra `'x'`, esse gate reprovava
+> silenciosamente pra sempre — nenhuma reexecução manual destravava,
+> exatamente o sintoma relatado, e as 4 chamadas de X Insights nunca
+> chegavam a ser tentadas. Corrigido pra aceitar `twitter`/`x`
+> case-insensitive (`ilike`) — mesma dualidade já aceita em
+> `get_authors_ranking` (`use_tweeters`, migration `20260801010000`) pro
+> filtro de plataforma vindo do frontend. Ainda uma inferência, não uma
+> confirmação — um log de diagnóstico novo
+> (`queryHasTwitterVolume:no_match`) lista os `page_type` reais
+> encontrados pro par caso ainda falhe, pra confirmar o valor certo via
+> logs de produção sem precisar de acesso ao banco.
+
+> ✅ **Consumidor implementado + mapeamento reconfirmado (2026-07-18)** —
+> até esta data, esta tabela era sincronizada e nunca lida por nada:
+> nenhuma function/bloco de `aggregated-metrics` a expunha (achado numa
+> auditoria pedida pelo usuário a partir de screenshots reais do
+> dashboard nativo da Brandwatch — "Top Hashtags"/"Most Mentioned X
+> Posters"/"Top Stories"/"Top Emojis"). Fechado via `get_x_insights`
+> (`aggregated-metrics/sql-aggregation.md`), bloco `x_insights` do
+> envelope, só na página `platforms`. Mesma sessão reconfirmou ao vivo
+> contra `developers.brandwatch.com/docs/twitter-insights` que `volume`/
+> `tweets`/`retweets`/`impressions`/`reachEstimate` são os nomes exatos de
+> campo nos 4 endpoints (segunda confirmação independente, mesmo
+> resultado da primeira em 2026-07-11/13) — os rótulos "Posts"/"Reposts"/
+> "All Posts"/"Impressions" do dashboard nativo da Brandwatch são só
+> apresentação da Brandwatch em cima destes mesmos 4 campos: `tweets` =
+> Posts, `retweets` = Reposts, `volume` = All Posts, `impressions` =
+> Impressions. Conferido também aritmeticamente contra um export real do
+> usuário.
 
 ### `bw_query_top_authors`
 
@@ -989,7 +1067,7 @@ ver nota de sampling em §5 acima). Adicionada em `20260710010000`.
 | `volume` | `integer` | sim | default `0` |
 | `reach_estimate` | `bigint` | não | corrigido de `integer` pra `bigint` em `20260712000000` (bug de overflow) |
 | `impact` | `numeric` | não | |
-| `followers` | `integer` | não | de `twitterFollowers` — único campo de seguidores confirmado no envelope deste endpoint (Facebook/Reddit não têm campo de seguidores documentado aqui). Adicionado `20260710050000` |
+| `followers` | `integer` | não | de `twitterFollowers` — único campo de seguidores confirmado no envelope deste endpoint (Facebook/Reddit não têm campo de seguidores documentado aqui). Adicionado `20260710050000`. ✅ Exposto via `get_authors_ranking` (2026-08-08, migration `20260808020000`) — widget "Quem move a conversa", `AuthorRow.followers` |
 | `is_influential` | `boolean` | sim | gerada, `coalesce(followers, 0) >= 100000` — adicionado `20260710050000`, pedido do usuário ("mais de 100000 seguidores... os mais influentes") |
 | `tweets` | `integer` | não | de `twitterTweets` — contagem de posts do autor. ✅ Implementado 2026-07-11, migration `20260711060000` |
 | `retweets` | `integer` | não | de `twitterRetweets` — contagem de reposts do autor. Mesmo migration que `tweets` acima |
@@ -997,7 +1075,7 @@ ver nota de sampling em §5 acima). Adicionada em `20260710010000`.
 | `account_type` | `text` | não | de `authorAccountType` — confirmado no envelope do endpoint (ex: valores tipo governo/empresa/pessoal, exatos ainda não catalogados). ✅ Implementado 2026-07-11, migration `20260711060000` — habilita filtros tipo "Government Verification"/"Business Verification" já vistos num dashboard real da Brandwatch |
 | `country_code` / `country_name` | `text` | não | de `countryCode`/`countryName` — país do autor (não do conteúdo da mention). Mesma migration que `account_type`, habilita "distribuição geográfica dos autores" (distinto de §5's demografia por *mention*) |
 | `sentiment_positive`/`neutral`/`negative` | `integer` | sim | default `0` |
-| `platform_stats` | `jsonb` | sim | objeto `data` inteiro devolvido pelo endpoint por autor (twitter*/facebook*/reddit* etc.) — mesmo raciocínio de `mentions.engagement`, sem coluna por campo. `account_type`/`country_code`/`country_name` acima são extrações de campos que já vivem aqui, não chamada nova |
+| `platform_stats` | `jsonb` | sim | objeto `data` inteiro devolvido pelo endpoint por autor (twitter*/facebook*/reddit* etc.) — mesmo raciocínio de `mentions.engagement`, sem coluna por campo. `account_type`/`country_code`/`country_name` acima são extrações de campos que já vivem aqui, não chamada nova. ✅ **Lido pela primeira vez em agregação (2026-08-08, migration `20260808020000`)**: `bw_top_author_platform_tags(platform_stats)` deriva `AuthorRow.platforms` a partir das chaves realmente presentes neste jsonb (`twitterFollowers`/`instagramFollowerCount`/`facebookLikes`/`tiktokLikes`/`linkedinLikes`/`blueskyFollowers`, mesmo vocabulário de `mentions.engagement`) — nunca fabrica uma plataforma sem sinal real; só `twitter*` é confirmado contra a documentação da Brandwatch para este endpoint especificamente, as demais são melhor esforço sobre o que já estiver sincronizado |
 | `metric_week` | `date` | sim | mesmo caráter de snapshot que `bw_query_topics.metric_week` |
 | `synced_at` | `timestamptz` | sim | |
 
@@ -1050,6 +1128,32 @@ acelera consultas de "só os influentes".
 > Narrativa — salvaguarda de orçamento (cada autor enriquecido custa 2
 > chamadas extras: impressões + temas, ver `bw_query_author_topics`
 > abaixo). Ampliar pra Narrativas específicas fica como ampliação futura.
+
+> ⚠️ **`sentiment_positive`/`neutral`/`negative` — achado real numa
+> auditoria (2026-07-17, pedido do usuário: "verifique como estão vindo os
+> dados da brandwatch sobre sentimento... por autores")**: essas 3 colunas
+> existem desde a criação da tabela (`20260710010000`) e `bw-sync` escreve
+> nelas lendo `d.sentiment ?? {}` da resposta de
+> `data/volume/topauthors/queries` (`syncTopAuthors()`) — mas, diferente de
+> **todo** campo vizinho nesta mesma tabela (`tweets`/`retweets`/
+> `account_type`/`country_code`/`country_name`, todos com nota explícita
+> "confirmado contra developers.brandwatch.com/docs/top-tweeters"), este
+> mapeamento **nunca foi confirmado** contra a documentação real do
+> endpoint — o payload documentado (`authorVolume`/`reachEstimate`/
+> `impact`/`twitterFollowers`/`twitterTweets`/`twitterRetweets`/
+> `authorAccountType`/`countryCode`/`countryName`) não cita nenhum objeto
+> `sentiment`. Risco real: `d.sentiment` provavelmente é sempre
+> `undefined`, e as 3 colunas ficam sempre `0/0/0` em produção, sem nenhum
+> erro (`?? 0` absorve silenciosamente). **Decisão do usuário**: não gastar
+> uma chamada nova pra confirmar/substituir agora — `aggregated-metrics.
+> get_authors_ranking` (ver `sql-aggregation.md`) foi corrigida pra NUNCA
+> ler estas 3 colunas, usando `bw_query_author_topics` (fonte já
+> confirmada, abaixo) como origem de "sentimento por autor" em vez disso.
+> Estas colunas continuam existindo/sendo escritas (não removidas), só não
+> têm mais nenhum consumidor downstream — revisar contra logs reais de
+> produção antes de reativar seu uso. Mesma ressalva vale para
+> `bw_query_top_tweeters.sentiment_positive/neutral/negative` (estrutura
+> idêntica, ver abaixo).
 
 > ✅ **Ampliação (2026-07-10, migration `20260710040000`)**: pedido do
 > usuário — "influência do autor" também precisa ser por Narrativa, não
@@ -1354,13 +1458,20 @@ etc. Mesma categoria de risco já aceita pra `syncPlatformMetrics`/
 
 ### `narratives`
 
+> ✅ **`description_generated_at` adicionado (2026-07-14, migration
+> `20260804010000`)**: `description` finalmente ganhou um produtor —
+> `narrative-summary-composer` (Edge Function, pg_cron a cada 30min). Ver
+> [narratives.md](narratives.md), "Resumo executivo (produtor)" para o
+> fluxo completo.
+
 | Campo              | Tipo               | Obrigatório | Descrição |
 |---------------------|--------------------|-------------|-----------|
 | `id`                | `uuid`             | sim | PK |
 | `organization_id`   | `uuid`             | sim | FK → `organizations(id)` ON DELETE CASCADE |
 | `bw_category_id`    | `bigint`           | não | FK → `bw_categories(id)` — vínculo opcional com Category já curada |
 | `title`             | `text`             | sim | |
-| `description`       | `text`             | não | |
+| `description`       | `text`             | não | "Resumo executivo" — gerado por `narrative-summary-composer` (ver acima), nunca editável via UI |
+| `description_generated_at` | `timestamptz` | não | quando `description` foi gerado pela última vez; `null` = nunca gerado. Não é `updated_at` (esse muda em qualquer escrita futura na linha) |
 | `stage`             | `narrative_stage`  | sim | default `'emerging'` |
 | `risk_level`        | `severity_level`   | sim | default `'low'` |
 | `priority`          | `severity_level`   | sim | default `'medium'` |
@@ -1585,9 +1696,31 @@ $$;
 
 ## Função: `refresh_narrative_metrics`
 
-Chamada direto pelo `pg_cron` (sem Edge Function). Desde `20260711010000`,
-uma via só — sem agregado oficial da Brandwatch (`bw_category_id` nulo),
-sem `narrative_metrics`.
+Chamada pelo `pg_cron` (sem Edge Function própria) **e**, desde
+2026-08-06, também via `.rpc(...)` a partir de `bw-sync` (ver nota
+abaixo) — duas vias de chamada, mesma function, `upsert` idempotente,
+sem conflito entre elas. Desde `20260711010000`, uma via de dado só —
+sem agregado oficial da Brandwatch (`bw_category_id` nulo), sem
+`narrative_metrics`.
+
+> ⚠️ **Bug de produção corrigido (2026-08-06)** — `get_narratives_table`
+> (a maior parte do que o painel de fato mostra: tabela de Narrativas,
+> cards de SOV/sentimento/momentum/tendência/risco) lê exclusivamente
+> desta tabela, nunca de `bw_query_metrics_daily` diretamente — então
+> ficava presa ao atraso de até 59min do `pg_cron` horário (ver "`pg_cron`
+> — agendamentos deste módulo" abaixo) mesmo quando `bw-sync` já tinha
+> sincronizado dado novo minutos antes. Usuário reportou o sintoma
+> exatamente assim: "a integração rodou ok, mas os dados não foram
+> refletidos no painel" logo após rodar `bw-sync` manualmente.
+> `get_metrics_cards` (KPIs de topo) não tinha esse problema — lê
+> `bw_query_metrics_daily` direto. Corrigido sem migration:
+> `refreshNarrativeMetricsForToday()` (`bw-sync/index.ts`) chama esta
+> mesma function via `.rpc(...)` pra uma janela estreita (hoje + ontem —
+> cobre virada de fuso sem reprocessar os ~210 dias que o cron horário já
+> cobre) assim que a fase `daily_metrics` grava dado novo
+> (`result.didWork`) — ver `sync-brandwatch.md` e `CLAUDE.md`, "Brandwatch
+> sync model", pro relato completo, incluindo o bug irmão (checagem de
+> frescor truncada pelo `max_rows` do PostgREST) corrigido na mesma sessão.
 
 > ⚠️ **A definição completa da função vive só na migration**
 > (`supabase/migrations/20260711080000_narrative_sov_scoped_by_query.sql`,
@@ -1633,6 +1766,18 @@ with daily as (
   select narrative_id, query_id, metric_date, total_mentions,
          sentiment_positive, sentiment_neutral, sentiment_negative,
          net_sentiment, reach_estimated, engagement_total, unique_authors,
+         -- ✅ Corrigido 2026-07-20 (bug real: "sentimento por narrativa
+         -- sempre neutro" — dividir por total_mentions dilui o resultado
+         -- sempre que há mentions neutras, exigindo desequilíbrio grande
+         -- demais pra sair de 'neutral'). Normaliza por
+         -- (sentiment_positive + sentiment_negative), mesma base usada por
+         -- net_sentiment, em vez de total_mentions (que inclui neutras).
+         case
+           when coalesce(sentiment_positive, 0) + coalesce(sentiment_negative, 0) > 0
+           then (sentiment_positive - sentiment_negative)::numeric * 100.0
+                / (sentiment_positive + sentiment_negative)
+           else null
+         end as local_net_sentiment,
          lag(total_mentions) over (partition by narrative_id order by metric_date) as prev_total_mentions
   from narrative_metrics
   where period = 'daily'
@@ -1670,12 +1815,18 @@ select
     end,
     -- fallback só enquanto net_sentiment ainda não sincronizou pra essa linha
     -- (histórico pré-20260713010000, ou sync ainda não passou por essa Narrativa/dia) —
-    -- mesma escala de bucket, aproximada a partir de sentiment_positive/negative
-    -- (já oficiais/não amostrados, só não é o score nativo netSentiment)
+    -- mesma escala de bucket de net_sentiment, aplicada a local_net_sentiment
+    -- (mesma definição/base de net_sentiment: positivo/(positivo+negativo),
+    -- só que calculada localmente sobre sentiment_positive/negative já
+    -- oficiais/não amostrados — corrigido 2026-07-20, ver nota na CTE `daily`)
     case
-      when d.total_mentions = 0 then 'neutral'
-      when (d.sentiment_positive - d.sentiment_negative)::numeric / d.total_mentions > 0.2 then 'positive'
-      when (d.sentiment_positive - d.sentiment_negative)::numeric / d.total_mentions < -0.2 then 'negative'
+      when d.local_net_sentiment >= 50 then 'very_positive'
+      when d.local_net_sentiment >= 20 then 'positive'
+      when d.local_net_sentiment >= 5 then 'slightly_positive'
+      when d.local_net_sentiment >= -4 then 'neutral'
+      when d.local_net_sentiment >= -19 then 'slightly_negative'
+      when d.local_net_sentiment >= -49 then 'negative'
+      when d.local_net_sentiment is not null then 'very_negative'
       else 'neutral'
     end
   ) as sentiment_bucket
@@ -1684,7 +1835,7 @@ join daily d on d.narrative_id = n.id
 left join query_totals t on t.metric_date = d.metric_date and t.query_id = d.query_id;
 
 comment on view reporting.narratives_overview is
-  'View usada pela tabela interativa de Narrativas no Executive Overview e exposta para BI externo. sov_percent = menções da Narrativa / total de menções de todas as Narrativas da MESMA Query no mesmo dia — corrigido 2026-07-11 (ver nota abaixo). sentiment_bucket usa net_sentiment (score oficial da Brandwatch, 7 faixas, ver aggregated-metrics/sql-aggregation.md) com fallback pro cálculo local só enquanto net_sentiment não sincronizou. Momentum/Velocidade/Risco (scores 0-100) NÃO vivem nesta view — são período-dependentes (a UI escolhe 7/14/30 dias) e ficam em aggregated-metrics.get_narratives_table(), que já recebe period_start/period_end; esta view expõe só dado bruto por dia, reaproveitado tanto pela UI quanto pelo BI externo.';
+  'View usada pela tabela interativa de Narrativas no Executive Overview e exposta para BI externo. sov_percent = menções da Narrativa / total de menções de todas as Narrativas da MESMA Query no mesmo dia — corrigido 2026-07-11 (ver nota abaixo). sentiment_bucket usa net_sentiment (score oficial da Brandwatch, 7 faixas, ver aggregated-metrics/sql-aggregation.md) com fallback pro cálculo local só enquanto net_sentiment não sincronizou. Momentum/Tendência/Risco (scores 0-100) NÃO vivem nesta view — são período-dependentes (a UI escolhe 7/14/30 dias) e ficam em aggregated-metrics.get_narratives_table(), que já recebe period_start/period_end; esta view expõe só dado bruto por dia, reaproveitado tanto pela UI quanto pelo BI externo. ✅ Momentum/Velocidade/Risco → Momentum/Tendência/Risco (2026-07-22, migration 20260722010000, comentário atualizado em 20260722010000).';
 
 -- Role só-leitura para BI externo (Qlik Cloud, Power BI, ferramentas próprias)
 create role bi_reader login noinherit;
@@ -1746,7 +1897,8 @@ revoke all on schema public from bi_reader;
 | Job | Frequência | Ação |
 |---|---|---|
 | `bw-sync-heartbeat` (Edge Function) | a cada 15min (heartbeat fixo, infraestrutura) | ✅ **agendado em `20260711020000`** — `select net.http_post(url := 'https://ktvyqpogfnowuqmjybvu.supabase.co/functions/v1/bw-sync', ...)` (URL hardcoded, não é segredo — ver nota acima). Cadência de negócio real (quando de fato minta token/chama a Brandwatch) é `BW_SYNC_INTERVAL_HOURS` (secret da Edge Function, default `3`) — ver `sync-brandwatch.md`, passo 0.5b. Nenhum passo manual pós-deploy necessário |
-| `refresh_narrative_metrics_hourly` | de hora em hora | ✅ **agendado em `20260710030000`** — `select refresh_narrative_metrics(current_date - 210, current_date);`. Não chama a Brandwatch (só agrega dado já sincronizado), então não tinha o mesmo bloqueio de `bw-sync`. Janela larga (210 dias) hoje porque o backfill de `bw-sync` ainda está em andamento; revisar pra uma janela mais estreita quando isso estabilizar |
+| `refresh_narrative_metrics_hourly` | de hora em hora | ✅ **agendado em `20260710030000`** — `select refresh_narrative_metrics(current_date - 210, current_date);`. Não chama a Brandwatch (só agrega dado já sincronizado), então não tinha o mesmo bloqueio de `bw-sync`. Janela larga (210 dias) hoje porque o backfill de `bw-sync` ainda está em andamento; revisar pra uma janela mais estreita quando isso estabilizar. ⚠️ Continua sendo a **rede de segurança** — a chamada reativa abaixo cobre o caso comum (fase `daily_metrics` acabou de gravar dado), este cron continua cobrindo tudo mais (correções em dias antigos, pairs que não passaram por `daily_metrics` neste ciclo, etc.) |
+| _(sem cron próprio)_ `refresh_narrative_metrics` via `bw-sync` | a cada vez que a fase `daily_metrics` grava dado novo | ✅ **corrigido 2026-08-06** — `bw-sync/index.ts`'s `refreshNarrativeMetricsForToday()` chama `refresh_narrative_metrics(ontem, hoje)` via `.rpc(...)` logo após `runDailyMetricsStep()` retornar `didWork: true`. Fecha o atraso de até 59min entre "`bw-sync` sincronizou" e "o painel reflete" que existia por `narrative_metrics` depender só do cron horário acima, desacoplado do ciclo real de `bw-sync` — ver `sync-brandwatch.md` |
 
 ## Checklist antes de aplicar a migration
 
@@ -1846,6 +1998,39 @@ revoke all on schema public from bi_reader;
       fase agora é guardada pelo mesmo orçamento usado em toda fase
       "stale-gated" (ver `sync-brandwatch.md`, nota logo após a tabela de
       fases)
+      → ✅ **`bw_categories.status` implementado (2026-07-16, migration
+      `20260716010000`)**: pedido do usuário — Category/Subcategory some do
+      Brandwatch, mas nunca é deletada localmente, passa a `status =
+      'inactive'`; `refreshMetadata()` recalcula isso a cada refresh de
+      metadata (checando o `GET /rulecategories` atual contra o que já
+      existe localmente). `get_narratives_table`/`get_theme_breakdown`
+      (aggregated-metrics) e `fetchNarrativeCategoryIds()` (bw-sync) passam
+      a exigir `status = 'active'` — ver §"bw_categories" acima e CLAUDE.md
+      "Category/Subcategory status tracking + página-escopo raiz/subcategoria"
+      → ✅ **correção de bug de produção (2026-07-16, migration
+      `20260716020000`)**: `bw_sync_lock` ganha `rate_limited_until` — um
+      429 com retry esgotado agora grava um backoff de 10min (a janela real
+      do rate limit da Brandwatch), e a próxima invocação checa esse campo
+      antes de mintar token/chamar a Brandwatch de novo, em vez de repetir a
+      mesma chamada fadada a tomar 429 a cada heartbeat de 15min — ver
+      CLAUDE.md "bw-sync rate limit cross-invocation backoff"
+      → ✅ **bug real corrigido (2026-07-23)**: a desativação de
+      `bw_categories.status` acima estava correta como lógica, mas só
+      rodava quando `sync_cursors.next_step` chegava em `"metadata"` — a
+      primeira fase de `SYNC_STEPS`, reavaliada só quando um ciclo inteiro
+      de 16 fases fecha e dá a volta. Fases "stale-gated" avançam no
+      máximo 1 categoryTarget por invocação, e `daily_metrics` também pode
+      se estender por várias invocações desde 2026-07-22 (`stayOnStep`) —
+      um ciclo inteiro podia levar bem mais que `BW_SYNC_INTERVAL_HOURS`
+      (3h) pra fechar, deixando Categories removidas na Brandwatch
+      marcadas `active` por muito mais tempo do que o throttle de 1h de
+      `needsMetadataRefresh()` sugere. Corrigido: a checagem (e o refresh
+      de verdade, quando devido) agora roda em toda invocação do par,
+      independente da fase corrente — ver CLAUDE.md "Category
+      deactivation wasn't actually running on any predictable cadence".
+      Também ganhou log de sucesso (`refreshMetadata:categories_deactivated`,
+      via `.select("id")` no `UPDATE`) — antes não havia nenhum log
+      confirmando se a desativação rodou ou quantas linhas afetou
 - [ ] Triggers `set_updated_at` em `organizations`, `brandwatch_credentials`, `narratives`
 - [ ] RLS habilitada em **todas** as tabelas deste módulo (inclusive
       `sync_cursors`/`sync_log`, deny-all)

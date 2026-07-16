@@ -3,10 +3,82 @@ tipo: feature-spec
 módulo: intelligence-center
 funcionalidade: narratives-exploration
 status: pronto
-atualizado: 2026-07-12
+atualizado: 2026-08-08
 ---
 
 # Exploração de Narrativas (lista + detalhe)
+
+> ✅ **"Resumo executivo das Narrativas" acima da tabela (2026-07-14,
+> sessão seguinte)** — pedido do usuário: "Crie um resumo executivo para
+> colocá-lo acima da tabela de narrativa na página de narrativas. Esse
+> resumo será um resumo executivo de todas as narrativas daquele
+> período." Novo widget `WidgetCard` ("Resumo executivo das Narrativas"),
+> posicionado imediatamente acima de "Todas as Narrativas" — sempre
+> visível, independente do modo de exibição (Tabela/Cards). **Distinto**
+> do "Resumo executivo da página" já existente no fim da página (esse
+> lê `narrative_text`/`highlights`, ai-synthesis Camada 0/1, sobre
+> eventos do radar): este novo widget é ai-synthesis **Camada 2**
+> (`ui_meta.narratives_overview_text`, `aggregated-metrics-service.ts`),
+> nova seção `page = 'narratives'` / `section = 'overview'` (mesmo
+> mecanismo genérico já usado por `platforms`/`themes`/`authors` — ver
+> `aggregated-metrics/ai-synthesis.md`, "Camada 2"). Justificativa da
+> Camada 2 (exigida pela própria regra da spec): o conjunto agregado de
+> scores de **todas** as Narrativas de uma vez (contagem total,
+> distribuição de sentimento, maiores SOV/risco/momentum) não é um
+> evento discreto do radar — é uma leitura composta do próprio bloco
+> `narratives` já buscado por esta página, sem chamada nova. Mesmo
+> componente `ExpandableText` ("mostrar mais"/"mostrar menos") de todo
+> outro texto de IA do produto.
+
+> ✅ **"Resumo executivo da página" + admin force-refresh (2026-07-14)** —
+> pedido do usuário: "atualizar o resumo executivo de todas as narrativas.
+> Além disso, inclua um resumo executivo da página." Duas mudanças
+> independentes: (1) novo widget "Resumo executivo da página"
+> (`NarrativeTextPanel`, mesma Camada 0/1 de `ai-synthesis.md` já usada em
+> Visão Geral/Sentimento/Pautas Eleitorais — `PAGE_BLOCKS.narratives`
+> ganhou `'highlights'`/`'narrative_text'`, antes ausentes); (2) botão
+> "Atualizar resumos executivos das Narrativas" (admin-only) — força
+> `narratives.description` (resumo **por Narrativa**, diferente do widget
+> acima) a ser regerado agora pra toda Narrativa ativa da organização,
+> via nova Edge Function `admin-refresh-narrative-summaries` — ver
+> `foundation/narratives.md`, "Admin force-refresh", pro mecanismo
+> completo.
+
+> ✅ **Lista reestruturada (2026-07-14)**, pedido do usuário, 5 itens:
+> 1. **Coluna "Ação" removida** de `NarrativesTable` (agora 6 colunas:
+>    Narrativa/SOV/Tendência/Sentimento/Momentum/Risco) — "não está sendo
+>    usual, pois ao clicar no nome abre o modal e na linha destaca o
+>    card." O título já é o link/gatilho de navegação; a coluna extra
+>    duplicava essa mesma ação.
+> 2. **Painel de resumo passou de "abaixo da tabela" para "ao lado dela"**:
+>    selecionar uma linha agora divide a tela num grid de 2 colunas —
+>    tabela encolhe à esquerda (`minmax(0,1fr)`), `NarrativeCard` completo
+>    aparece à direita numa coluna fixa de 400px — "de forma que o resumo
+>    executivo possa ser lido completamente" (antes o card aparecia numa
+>    largura reduzida, `sm:max-w-md`, empilhado abaixo da tabela).
+> 3. **Desseleção**: clicar de novo na mesma linha já selecionada
+>    desmarca-a (mesmo `onRowClick`, alterna); um botão "✕ Fechar" acima
+>    do card oferece a mesma ação de forma explícita/descobrível. Qualquer
+>    um dos dois volta a visualização padrão (tabela cheia + grade de
+>    cards por categoria).
+> 4. **Tabela dinâmica**: toggle "Subcategorias"/"Categoria e subcategoria"
+>    no cabeçalho do widget da tabela (`NarrativesTable`'s novo prop
+>    `groupByCategory`) — "Subcategorias" é o comportamento de sempre
+>    (lista plana); "Categoria e subcategoria" agrupa as linhas por
+>    `category_label` (a mesma Category-pai que já agrupa a grade de cards,
+>    `NarrativeCategoryLanes`, desde 2026-07-25), com cabeçalho de grupo
+>    expansível/recolhível — mesmo padrão visual (▲/▼) já usado pelas raias
+>    de cards.
+> 5. **Toggle "Tabela e cards"/"Só tabela"/"Só cards"**: controla quais dos
+>    2 blocos (tabela interativa, grade de cards por categoria) aparecem na
+>    página. Em "Só tabela", o item 2 acima (painel lateral ao selecionar)
+>    é o único jeito de ler o resumo completo de uma Narrativa sem a grade
+>    de cards — por isso o pedido do usuário marcou esse item como
+>    "primordial" nesse modo. Em "Só cards", a tabela (e a seleção que
+>    depende dela) fica oculta; a grade por categoria aparece
+>    incondicionalmente.
+>
+> Ver `CLAUDE.md` para o detalhamento completo da implementação.
 
 > Cobre "Página 2 — Narrativas" e "8. Página de detalhamento da narrativa" do
 > documento de estrutura do protótipo. É a única página, além da Visão
@@ -36,26 +108,72 @@ membro de ao menos uma organização.
 2. Tabela com **todas** as Narrativas da organização ativa (header
    global, ver [executive-overview.md](executive-overview.md), "Header" —
    combina todas as Queries da organização, transparente ao usuário) —
-   mesmas 7 colunas do Executive Overview: Narrativa, SOV, Velocidade,
-   Sentimento, Momentum, Risco, Ação — ordenação personalizada (ver
+   mesmas 6 colunas do Executive Overview: Narrativa, SOV, Tendência,
+   Sentimento, Momentum, Risco (coluna "Ação" removida em 2026-07-14, ver
+   blockquote de topo) — ordenação personalizada (ver
    [executive-overview.md](executive-overview.md), "Tabela interativa de
    Narrativas", já especificada lá; esta página reusa o mesmo componente,
-   sem duplicar regra).
-3. Clique numa linha → painel de resumo abaixo da tabela (nome, resumo,
-   indicadores-chave, mix de plataformas) sem navegar de página —
-   equivalente ao estado `hasSelection` do protótipo.
-4. Nenhuma linha selecionada → grid de cards, um por Narrativa (nome,
-   resumo, SOV, momentum, velocidade, botão "Explorar narrativa") —
-   equivalente a `hasNoSelection`/`narrativeCards` no protótipo.
+   sem duplicar regra), com um toggle "Subcategorias"/"Categoria e
+   subcategoria" (2026-07-14) que agrupa as linhas por `category_label`
+   quando ativado (ver "Interface (UI)" abaixo). ✅ **Simplificado
+   (2026-07-21)**, pedido do usuário:
+   "Para facilitar vamos considerar apenas as subcategorias em todas as
+   narrativas. Retire a regra de 'categoria - subcategoria'." Esta página
+   (e o Executive Overview) voltam a listar só as Narrativas-folha
+   (Subcategory) — `get_narratives_table(p_scope => 'leaves')` — nunca mais
+   a Category raiz junto na mesma tabela. O título da Narrativa também
+   voltou a ser só o nome da própria Subcategory (o prefixo "Categoria -"
+   de 2026-07-20 deixou de ser necessário, já que a Category raiz nunca
+   mais aparece misturada na mesma lista). Narrativas cuja Category está
+   `status = 'inactive'` (removida da Brandwatch) continuam não aparecendo.
+   > Histórico (2026-07-20, revertido no dia seguinte): esta página tinha
+   > passado a listar Category de topo e Subcategory juntas
+   > (`p_scope => null`), viabilizado por um título composto
+   > "Categoria - Subcategoria" pra desambiguar. Histórico (2026-07-16,
+   > mesmo comportamento do estado atual): "a granularidade mais
+   > específica, as narrativas dentro de cada categoria" — `p_scope =>
+   > 'leaves'`.
+3. Clique numa linha → painel de resumo sem navegar de página (nome,
+   resumo, indicadores-chave, mix de plataformas) — equivalente ao estado
+   `hasSelection` do protótipo. ✅ **Layout lado a lado (2026-07-14)**: o
+   painel deixou de aparecer abaixo da tabela (largura reduzida,
+   `sm:max-w-md`) e passou a aparecer **ao lado** dela — a tabela encolhe
+   pra uma coluna `minmax(0,1fr)`, o painel (`NarrativeCard` completo)
+   ocupa uma coluna fixa de 400px à direita, permitindo ler o resumo
+   executivo por inteiro. Clicar de novo na mesma linha, ou o botão
+   "✕ Fechar" acima do card, desseleciona e volta à visualização padrão.
+4. Nenhuma linha selecionada (e o modo de exibição inclui cards, ver
+   blockquote de topo) → grid de cards, um por Narrativa (nome,
+   resumo, SOV, momentum, tendência, botão "Explorar narrativa") —
+   equivalente a `hasNoSelection`/`narrativeCards` no protótipo. (Nota: o
+   `NarrativeCard` implementado, ver `sql-aggregation.md` "Campos do card
+   de Narrativa", não mostra um badge de Tendência dedicado hoje — mostra
+   Risco+Momentum no cabeçalho — mesma divergência de card/spec já
+   registrada antes da troca Velocidade→Tendência, não introduzida por
+   ela.) ✅ **Agrupado por categoria (2026-07-25)**: pedido do usuário
+   ("os cards que ficam abaixo, devem ser organizados pela categoria")
+   — os cards deixam de ser uma grade única e passam a ser organizados em
+   uma "raia" por Category-pai (`NarrativeCategoryLanes`, ver "Interface
+   (UI)" abaixo).
 5. "Ver página completa" (no painel de resumo) ou "Explorar narrativa" (no
-   card) → abre o detalhe. ✅ **Decidido (2026-07-12)**: modal sobre a
-   lista (mantém contexto/filtros da lista, evita recarregar a página
-   inteira para um conteúdo tão rico) — via **intercepting route** do
-   Next.js App Router (`(.)narratives/[id]` sobre `/narratives/[id]`
-   "cheio"): navegar a partir da lista abre como modal por cima de
-   `/narratives`; acessar `/narratives/[id]` direto (link compartilhado,
-   recarregar a página) renderiza a página completa, sem modal. Um único
-   componente de detalhe serve os dois casos — não duplica UI.
+   card) → abre o detalhe. ✅ **Decidido (2026-07-12), implementado
+   (2026-07-22)**: modal sobre a lista (mantém contexto/filtros da lista,
+   evita recarregar a página inteira para um conteúdo tão rico) — via
+   **intercepting route** do Next.js App Router
+   (`app/(intelligence-center)/(analytics)/@modal/(.)narratives/[id]/page.tsx`
+   sobre `/narratives/[id]` "cheio"): navegar a partir de **qualquer**
+   página dentro de `(analytics)` (não só `/narratives` — Overview,
+   Plataformas e Pautas também linkam pra `/narratives/[id]` via
+   `NarrativesTable`/`NarrativeCard`) abre como modal por cima da tela
+   atual; acessar `/narratives/[id]` direto (link compartilhado, recarregar
+   a página) continua renderizando a página completa, sem modal — a
+   interceptação do Next.js só se aplica a navegação client-side, nunca a
+   um carregamento "duro" da URL. Um único componente de detalhe
+   (`components/intelligence-center/narrative-detail-content.tsx`) serve os
+   dois casos — não duplica UI; o modal (`narrative-detail-modal.tsx`)
+   também expõe um link "Abrir página completa" (`<a>` nativo, força
+   navegação dura pra escapar da interceptação), pra quem quiser a URL
+   compartilhável fora do modal.
 6. Detalhe da Narrativa: resumo executivo, evolução (narrativa vs. volume
    geral), formação e propagação (texto + disseminadores), grafo de
    disseminação simplificado, menções relevantes, ações e decisões.
@@ -72,6 +190,14 @@ membro de ao menos uma organização.
 
 ## Interface (UI)
 
+✅ **Toggle "Perspectiva: Tendência/Volume" (2026-08-09, migration
+`20260809130000`)** — no `PageHeaderBar` (lista e detalhe), controla o
+ranking de `tags`/`positive_topics`/`negative_topics` (`NarrativeCard`) e
+"Termos e frases mais citados"/"Tópicos positivos e negativos da
+narrativa" (detalhe) — `trending` (crescimento, default) ou `volume`
+(menções absolutas). Ver `aggregated-metrics/sql-aggregation.md`,
+"Perspectiva de ranking Trending × Volume".
+
 ### Lista (`/narratives`)
 
 Idêntica à tabela do Executive Overview (ver `foundation/overview.md`), mais
@@ -83,11 +209,115 @@ filtros de **período** e **organização** do header global
 (`executive-overview.md`) continuam valendo. Filtros próprios desta página
 ficam como ampliação futura, sem spec de comportamento por ora.
 
+> ✅ **3 toggles adicionados (2026-07-14)** — todos client-side, sem
+> parâmetro novo em `get-page-narratives`/`get_narratives_table` (mesmos
+> `rows` já buscados, só reorganizados/filtrados na UI):
+> 1. **Exibição** ("Tabela e cards"/"Só tabela"/"Só cards") — topo da
+>    página, acima da tabela. Controla se a tabela interativa e/ou a grade
+>    de cards por categoria (`NarrativeCategoryLanes`) aparecem. Default
+>    "Tabela e cards" (comportamento equivalente ao que existia antes deste
+>    pedido).
+> 2. **Agrupamento da tabela** ("Subcategorias"/"Categoria e subcategoria")
+>    — no cabeçalho do próprio widget da tabela (`WidgetCard`'s
+>    `headerAction`). "Subcategorias" (default) é a lista plana de sempre;
+>    "Categoria e subcategoria" agrupa por `category_label` — mesmo campo/
+>    lógica de agrupamento já usada pela grade de cards por categoria
+>    (`NarrativeCategoryLanes`, 2026-07-25), aplicado agora também à
+>    tabela, com cabeçalho de grupo expansível/recolhível (▲/▼) por
+>    categoria.
+> 3. Selecionar uma linha muda o layout do bloco da tabela de 1 coluna
+>    (tabela cheia) para 2 colunas (tabela + painel `NarrativeCard` de
+>    400px à direita) — ver item 3 do "Fluxo principal" acima.
+>
+> Em "Só tabela", a grade de cards nunca aparece — o painel lateral ao
+> selecionar uma linha é o único caminho pra ler o resumo executivo
+> completo de uma Narrativa sem sair da página, por isso esse layout é
+> tratado como parte essencial (não cosmética) desse modo de exibição. Em
+> "Só cards", a tabela (e a seleção que depende dela) fica oculta — a
+> grade por categoria aparece sempre, independente de qualquer seleção
+> remanescente de uma troca de modo anterior.
+
+✅ **Cards redesenhados (2026-07-21)**, referência visual do usuário: o
+grid de cards ("nenhuma linha selecionada" — item 4 do "Fluxo principal")
+usa o novo `NarrativeCard` compartilhado (`components/intelligence-center/
+narrative-card.tsx`) — borda esquerda colorida pelo sentimento (3 estados:
+vermelho/verde/neutro), SOV + total de menções em destaque, barra de risco
+(mesma cor/faixa do badge de risco), texto de resumo, barra de sentimento
+positivo/neutro/negativo e tags (termos/hashtags reais). Mesmo componente
+reusado pelo widget "Top 3 Narrativas" da Visão Geral (`executive-overview.md`)
+— todo card de Narrativa no produto segue este layout, não um por página.
+Ver `aggregated-metrics/sql-aggregation.md`, "Campos do card de Narrativa",
+para de onde vem cada campo novo (`sentiment_positive_pct`/`summary`/`tags`
+em `get_narratives_table`).
+
+✅ **Mapeamento de tópicos por polaridade (2026-07-14)**, pedido do
+usuário: "no caso das narrativas é importantíssimo esse mapeamento dos
+tópicos com a narrativa para melhorar o entendimento da IA e do usuário
+final." `NarrativeCard` ganhou 2 novas linhas de chips coloridos, acima
+da linha neutra de `tags` já existente — `positive_topics`/
+`negative_topics` (`get_narratives_table`, migration `20260805010000`,
+até 3 termos por lado no card, verde/vermelho, mesma paleta de
+`DriverChip`), mesma classificação por maioria de `get_term_signals` só
+que calculada por Narrativa. Ver `aggregated-metrics/sql-aggregation.md`,
+"Mapeamento tópico↔Narrativa por polaridade", para a fórmula completa e
+para como isso também alimenta a IA (`narrative_summary_build_payload` e
+o payload de `ai-synthesis` Camada 1, via o bloco `narratives` do
+envelope).
+
+✅ **Cards agrupados por categoria (2026-07-25)**, pedido do usuário: "os
+cards que ficam abaixo, devem ser organizados pela categoria. Podemos
+utilizar raia ou outro componente que achar mais apropriado para facilitar
+o agrupamento e localização da narrativa." O grid único de
+`NarrativeCard`s (item 4 do "Fluxo principal") foi substituído por
+`NarrativeCategoryLanes` (`components/intelligence-center/
+narrative-category-lanes.tsx`): uma "raia" (seção) por Category-pai da
+Narrativa (`NarrativeRow.category_label`, novo campo em
+`get_narratives_table`, migration `20260725050000` — ver
+`sql-aggregation.md`, "Campos do card de Narrativa") — cabeçalho com o
+nome da categoria + contagem de Narrativas, seguido da mesma grade
+responsiva de `NarrativeCard`s de antes (`grid-cols-1 sm:grid-cols-2
+md:grid-cols-3`), agora escopada àquela categoria. Categorias ordenadas
+alfabeticamente (pt-BR, `localeCompare`) — o objetivo é achar uma
+Narrativa rapidamente ("localização"), não repriorizar por risco (a
+tabela interativa acima já cobre priorização); dentro de cada categoria, a
+ordem original de `get_narratives_table` (risco desc) é preservada.
+⚠️ **Decisão de design, não uma decisão de produto em aberto**: optado por
+seções empilhadas verticalmente (grid que quebra linha) em vez de uma raia
+com rolagem horizontal estilo Kanban — este produto não usa esse padrão de
+interação em nenhuma outra tela, e uma grade que quebra linha é 100%
+escaneável sem exigir arrastar/rolar lateralmente, mais alinhado ao
+"localização" pedido. Revisitar se o usuário preferir explicitamente o
+padrão de rolagem horizontal.
+
+✅ **Estender/recolher por raia (2026-07-25)**, pedido do usuário, mesma
+sessão: cada cabeçalho de categoria em `NarrativeCategoryLanes` é um botão
+(`aria-expanded`/`aria-controls`, acessível) que alterna a grade daquela
+categoria — mesmo indicador visual ▲/▼ já usado pelo botão "Filtros" do
+header global (`page-header-bar.tsx`), não um ícone novo. Todas as
+categorias começam expandidas; o estado (`Set` de categorias recolhidas)
+vive só no componente, sem persistência entre navegações — mesmo padrão
+já aceito para `filtrosOpen` no header.
+
+✅ **Narrativas sem menção ocultadas na visualização por cards (2026-08-08)**
+— pedido do usuário: "na visualização por cards, ocultar os cards que
+tiverem 0 menções, assim como já é feito com a tabela." `NarrativesTable`
+já filtrava (`sov_pct !== null && sov_pct !== 0` — uma Narrativa sem
+menção no período não tem SOV nenhum a mostrar, 2026-08-08, mesma sessão);
+`NarrativeCategoryLanes` ganhou o mesmo critério, aplicado antes de
+agrupar por categoria (então a contagem no cabeçalho de cada raia já
+reflete só as Narrativas visíveis). Se todas as Narrativas ficarem sem
+menção no período selecionado (comum ao trocar pra "Diário"),
+`NarrativeCategoryLanes` mostra `<EmptyState />` ("Nenhuma Narrativa com
+menções neste período.") em vez de renderizar vazio silenciosamente — a
+página só verificava `rows.length > 0` (existem Narrativas cadastradas),
+não que alguma tivesse menção no período.
+
 ### Detalhe (`/narratives/[id]`)
 
-- **Cabeçalho**: nome, badges de SOV/sentimento/risco/momentum/velocidade
-  (mesmos scores e faixas de `executive-overview.md`), botão "Voltar para
-  Narrativas".
+- **Cabeçalho**: nome, badges de SOV/sentimento/risco/momentum/tendência
+  (mesmos scores e faixas de `executive-overview.md`); "Voltar para
+  Narrativas" na página cheia, "Abrir página completa" no modal (ver
+  "Fluxo principal" item 5).
 - **Cards de indicadores**: crescimento vs. período anterior, autores
   únicos, alcance estimado, engajamento total — **ver nota de gap abaixo
   sobre "autores únicos"**.
@@ -95,22 +325,117 @@ ficam como ampliação futura, sem spec de comportamento por ora.
   como não há CRUD de Narrativas em nenhuma camada do produto (ver
   `foundation/narratives.md`), **edição manual está descartada** — a única
   via possível pra preencher `narratives.description` é geração automática
-  no backend (candidato natural: `narrative_text` de `ai-synthesis.md`,
-  reaproveitando os `highlights` do `event-radar` daquela Narrativa, em vez
-  de um campo solto sem produtor). Ainda não desenvolvido — o frontend
+  no backend. Ainda não desenvolvido — o frontend
   continua só **reservando o campo** (ler e exibir
   `narratives.description`, `foundation/data-model.md` — vazio/`<EmptyState />`
-  textual quando `null`). Não bloqueia o resto da página.
+  textual quando `null`). Não bloqueia o resto da página. ✅ **2026-07-21**:
+  o mesmo campo (`summary` no bloco `narratives` do envelope, ver
+  `aggregated-metrics/sql-aggregation.md`) também passou a ser lido e
+  exibido pelo `NarrativeCard` da lista/grid — a "reserva" deixou de ser só
+  teórica, o componente já está no ar pronto para receber o texto assim
+  que um produtor popular a coluna, sem mudança de contrato.
+  ✅ **Implementado (2026-07-14)**: produtor real construído —
+  `narrative-summary-composer` (Edge Function nova, `pg_cron` a cada
+  30min, migration `20260804010000`), **não** a Camada 1 de `ai-synthesis.md`
+  cogitada acima (aquela é síntese por página/período a partir de
+  `highlights` já prontos; um resumo por Narrativa sem janela de período
+  não se encaixa nesse contrato). Ver `foundation/narratives.md`, "Resumo
+  executivo (produtor)", pro fluxo completo — scores via
+  `get_narratives_table` + eventos recentes do `event-radar` +
+  Comunicações/Decisões recentes (`communications`), texto livre via
+  Claude Haiku 4.5. `NarrativeCard`/`narrative-detail-content.tsx` não
+  mudam — já liam e exibiam o campo desde 2026-07-21, só o fallback deixa
+  de aparecer assim que o job processar cada Narrativa (pode levar até um
+  ciclo de 30min + o tempo de detecção de staleness na primeira rodada
+  depois do deploy).
 - **Evolução (narrativa vs. volume geral)**: série temporal de
   `narrative_metrics.total_mentions` (Narrativa) sobreposta a
   `bw_query_metrics_daily.total_mentions` com `category_id is null` (Query
   inteira) — ambos agregados oficiais, sem cálculo local.
 - **Formação e propagação**: texto (ver "Resumo executivo" acima — mesmo
   tratamento: campo reservado no frontend, lógica de preenchimento é
-  backend futuro) + lista de "principais disseminadores", de
-  `bw_query_top_authors` filtrado por `category_id = <narrativa>` (colunas
-  `author`, `reach_estimate`, `account_type`/`platform_stats` para o "tipo"
-  exibido — ex: "Página de notícias", "Veículo").
+  backend futuro) + lista de "principais disseminadores". ✅ **Implementado
+  (2026-07-14)**: não lê `bw_query_top_authors` direto — reusa
+  `get_authors_ranking` (o mesmo ranking de autores de `/platforms`/
+  `/themes`/`/authors`), escopado à Narrativa via `filters.narratives`
+  (`effectiveFilters`, `service-layer-aggregation.md`), renderizado pelo
+  componente `AuthorsList` compartilhado (`entity_cargo`/`account_type`
+  como "tipo", `reach`/`engagement`/`mentions`, badge "Influente"). Não é
+  um ranking próprio de "quem propagou a Narrativa" — é o ranking geral de
+  autores já filtrado a essa Narrativa, ordenado por padrão por alcance.
+  - ✅ **"Quem move a conversa" — redesenho da tabela (2026-08-08)**,
+    pedido do usuário ("quem está movimentando essa narrativa. Engajamento,
+    reposts, comentários etc."), com um mockup próprio de referência
+    (colunas Autor/Plataforma/Papel na conversa/Seguidores/Publicações/
+    Engajamento). `AuthorsList` ganhou uma 4ª variante,
+    `variant="disseminators"`, usada só nesta seção (as outras 3 páginas
+    que reusam o componente continuam com `full`/`general`/`entity`, sem
+    mudança de comportamento):
+    - **Plataforma** — campo novo `AuthorRow.platforms` (`get_authors_ranking`,
+      migration `20260808020000`), derivado de
+      `bw_top_author_platform_tags(platform_stats)`: só reporta uma
+      plataforma quando há uma chave real daquele vocabulário
+      (`twitterFollowers`/`instagramFollowerCount`/`facebookLikes`/
+      `tiktokLikes`/`linkedinLikes`/`blueskyFollowers`, mesmo vocabulário de
+      `mentions.engagement`) presente no `platform_stats` já sincronizado
+      daquele autor — nunca inferida/fabricada. ⚠️ Só `twitter*` é
+      confirmado contra a documentação da Brandwatch para o endpoint Top
+      Authors (ver `foundation/data-model.md`); as demais plataformas só
+      aparecem quando o payload real trouxer essas chaves, o que não está
+      documentado como garantido — pode ficar "—" (sem sinal conhecido)
+      para autores fora do X/Twitter, mesmo que ativos noutra rede.
+    - **Papel na conversa** — nenhum dado novo de backend, 100%
+      presentation-layer (`authorRole()`, `components/intelligence-center/
+      author-color.ts`): quando o autor tem uma Entity vinculada de tipo
+      `media_outlet`/`institution`/`party`, o papel é "Imprensa"/
+      "Institucional"/"Partidário"; sem Entity institucional vinculada
+      (a maioria — pessoas físicas), cai pro sentimento dominante já
+      calculado (`dominantSentiment()`, mesma fonte já usada por
+      Detratores/Impulsionadores logo abaixo): "Crítico" (negativo),
+      "Apoiador" (positivo), "Neutro" (neutro). `—` (nunca inventado)
+      quando não há Entity institucional **e** não há dado de sentimento
+      suficiente pra classificar — mesma limitação de cobertura do
+      enriquecimento de sentimento por autor já documentada abaixo.
+    - **Seguidores** — campo novo `AuthorRow.followers`
+      (`bw_query_top_authors`/`bw_query_top_tweeters.followers`, de
+      `twitterFollowers` — já sincronizado desde `20260710050000`, nunca
+      exposto por esta function até agora). `max()` entre categorias que
+      casam com o autor (nunca soma — é um atributo de perfil, não de
+      atividade, diferente de alcance/engajamento/menções, que já somam
+      por design).
+    - **Publicações**/**Engajamento** reusam `mentions`/`engagement`
+      (mesmos campos já existentes, só relabeled nesta variante — nenhuma
+      mudança de cálculo).
+    - Ordenação padrão por Seguidores (não por Alcance, que esta variante
+      não exibe) — `DEFAULT_SORT_BY_VARIANT`, `authors-list.tsx`.
+    - Colunas Partido/Ideologia/Alcance/Sentimento (variante `full`) não
+      aparecem nesta variante — já cobertas noutro lugar da mesma página
+      (`Detratores`/`Impulsionadores` logo abaixo, que continuam sentimento-
+      only) e não fazem parte do que foi pedido para este widget
+      específico.
+  - **Detratores / Impulsionadores positivos**: ✅ **Implementado
+    (2026-07-14)**. Derivado no frontend, sem chamada de rede adicional,
+    a partir do mesmo bloco `authors` já buscado acima: entre os autores
+    listados como disseminadores da Narrativa, "Detratores" = sentimento
+    dominante negativo, "Impulsionadores positivos" = sentimento dominante
+    positivo (`AuthorRow.sentiment_positive/neutral/negative`,
+    `dominantSentiment()` em `author-color.ts` — mesma lógica já usada
+    pelo badge de sentimento da coluna "Sentimento" de `AuthorsList`), cada
+    lista ordenada por alcance, top 5. ⚠️ **Limitação real de cobertura,
+    documentada explicitamente na UI**: `sentiment_positive/neutral/negative`
+    só é populado pelo `bw-sync` para os top 10 autores por volume **da
+    Query inteira** (`runAuthorEnrichmentStep`/`bw_query_author_topics`,
+    ver `foundation/data-model.md` §5) — não há enriquecimento de
+    sentimento por autor específico por Narrativa. Na prática, isso
+    significa que só autores que estão simultaneamente (a) entre os top 10
+    globais por volume e (b) presentes no ranking desta Narrativa recebem
+    uma classificação — para muitas Narrativas, uma ou ambas as listas
+    podem vir vazias (`<EmptyState/>` textual, nunca um valor inventado).
+    Alinhado com o pedido original ("detratores e impulsionadores
+    positivos, **se houver**") — a possibilidade de lista vazia é esperada,
+    não um bug. Widen para enriquecimento por Narrativa é um gap real de
+    engenharia (custo em orçamento de chamadas Brandwatch), não decidido
+    aqui — ver `_pending.md`.
 - **Grafo de disseminação simplificado**: ✅ **Decidido (2026-07-12)**:
   construir uma versão simplificada já na Sprint 2, sem esperar o módulo
   `propagation-graph` (Sprint 3, rollup materializado completo). Fonte de
@@ -131,6 +456,30 @@ ficam como ampliação futura, sem spec de comportamento por ora.
   Migrar para o rollup do `propagation-graph` quando esse módulo existir,
   sem mudar a semântica pro usuário (mesma rotulagem de "amostra" até lá se
   o rollup completo não cobrir 100% do histórico ainda).
+- **Termos e frases mais citados**: ✅ **Implementado (2026-07-14)**. Bloco
+  `term_signals` (`get_term_signals`, já existente e usado por
+  `/sentiment`/`/themes`) adicionado a `PAGE_BLOCKS.narrative_detail` —
+  antes disponível como dado (`bw_query_topics` já é sincronizado por
+  `categoryTarget`, incluindo cada Narrativa, ver `sync-brandwatch.md`)
+  mas nunca pedido por esta página. Escopado à Narrativa automaticamente
+  via `filters.narratives` (mesmo mecanismo de "principais
+  disseminadores" acima — `get_term_signals` já suporta
+  `filter_category_ids`, não precisou de mudança em SQL). Renderizado
+  como nuvem de palavras (`TermSignalsList`, mesmo componente de
+  "Termos emergentes" em `/themes`) — mistura `words`/`phrases`/
+  `hashtags`/etc. sem filtrar só `topic_type = 'phrases'` (mesma nota já
+  registrada em `_pending.md` gap #24 para as demais páginas que usam
+  este bloco). ✅ **Ganhou também "Tópicos positivos"/"Tópicos negativos"
+  (2026-07-14, mesma sessão)** — mesmo `term_signals` já escopado à
+  Narrativa, só separado por polaridade — pedido do usuário de
+  "importantíssimo esse mapeamento dos tópicos com a narrativa" aplicado
+  também ao detalhe, ao lado da nuvem de palavras (que mistura todo
+  `topic_type` sem indicar sentimento). ✅ **Unificado num único frame
+  (2026-07-14, mesma sessão)** — pedido seguinte: "no mesmo frame mudando
+  apenas a cor". "Tópicos positivos da narrativa"/"Tópicos negativos da
+  narrativa" (2 `WidgetCard`s separados) viraram um único "Tópicos
+  positivos e negativos da narrativa" (`TopicSentimentList`), pills
+  coloridas por sentimento (verde/vermelho/neutro) na mesma lista.
 - **Menções relevantes**: lista via `narrative_matched_mentions(narrative_id)`
   (função já definida em `foundation/data-model.md`) ordenada por
   `reach_estimate`/`impact` — uso de dado por mention individual (não
@@ -160,6 +509,30 @@ ficam como ampliação futura, sem spec de comportamento por ora.
   eventual checklist/comentários/arquivos/histórico, se algum dia forem
   pedidos) fica para uma spec própria futura, sem reabrir um módulo
   separado só para isso.
+
+- **Comunicações e Decisões** (✅ adicionado 2026-07-25, Sprint 2.1, módulo
+  `communications` — não confundir com "Ações e decisões" (`cases`) acima,
+  ver `communications/overview.md`, "Relação com `cases`", que também
+  cobre a sobreposição conceitual entre `cases` e o `record_type =
+  'decision'` deste módulo): nova seção logo abaixo, com um resumo
+  compacto (até 3 registros mais recentes — Comunicações e Decisões
+  misturados — para esta Narrativa, com os indicadores de Sentimento/
+  Menções/Risco/Momentum antes vs. depois), um botão **"+ Registrar"** no
+  cabeçalho da seção (com o seletor "Tipo de registro" Comunicação/
+  Decisão, sempre visível mesmo sem nenhum registro ainda — regra
+  transversal #2) e um link "Ver linha do tempo completa →" para
+  `/communications/[id]`. O botão está presente **tanto na página cheia
+  (`/narratives/[id]`) quanto no modal rápido**
+  (`@modal/(.)narratives/[id]`, "Fluxo principal" item 5 acima) — pedido
+  explícito do usuário: "de dentro do modal e do detalhamento de uma
+  narrativa, deve existir um botão para registrar uma comunicação". Abre o
+  mesmo `CommunicationFormModal` com a Narrativa já pré-preenchida e
+  travada (não editável), sem exigir busca/seleção — ver
+  [../communications/communication-registration.md](../communications/communication-registration.md),
+  "Entrada rápida a partir de uma Narrativa". Ver
+  [../communications/narrative-impact-tracking.md](../communications/narrative-impact-tracking.md)
+  para o desenho completo — spec ainda `rascunho`, não implementar antes
+  de `communications/data-model.md` existir como migration.
 
 ## Regras de negócio
 

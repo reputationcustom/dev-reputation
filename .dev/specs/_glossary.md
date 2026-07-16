@@ -1,6 +1,6 @@
 ﻿---
 tipo: glossary
-atualizado: 2026-07-06
+atualizado: 2026-07-25
 ---
 
 # Glossário de Domínio
@@ -26,11 +26,18 @@ exatos em variáveis, componentes, tabelas e comentários.
   `app_metadata.organization_id` do JWT.
 - **Tabela no banco**: `organization_members`
 - **Spec de dados**: [foundation/data-model.md](foundation/data-model.md)
-- **Nota de escopo**: ✅ **atualizada 2026-07-13** — convite de usuário e
-  associação a organizações passam a ter tela própria (admin-only), ver
-  [auth/user-management.md](auth/user-management.md). Ainda **não** existe
-  criação de organização nem troca de organização ativa pela UI — isso
-  continua fora do MVP.
+- **Nota de escopo**: ✅ **atualizada 2026-07-22** — convite de usuário e
+  associação a organizações têm tela própria (admin-only), ver
+  [auth/user-management.md](auth/user-management.md). Troca de organização
+  ativa **existe** pela UI desde o Sprint 2 (seletor no header,
+  `intelligence-center/executive-overview.md`, "Header") — o texto anterior
+  desta nota ("continua fora do MVP") ficou desatualizado assim que esse
+  seletor foi implementado e não foi corrigido até agora. Persistir qual
+  organização é a **padrão** do usuário (reaberta ao carregar a aplicação,
+  não só durante a sessão) também existe desde 2026-07-22 —
+  `user_profiles.default_organization_id`, ver
+  [auth/data-model.md](auth/data-model.md). Ainda **não** existe criação de
+  organização pela UI — isso continua fora do MVP.
 
 ### User Profile
 - **Definição**: Perfil de aplicação 1:1 com `auth.users` (Supabase Auth) —
@@ -126,7 +133,12 @@ exatos em variáveis, componentes, tabelas e comentários.
 - **Definição**: Qualquer pessoa, veículo de imprensa, partido, instituição,
   empresa ou movimento que participa do debate público monitorado. Cadastro
   próprio (Supabase), **não** a Brandwatch — fonte da verdade da classificação
-  é sempre o Supabase.
+  é sempre o Supabase. ✅ **Especificado (2026-07-13)** — catálogo **global**,
+  compartilhado por toda a plataforma (sem `organization_id`), CRUD
+  restrito a `is_admin` — ver [entities/overview.md](entities/overview.md).
+  Cadastro **manual e curado**, distinto do ranking automático/exaustivo de
+  autores nativo da Brandwatch (`bw_query_top_authors`) — ver
+  [entities/author-linking.md](entities/author-linking.md).
 - **Sinônimos a evitar**: **nunca usar "ator"/"actor"** no código, nas specs ou
   na UI — o termo fixado é "Entity"/"Entidade", porque o grafo inclui veículos
   de imprensa, partidos e instituições, não só pessoas.
@@ -135,10 +147,14 @@ exatos em variáveis, componentes, tabelas e comentários.
 
 ### entity_tags (tag_type / tag_value)
 - **Definição**: Classificação EAV (Entity-Attribute-Value) de uma Entity —
-  cada dimensão de classificação (partido, espectro político, cargo, estado,
-  instituição/braço de poder etc.) é um par `tag_type`/`tag_value`. Uma **nova
-  dimensão de classificação é um INSERT em `entity_tags`, nunca uma
-  migration**.
+  cada dimensão de classificação (estado, instituição/braço de poder,
+  postura em relação ao candidato etc.) é um par `tag_type`/`tag_value`.
+  Uma **nova dimensão de classificação é um INSERT em `entity_tags`, nunca
+  uma migration**. ⚠️ **Cargo, partido e ideologia não são mais
+  `entity_tags` (2026-07-13)** — viraram colunas próprias de `entities`
+  (`cargo`/`partido`/`ideologia`), pedido explícito do usuário; ver
+  [entities/data-model.md](entities/data-model.md). Vocabulário sugerido
+  do restante de `tag_type` (não enforçado) no mesmo arquivo.
 - **Tabela no banco**: `entity_tags`
 - **Spec de dados**: [entities/data-model.md](entities/data-model.md)
 
@@ -162,6 +178,33 @@ exatos em variáveis, componentes, tabelas e comentários.
   `case_status_history`) são visão futura, não implementadas — ver tabela
   de renomeação do schema anexo em `_index.md` pra quando forem.
 - **Spec de dados**: [intelligence-center/data-model.md](intelligence-center/data-model.md)
+
+### Comunicação / Decisão (Communication / Decision)
+- **Definição**: Registro de uma ação **já realizada**, vinculada a uma
+  Narrativa, usado para medir se o sentimento/percepção pública em torno
+  daquela Narrativa melhorou ou piorou depois (comparação antes/depois
+  ancorada na data do registro) — ver
+  [communications/overview.md](communications/overview.md), Sprint 2.1.
+  Dois tipos (`communications.record_type`), mesma tabela: **Comunicação**
+  (post no perfil do candidato, e-mail, propaganda de TV/rádio, nota de
+  imprensa, material impresso, evento presencial etc. — campos completos)
+  e **Decisão** (✅ adicionado 2026-07-25 — data, título, responsável,
+  detalhamento; um subconjunto estrito dos campos de Comunicação).
+- **Sinônimos a evitar**: não confundir com `Caso` (`cases`, abaixo) —
+  Comunicação/Decisão são fatos consumados com CRUD completo pela UI desde
+  o início; um Caso é uma tarefa com ciclo de vida (aberto→resolvido),
+  hoje somente leitura. "Decisão" (este módulo) e `Caso` se sobrepõem
+  conceitualmente mais do que "Comunicação" e `Caso` — mantidos separados
+  por pedido explícito do usuário, não por ausência de sobreposição. Ver
+  a tabela comparativa em [communications/overview.md](communications/overview.md),
+  "Relação com `cases`".
+- **Tabela no banco**: `communications` (`record_type` enum
+  `communication`\|`decision`; `communication_type_id` → FK para
+  `communication_types`, uma tabela de referência — não um enum — seed
+  inicial: `social_post`\|`email`\|`tv_ad`\|`radio_ad`\|`press_release`\|
+  `printed_material`\|`event`\|`other`, extensível por `INSERT`; `null`
+  quando `record_type = 'decision'`)
+- **Spec de dados**: [communications/data-model.md](communications/data-model.md)
 
 ### Feed Inteligente (Intelligent Feed)
 - **Definição**: Stream de eventos do sistema — narrativa detectada, threshold
@@ -230,13 +273,15 @@ exatos em variáveis, componentes, tabelas e comentários.
 |-----------------------|----------------------------------------------------------------------------|
 | Sentiment             | Classificação `positive`/`negative`/`neutral` de uma Mention (Brandwatch). Distinto de `net_sentiment` (score -100 a 100 da Narrativa/Query, ver abaixo). |
 | Net Sentiment (`net_sentiment`) | Score de sentimento líquido -100 a 100, agregado oficial da Brandwatch (`data/netSentiment/...`) — não é um cálculo local. 7 faixas (muito positivo → muito negativo), ver `aggregated-metrics/sql-aggregation.md` "Scores de Narrativa" e `_design-tokens.md`. |
-| Momentum / Velocidade (`momentum_score`/`velocity_score`) | Scores 0-100 calculados por `get_narratives_table()` (`aggregated-metrics/sql-aggregation.md`) — Momentum = força/relevância atual (volume+engajamento+autores+alcance, período selecionado); Velocidade = taxa de crescimento recente (curto prazo, independente do período selecionado). Indicadores distintos por pedido explícito do usuário (2026-07-13) — não confundir um pelo outro. |
-| Risco por Narrativa (`risk_score`) | Score 0-100 de prioridade operacional (`get_narratives_table()`), combina Sentimento/Momentum/Velocidade/alcance/influência de autores/impacto — ver `aggregated-metrics/sql-aggregation.md`. **Não** é o "Reputation Score composto" descartado em `_index.md` ("Fora de escopo do MVP") — aquele era um score de reputação agregado por candidato/Entity ao longo de todas as Narrativas, ainda fora de escopo; `risk_score` é por Narrativa individual, para triagem operacional (ordenar a tabela por prioridade), escopo bem mais restrito. `narratives.risk_level` (enum `low`/`medium`/`high`/`critical`) continua no schema como override manual opcional, não é mais o que a UI mostra por padrão. |
+| Momentum / Tendência (`momentum_score`/`trend_score`) | Scores 0-100 calculados por `get_narratives_table()` (`aggregated-metrics/sql-aggregation.md`) — Momentum = força/relevância atual (volume+engajamento+autores+alcance, período selecionado); Tendência = tendência estatística de crescimento/queda (regressão linear sobre 14 dias, independente do período selecionado). Indicadores distintos por pedido explícito do usuário (2026-07-13). ✅ **Tendência substitui Velocidade (2026-07-22)** — mesmo pedido do usuário, mesma distinção de Momentum, só troca o método (regressão sobre 14 dias em vez de snapshot 3h-vs-3h) e o nome (`trend_score`/`trend_label`, não mais `velocity_score`/`velocity_label`) — não confundir um pelo outro. |
+| Risco por Narrativa (`risk_score`) | Score 0-100 de prioridade operacional (`get_narratives_table()`), combina Sentimento/Momentum/Tendência/alcance/influência de autores/impacto — ver `aggregated-metrics/sql-aggregation.md`. **Não** é o "Reputation Score composto" descartado em `_index.md` ("Fora de escopo do MVP") — aquele era um score de reputação agregado por candidato/Entity ao longo de todas as Narrativas, ainda fora de escopo; `risk_score` é por Narrativa individual, para triagem operacional (ordenar a tabela por prioridade), escopo bem mais restrito. `narratives.risk_level` (enum `low`/`medium`/`high`/`critical`) continua no schema como override manual opcional, não é mais o que a UI mostra por padrão. |
 | Share of Voice (Query Group) | Comparação de volume entre Queries de um Query Group (ex: candidato vs. concorrentes) — vem direto da Brandwatch (`data/volume/queries/weeks?queryGroupId=...`), incl. `reach_estimate` desde 2026-07-11. |
 | Share of Voice (Narrativa) | Menções da Narrativa ÷ total de menções de **todas as Narrativas da mesma Query** (candidato/monitoramento) no mesmo período — ex: 200 mil menções totais, Saúde 40%/Educação 22%/Segurança 18%/Economia 12%/Mobilidade 8%. ⚠️ **Corrigido 2026-07-11** (bug real: agrupava por `organization_id` inteira, misturando Narrativas de candidatos/Queries diferentes quando o Project tem mais de uma Query) — agora agrupado por `query_id` via `narrative_metrics.query_id`. **Não** é a mesma coisa que o Share of Voice de Query Group acima; ver [foundation/data-model.md](foundation/data-model.md) "Camada de reporting". |
 | Share of Voice (plataforma) | Participação de uma Narrativa dentro de uma plataforma específica, ou mix de plataformas dentro de uma Narrativa — via `bw_query_metrics_daily_by_platform.category_id` (adicionado 2026-07-11). |
 | Share of Voice (autor) | Participação de um autor no total de menções de uma Query/Narrativa — `bw_query_top_authors.volume` ÷ `bw_query_metrics_daily.total_mentions` (mesmo Query/Category/período); razão calculada na camada de consumo, sem tabela própria. |
 | Compliance eleitoral  | Guardrails de conteúdo/auditoria de IA sobre mentions relacionadas a candidatos/eleições — responsabilidade da aplicação, não da API da Brandwatch. |
+| Fase (Sync Step)      | Uma das 16 etapas fixas, sempre na mesma ordem, que o pipeline `bw-sync` executa para sincronizar um par (Projeto, Query) — `metadata`, `mentions`, `daily_metrics`, ..., `sov` (`SYNC_STEPS`, `bw-sync/index.ts`; lista completa em `foundation/sync-brandwatch.md`, "Execução em fases"). Rastreada por `sync_cursors.next_step`. |
+| Execução manual de fase | Forçar uma Fase específica a rodar agora, para um par específico, fora da rotação automática — funcionalidade do módulo `sync-console` (ver [sync-console/manual-step-execution.md](sync-console/manual-step-execution.md)). Nunca altera `sync_cursors.next_step`/`last_synced_at` — é sempre um desvio observável (`sync_log.trigger_source = 'manual'`), nunca uma alteração do ciclo automático. |
 
 ## Abreviações usadas nas specs
 

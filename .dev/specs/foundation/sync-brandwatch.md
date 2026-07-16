@@ -2,11 +2,208 @@
 tipo: feature-spec
 módulo: foundation
 funcionalidade: sync-brandwatch
-status: pronto
-atualizado: 2026-07-11
+status: implementado
+atualizado: 2026-07-16
 ---
 
+> ⚠️ **Regra permanente (2026-07-16): `.dev/specs/sync-console/` depende
+> totalmente deste documento — qualquer mudança na ORDEM do pipeline
+> (`SYNC_STEPS`) ou no comportamento do dispatcher (encadeamento entre
+> fases, `stopReason`) exige revisar e ajustar `sync-console` na MESMA
+> sessão**, nunca deixado como follow-up. `sync-console` não tem lógica
+> própria de sincronização — ele só observa/reflete o que `bw-sync` já
+> faz (`sync-console/overview.md`, "Relação com `foundation/sync-brandwatch.md`"
+> tem a checklist completa do que verificar: as 4 cópias do array
+> `SYNC_STEPS`, `pipeline-monitoring.md`, `manual-step-execution.md`,
+> `data-model.md`). As duas mudanças documentadas logo abaixo (reordenação
+> de `SYNC_STEPS` e `stay_on_step` deixando de encerrar a invocação, ambas
+> 2026-07-16) já foram propagadas pra `sync-console` como parte da mesma
+> sessão — usar essas duas como referência de "como fica" quando uma
+> futura mudança de ordem/dispatcher precisar do mesmo tratamento.
+
+> ✅ **`mentions` movida pra perto do fim de `SYNC_STEPS` + `hourly_metrics`
+> ganha janela incremental (2026-07-16)** — pedido do usuário: "as métricas
+> inicialmente são mais importantes do que as mentions. Mude a ordem do
+> pipeline garantindo que não tenhamos grande impacto" + "se temos a base
+> atualizada, [bw-sync] pode passar a pegar os dados desde o último sync...
+> isso pode deixar a execução mais eficiente?" Duas mudanças independentes,
+> ambas só em `bw-sync/index.ts` (sem migration):
+> 1. **Ordem de `SYNC_STEPS` reorganizada** — `mentions` (a fase mais cara
+>    em tempo/CPU, paginação de até 10 páginas por invocação) saiu da 2ª
+>    posição (logo após `metadata`) e passou a rodar logo ANTES de
+>    `full_text_enrichment` (não no último lugar absoluto, antes de `sov`)
+>    — de propósito: `full_text_enrichment` lê/enriquece mentions já
+>    sincronizadas, então mantê-la logo depois de `mentions` no mesmo ciclo
+>    evita que ela opere sobre um dia sistematicamente mais desatualizado
+>    do que precisaria, satisfazendo o "sem grande impacto" do pedido.
+>    `metadata` continua primeira (bootstrap do qual toda fase de métrica
+>    depende via `categoryTargets`) — nenhuma outra fase depende de
+>    `mentions` ter rodado primeiro no mesmo ciclo, então a realocação é
+>    segura. Efeito: as fases de métrica (agora logo depois de `metadata`)
+>    são tentadas antes de `mentions` disputar orçamento/tempo de
+>    invocação a cada ciclo — exatamente o "métricas são mais importantes"
+>    pedido. A tabela de fases abaixo já reflete a nova ordem; as 4 cópias
+>    do array (`bw-sync`, `get-sync-console-status`, `trigger-sync-step`,
+>    `sync-console/types.ts`, Princípio técnico 5) foram atualizadas juntas.
+> 2. **`hourly_metrics` ganha janela incremental** — antes buscava os 30
+>    dias inteiros em TODA invocação (sem throttle, roda a cada heartbeat
+>    de 1min), reprocessando ~720 buckets/série quase sempre idênticos ao
+>    já gravado no minuto anterior. Mesmo princípio já usado por
+>    `getMetricsStartDate()` (2026-07-19) pros outros grãos: enquanto o
+>    backfill de mentions do par não terminou (`backfill_completed_at`
+>    null), continua usando a janela cheia de 30 dias (par ainda "novo",
+>    precisa acumular cobertura histórica); depois disso, usa uma janela
+>    móvel curta (`HOURLY_METRICS_INCREMENTAL_WINDOW_HOURS`, secret, default
+>    6h) — folga generosa o bastante pra reabsorver correção/atraso de
+>    indexação da Brandwatch em buckets recentes, **nunca** literalmente
+>    "desde o último sync" (janela exata demais correria o risco real de
+>    nunca reabsorver uma correção tardia). Nenhuma informação da
+>    Brandwatch é perdida: `bw_query_metrics_hourly` é upsert por
+>    `(project_id, query_id, category_id_key, metric_hour)`, então todo
+>    bucket já gravado por um ciclo anterior (quando ele ainda estava
+>    "recente") permanece intacto — só reduz quanto é RE-buscado por
+>    invocação, nunca apaga histórico. Ver `bw-sync/index.ts`,
+>    `getHourlyMetricsWindowMs()`, pro racional completo.
+
+> ✅ **`stay_on_step` deixou de encerrar a invocação — encadeamento
+> também DENTRO de uma fase, não só entre fases distintas (2026-07-16)** —
+> pedido do usuário a partir de um log real de produção colado
+> (`sync_log`, 4 invocações separadas em ~14min, cada uma parando
+> imediatamente após `hourly_metrics` devolver `stayOnStep`): "não seria
+> possível rodar duas fases em uma execução já que são menores? Assim
+> otimizaríamos as chamadas a brandwatch." O log confirmou dois fatos ao
+> mesmo tempo: (1) o encadeamento entre fases DISTINTAS já funcionava
+> perfeitamente desde 2026-08-06 — o mesmo log mostra `weekly_monthly →
+> topics → platform_by_narrative → x_insights` completos em ~18 segundos,
+> uma única invocação; (2) mas assim que `hourly_metrics` (ou
+> `daily_metrics`, mesmo mecanismo) devolvia `stayOnStep: true` — seu
+> próprio round-robin interno por Narrativa (`MAX_HOURLY_VOLUME_TARGETS_PER_INVOCATION`/
+> `MAX_SENTIMENT_TARGETS_PER_INVOCATION`, ambos = 8) ainda não tinha
+> terminado — a invocação inteira parava ali, mesmo sobrando orçamento de
+> chamadas e tempo de parede, e mesmo que a PRÓPRIA fase pudesse
+> processar mais categorias na mesma invocação. Essa parada era uma
+> decisão deliberada de 2026-08-06 ("`stayOnStep` não deve ser atropelado
+> por este loop") — fazia sentido antes de `hasBrandwatchCallBudget()`/
+> `INVOCATION_TIME_BUDGET_MS` cobrirem qualquer fase "stale-gated", mas
+> ficou redundante depois: hoje esses dois já são a salvaguarda real
+> contra estourar o teto da Brandwatch numa invocação só. Corrigido: o
+> dispatcher só encerra a invocação de verdade em
+> `cycle_complete`/`call_budget_exhausted`/`time_budget_exhausted` —
+> `stay_on_step` agora faz a MESMA fase ser tentada de novo imediatamente
+> na mesma invocação (nunca avança `currentStep`), até ela terminar de
+> verdade ou o orçamento acabar. Seguro por construção: cada runner
+> releitura o frescor por categoria do zero a cada chamada
+> (`fetchHourlyVolumeFreshness`/`fetchDailySentimentFreshness`), então uma
+> passagem nunca reprocessa o que a passagem anterior, na mesma invocação,
+> acabou de gravar; `sync_cursors.next_step` continua sendo escrito como a
+> mesma fase em toda passagem intermediária, então uma interrupção no
+> meio (budget/tempo/erro) deixa o cursor num estado idêntico ao de antes
+> desta mudança. `MAX_HOURLY_VOLUME_TARGETS_PER_INVOCATION`/
+> `MAX_SENTIMENT_TARGETS_PER_INVOCATION` continuam existindo sem mudança
+> (cada PASSAGEM ainda processa no máximo 8 categorias) — o que mudou é
+> quantas passagens uma única invocação pode encadear antes de devolver o
+> controle pro heartbeat. **Não é implementação da execução manual**
+> (`sync-console/manual-step-execution.md`) — aquele fluxo continua
+> explicitamente "1 fase, 1 tentativa" por desenho (o admin vê o
+> resultado de uma tentativa por vez), não retenta sozinho.
+
+> ✅ **Correção de documentação (constatada numa auditoria pedida pelo
+> usuário, junto com a criação da spec `sync-console`)**: este documento
+> ainda descrevia o heartbeat do `pg_cron` como "a cada 15 minutos" em
+> várias seções — desatualizado desde a migration `20260809070000`
+> (`cron.alter_job(..., schedule => '* * * * *')`), que apertou a cadência
+> real para **1 minuto** (ver `CLAUDE.md`, "Heartbeat de `bw-sync`
+> apertado de 15min pra 1min"). Toda referência abaixo foi corrigida para
+> "1 minuto"/`* * * * *` — o mecanismo em si (gate 0.5b só faz trabalho
+> quando um par está de fato devido; a maioria dos heartbeats sai cedo,
+> sem custo) não mudou, só ficou 15x mais frequente.
+
 # Sync Brandwatch
+
+> ✅ **Status corrigido 2026-07-14** (premissa do projeto, ver CLAUDE.md
+> "Close the loop"): `bw-sync` (`supabase/functions/bw-sync/index.ts`,
+> ~1950 linhas) em produção, agendada via `pg_cron` desde 2026-07-11 — ver
+> `CLAUDE.md`, "Brandwatch sync model", pro histórico completo de
+> implementação/bugs corrigidos (fases, rate limit, backfill, etc). Único
+> gap real restante é não-bloqueante: cache do token em Vault, ver
+> `_pending.md` "Gaps técnicos" #5.
+
+> ✅ **Staleness de toda fase "stale-gated" unificada em
+> `BW_SYNC_INTERVAL_HOURS` (2026-07-14)** — pedido do usuário: "ter a
+> opção de configurar atualização total com a Brandwatch a cada 15min ou
+> 30min ou 1h... isso deve ser alterado por execução também, senão os
+> dados ficam desencontrados." Toda referência abaixo a "throttle
+> 7 dias"/"linha 'fresca' (7 dias)"/"throttle semanal"/"30 dias" pro grão
+> mensal descreve o comportamento **histórico** — desde esta mudança, o
+> literal fixo (`7 * 24 * 60 * 60 * 1000`/`30 * 24 * 60 * 60 * 1000`) foi
+> substituído por uma única function nova, `getSyncStalenessWindowMs()`
+> (`bw-sync/index.ts`, logo abaixo de `getSyncIntervalHours()`), usada nos
+> 11 pontos que antes tinham o literal: `weekly_monthly` (semanal e
+> mensal), `topics`, `platform_by_narrative`, `x_insights`, `top_authors`,
+> `top_tweeters`, `top_sites`, `top_shared_sites`, `demographics`, `sov`.
+> Motivo real: baixar `BW_SYNC_INTERVAL_HOURS` só deixava
+> `daily_metrics`/`hourly_metrics`/`mentions` mais frescos — as fases
+> acima continuavam presas à janela semanal antiga, produzindo "dados
+> desencontrados" na mesma tela (SOV de uma semana atrás ao lado de
+> volumetria de poucos minutos atrás). Um único valor agora governa tanto
+> "par devido pra novo ciclo" quanto a staleness de toda fase — impossível
+> ficar desencontrado por definição. `BW_SYNC_INTERVAL_HOURS` já aceitava
+> fração (`Number(raw)`, sem arredondamento) — `0.25` = 15min, `0.5` =
+> 30min, `1` = 1h, sem precisar de nova migration. Trade-off aceito e
+> confirmado pelo usuário: baixar o intervalo aumenta MUITO o custo de
+> chamadas dessas fases (de 1x/semana pra 1x/intervalo); isso não estoura
+> o teto real da Brandwatch (30 chamadas/10min — `hasBrandwatchCallBudget()`
+> + a ordem fixa de `SYNC_STEPS` já garantem que `daily_metrics`/
+> `hourly_metrics` são sempre tentados primeiro, nunca starvados pelas
+> fases pesadas — ⚠️ `mentions` deixou de fazer parte desse grupo "sempre
+> tentado primeiro" em 2026-07-16, ver blockquote no topo: passou a rodar
+> perto do fim de propósito, já que métricas são mais importantes pro
+> produto do que o polling bruto de mentions), só faz o ciclo levar mais
+> heartbeats pra fechar quando uma organização tem muitas Narrativas. `needsMetadataRefresh()` (throttle
+> de 1h pra categorias/subcategorias) foi deixado fora desta unificação de
+> propósito — não é uma "fase" de score, é um bootstrap estrutural
+> (lista de Narrativas), sem o mesmo risco de "desencontro" entre 2 scores
+> na mesma tela.
+
+> ⚠️ **Dois bugs de produção reais corrigidos (2026-08-06)**, reportados
+> pelo usuário via log colado do Supabase ("os dados não estão sendo
+> atualizados completamente, o pipeline da bw_sync não executa
+> completamente" e, no dia seguinte após o fix, "a integração rodou ok mas
+> os dados não foram refletidos no painel") — ver `CLAUDE.md`, "Brandwatch
+> sync model", pro relato completo de causa raiz/investigação:
+> 1. **`fetchDailySentimentFreshness()` truncada pelo `max_rows=1000` do
+>    PostgREST** — a checagem de frescor por Narrativa da fase
+>    `daily_metrics` (seção "Otimização definitiva de `daily_metrics`
+>    (2026-07-22)" abaixo, item 2, `MAX_SENTIMENT_TARGETS_PER_INVOCATION`/
+>    `DAILY_SENTIMENT_FRESH_WINDOW_MS`) fazia um `select` multi-linha sem
+>    `ORDER BY`/`LIMIT` sobre `bw_query_metrics_daily` — para uma
+>    organização com mais de ~5 Narrativas (8+ categorias × ~196 dias de
+>    histórico já ultrapassa 1000 linhas), a resposta era silenciosamente
+>    truncada pelo PostgREST, sem garantia de quais linhas sobreviviam ao
+>    corte. Resultado: o cálculo de frescor ficava sistematicamente errado
+>    para as categorias afetadas — elas nunca eram marcadas "fresh", então
+>    a fase `daily_metrics` reprocessava para sempre as mesmas 8 primeiras
+>    categorias (`MAX_SENTIMENT_TARGETS_PER_INVOCATION`), nunca alcançava
+>    as demais, e nunca liberava `stayOnStep` — o pipeline inteiro ficava
+>    preso em `daily_metrics`, sem nunca alcançar `hourly_metrics`/
+>    `topics`/`top_authors`/etc. Corrigido (migration `20260806010000`)
+>    substituindo a `select` bruta por uma function agregada no Postgres
+>    (`bw_query_metrics_daily_category_freshness`, `GROUP BY category_id`
+>    — devolve no máximo `len(category_ids)` linhas, imune ao corte).
+> 2. **`narrative_metrics` desacoplada de `bw-sync`, atraso de até 59min
+>    depois de um ciclo fechar** — `get_narratives_table` (a maior parte
+>    do que o painel de fato mostra) lê de `narrative_metrics`, populada
+>    só por `refresh_narrative_metrics()` no seu próprio `pg_cron`
+>    (`'0 * * * *'`, topo de cada hora — ver `data-model.md`, "`pg_cron` —
+>    agendamentos deste módulo"), sem nenhuma relação com quando `bw-sync`
+>    de fato termina um ciclo. `get_metrics_cards` (KPIs de topo) já lia
+>    `bw_query_metrics_daily` direto, então já refletia dado novo na hora
+>    — só a tabela/cards de Narrativas ficavam presos ao valor da última
+>    execução do cron horário. Corrigido (sem migration): nova
+>    `refreshNarrativeMetricsForToday()` chama `refresh_narrative_metrics()`
+>    via RPC pra uma janela estreita (hoje + ontem) assim que a fase
+>    `daily_metrics` escreve dado novo — o cron horário continua existindo
+>    como rede de segurança, os dois convivem via `upsert` idempotente.
 
 ## Objetivo
 
@@ -50,22 +247,30 @@ computação síncrona, diferente de esperar rede).
 **Correção**: o trabalho de um par "devido" foi quebrado em fases
 (`sync_cursors.next_step`), uma por invocação:
 
+✅ **Ordem reorganizada (2026-07-16)** — a tabela abaixo segue a ordem real
+de execução do dispatcher hoje (`SYNC_STEPS`), não mais a numeração
+histórica "Passo N" (mantida só como referência cruzada pras seções
+numeradas mais abaixo neste documento — não implica mais ordem de
+execução). `mentions` era a 2ª fase (logo após `metadata`) e passou a
+rodar perto do fim, logo antes de `full_text_enrichment` — ver o
+blockquote no topo deste arquivo pro racional completo.
+
 | Fase (`next_step`) | Cobre os passos numerados abaixo |
 |---|---|
 | `metadata` | Passo 3 (bootstrap/refresh condicional) |
-| `mentions` | Passo 5 (polling paginado) |
 | `daily_metrics` | Passos 6, 6.3, 6.3b, 6.3d (sentimento diário + reach/engagement/autores únicos/impressões/**net sentiment** por Narrativa e Query inteira + plataforma incl. autores/engajamento/sentimento líquido por plataforma — sempre rodam, não são "stale-gated", mas cada chamada agora é guardada por `hasBrandwatchCallBudget()`, ver nota logo abaixo) |
-| `hourly_metrics` | ✅ Passo 6.3e — **implementado 2026-07-13, migration `20260713040000`**: volume/sentimento/net sentiment em grão horário (`bw_query_metrics_hourly`), janela móvel de 30 dias buscada a cada invocação — sempre roda, não é "stale-gated" (é o oposto do throttle semanal: precisa estar sempre fresco pra detecção de curto prazo). Sem job de retenção/limpeza — mesma filosofia de histórico acumulando indefinidamente já aplicada a `daily`/`weekly`/`monthly` (ver `data-model.md`) |
+| `hourly_metrics` | ✅ Passo 6.3e — **implementado 2026-07-13, migration `20260713040000`**: volume/sentimento/net sentiment em grão horário (`bw_query_metrics_hourly`) — sempre roda, não é "stale-gated" (é o oposto do throttle semanal: precisa estar sempre fresco pra detecção de curto prazo). ✅ **Janela de busca ficou incremental (2026-07-16)** — deixou de ser sempre os 30 dias inteiros; agora é a janela cheia só enquanto o par ainda não terminou o backfill de mentions, e uma janela móvel curta (`HOURLY_METRICS_INCREMENTAL_WINDOW_HOURS`, default 6h) depois disso — ver blockquote no topo. Sem job de retenção/limpeza — mesma filosofia de histórico acumulando indefinidamente já aplicada a `daily`/`weekly`/`monthly` (ver `data-model.md`). ✅ **Volume por Narrativa adicionado (2026-08-09)** — as 3 chamadas fixas originais nunca gravavam `total_mentions` por Narrativa (bug real, ver `data-model.md`); um novo loop throttled (round-robin por staleness, capado em `MAX_HOURLY_VOLUME_TARGETS_PER_INVOCATION = 8`, `stayOnStep: true` se sobrar trabalho — mesmo padrão de `daily_metrics`) busca `total_mentions` por Narrativa via `syncHourlySentimentMetrics(..., categoryId, ...)`, agora sim escalando com o número de Narrativas (com throttle, diferente das 3 chamadas fixas de sempre) |
 | `weekly_monthly` | Passo 6.1 (semanal/mensal, throttle 7/30 dias) |
 | `topics` | Passo 6.4 (temas — endpoint novo `data/topics` + endpoint legado `data/volume/topics/queries`, throttle 7 dias) |
 | `platform_by_narrative` | Passo 6.3c (breakdown de plataforma por Narrativa, throttle 7 dias) |
 | `x_insights` | Passo 6.4b (hashtags/emojis/URLs/autores citados de X, throttle 7 dias) |
 | `top_authors` | Passo 6.5 (ranking geral de autores, throttle 7 dias) |
 | `top_tweeters` | ✅ Passo 6.5b — **novo** (2026-07-12): ranking específico de autores de X (`data/volume/toptweeters/queries`, `bw_query_top_tweeters`), distinto de `top_authors` — throttle 7 dias |
-| `author_enrichment` | Passo 6.7 (impressões + temas dos top 10 autores de `bw_query_top_authors`, throttle 7 dias) |
+| `author_enrichment` | Passo 6.7 (impressões + temas dos top 10 autores de `bw_query_top_authors`, throttle 7 dias). ✅ **Ganhou um segundo pool de candidatos (2026-08-09)** — usuário reportou que a tabela "Autores e comunidades por pauta" (`/themes`) só mostrava sentimento pra 1 autor: o pool original é sempre "top 10 por volume da QUERY INTEIRA", nunca escopado por Pauta, e como Pautas é um subconjunto pequeno do que a Query inteira rastreia, o pool global e "autores ativos em Pautas" são majoritariamente disjuntos. `runAuthorEnrichmentStep` agora processa o pool global primeiro (comportamento inalterado) e, só depois dele estar totalmente enriquecido na semana, processa um segundo pool — top 10 autores por volume somado entre as Subcategories de "Pautas" (`bw_pautas_top_author_candidates`, migration `20260809030000`) — só chama `syncAuthorTopics` pra este pool (não `syncAuthorImpressions`, que grava numa linha `category_id is null` que um autor só ativo em Pautas pode não ter) |
 | `top_sites` | Passo 6.8 (ranking de sites/domínios de onde as mentions vêm, throttle 7 dias) |
 | `top_shared_sites` | ✅ Passo 6.8b — **novo** (2026-07-12): ranking de domínios mais compartilhados/linkados dentro do conteúdo das mentions (`data/sharedsites`, `bw_query_top_shared_sites`), distinto de `top_sites` — throttle 7 dias |
 | `demographics` | Passo 6.6 (demografia — gender/localização + sentimento líquido por localização, throttle 7 dias) |
+| `mentions` | ✅ Passo 5 (polling paginado) — **reposicionada (2026-07-16)**: era a 2ª fase do ciclo, hoje roda aqui, logo antes de `full_text_enrichment` (que depende dela) e depois de toda fase de métrica. Ver blockquote no topo. |
 | `full_text_enrichment` | ✅ Passo 5 (nota) — **implementado 2026-07-13**: busca seletiva de `full_text` (top-N por engajamento/`reach_estimate`, por Narrativa/dia, só fontes não-redigidas), throttle "1 Narrativa×dia pendente por invocação" (ver nota própria abaixo) |
 | `sov` | Passo 6.2 (Share of Voice de Query Group + reach por candidato, throttle 7 dias) |
 
@@ -128,13 +333,156 @@ Narrativa recém-criada pode levar vários ciclos completos (cada ciclo =
 `BW_SYNC_INTERVAL_HOURS`) em vez de um só. Aceito em troca de nunca mais
 estourar o orçamento de CPU — ver `data-model.md` §4 (`sync_cursors`).
 
+✅ **Otimização definitiva de `daily_metrics` (2026-07-22)** — pedido do
+usuário: "ainda com problemas de rate limit... verifique se a busca está
+incremental e se há algo a otimizar", log real mostrando o gate proativo
+de 2026-07-21 disparando (`brandwatch_rate_limit_near_ceiling`,
+`lastRateLimitUsed: 27`) — o gate estava funcionando como desenhado, mas
+só reage a um problema que continuava existindo: esta fase sozinha ainda
+fazia até 14 chamadas fixas + 1 por Narrativa (o guard de
+`hasBrandwatchCallBudget()` do bug de 2026-07-13 acima limita o *total*
+por invocação, não o *tamanho do burst*, que é o que importa pro teto real
+de 30/10min). Duas correções, sem migration (mudança só na Edge Function):
+1. **Consolidação via `data/multiAggregate/{dimension}/days`** — endpoint
+   oficial da Brandwatch ("Multiple Aggregate Charts",
+   developers.brandwatch.com/docs/multi-aggregate-charts, conteúdo
+   confirmado ao vivo nesta sessão) que aceita `aggregate=a,b,c` (lista
+   separada por vírgula) e devolve `values[].value` como um OBJETO com uma
+   chave por aggregate pedido. `reachEstimate`+`engagementScore`+`authors`+
+   `impressions`+`netSentiment` (10 chamadas fixas, categories+queries) e
+   `volume`+`authors`+`engagementScore`+`netSentiment` de plataforma (4
+   chamadas) viram 1 chamada cada — 14 chamadas fixas → 3
+   (`syncCategoryDailyMultiAggregate`/`syncQueryDailyMultiAggregate`/
+   `syncPlatformMultiAggregate`, substituindo `syncCategoryDailyAggregate`/
+   `syncQueryDailyAggregate`/`syncPlatformAggregate`, removidas). Efeito
+   colateral: como `netSentiment` agora está sempre na MESMA chamada que
+   reach/engagement/autores/impressões, a starvation corrigida em
+   2026-07-20 (reordenar pra sobreviver ao corte de orçamento) deixa de ser
+   possível por construção — não tem mais como uma chamada da mesma
+   dimensão "chegar depois" da outra.
+   ⚠️ O split positivo/neutro/negativo de sentimento
+   (`syncSentimentMetrics`, `data/volume/sentiment/days&category=X`)
+   **não** pode entrar nesta consolidação — não é um "aggregate"
+   combinável, é o próprio eixo `dimension1=sentiment`, e a Brandwatch só
+   aceita 2 dimensões por chamada (sentiment × days já ocupa as duas).
+   Continua 1 chamada por `categoryTarget`, ver item 2.
+2. **Burst do loop de sentimento por Narrativa espalhado entre
+   heartbeats** — antes, o loop processava TODOS os `categoryTargets` numa
+   invocação só (só parava se o orçamento local acabasse no meio); com
+   Narrativas suficientes isso sozinho já era um burst grande dentro da
+   janela real de 10min da Brandwatch. Agora: a Query inteira
+   (`category=null`) sempre roda (1 chamada, sem gate de frescor — crítica
+   pros KPIs de topo); o restante das Narrativas é capado a
+   `MAX_SENTIMENT_TARGETS_PER_INVOCATION = 8` chamadas reais por invocação
+   e pula (sem gastar chamada) qualquer Narrativa cujo
+   `bw_query_metrics_daily.synced_at` mais recente já é mais novo que
+   `DAILY_SENTIMENT_FRESH_WINDOW_MS = 25min` (maior que o heartbeat de
+   15min, pra nunca reprocessar a mesma Narrativa no heartbeat seguinte).
+   Se sobrar Narrativa por cobrir, a fase retorna um novo sinal
+   `stayOnStep: true` (`StepResult`) — o dispatcher **não avança**
+   `next_step` (fica em `daily_metrics`, não pula pra `hourly_metrics`), e
+   o próximo heartbeat continua exatamente daqui. Mesmo racional de
+   "Phased execution per pair" (`weekly_monthly`/`topics`/`top_authors`)
+   já aceito neste projeto, só aplicado **dentro** da fase em vez de entre
+   fases — pra um número moderado de Narrativas (dezenas), ainda cobre o
+   ciclo completo bem dentro do `BW_SYNC_INTERVAL_HOURS` padrão (3h).
+   `last_synced_at` continua só avançando quando o ciclo INTEIRO (as 16
+   fases) fecha, então um `daily_metrics` que ainda está espalhando o
+   burst do sentimento não fecha o ciclo prematuramente.
+
+> ⚠️ **Bug real na checagem de frescor do item 2, corrigido 2026-08-06** —
+> `fetchDailySentimentFreshness()` (que decide quais Narrativas pular
+> porque já sincronizaram há menos de `DAILY_SENTIMENT_FRESH_WINDOW_MS`)
+> fazia `select category_id, synced_at from bw_query_metrics_daily where
+> category_id in (...)`, **sem `ORDER BY`/`LIMIT`**, computando o
+> `MAX(synced_at)` por categoria no client. `bw_query_metrics_daily`
+> acumula histórico indefinidamente (~196 dias/categoria) e
+> `supabase/config.toml` fixa `max_rows = 1000` (padrão do PostgREST) — com
+> mais de ~5 categorias essa query já ultrapassa 1000 linhas e é
+> silenciosamente truncada, sem garantia de quais linhas sobrevivem ao
+> corte. Efeito real observado em produção: para uma organização com mais
+> de 8 Narrativas, o cálculo de frescor ficava sistematicamente errado
+> para as categorias afetadas pelo corte — elas nunca eram marcadas
+> "fresh", então esta fase reprocessava para sempre as mesmas primeiras 8
+> categorias, nunca alcançava as demais, e nunca liberava `stayOnStep` —
+> o pipeline inteiro ficava preso em `daily_metrics`. Corrigido (migration
+> `20260806010000`): nova function agregada
+> `bw_query_metrics_daily_category_freshness(p_project_id, p_query_id,
+> p_category_ids)` — `GROUP BY category_id` no Postgres devolve no máximo
+> `len(category_ids)` linhas, imune ao `max_rows` independentemente de
+> quanto histórico a tabela acumule. `fetchDailySentimentFreshness()`
+> passou a chamar essa function via `.rpc(...)` em vez do `select` bruto.
+> Ver `CLAUDE.md`, "Brandwatch sync model", pro relato completo.
+
+> ✅ **Sincronismo entre fases (2026-08-06)** — pedido do usuário: "a
+> execução está em apenas 1 step e os demais steps só são atualizados
+> quando há intervenção manual... é importante rodar todo o ciclo no
+> mesmo momento (ou mto próximos), pois entre uma execução e outra pode
+> ocorrer discrepância entre os dados. Exemplo: o SOV foi buscado em um
+> momento e a volumetria de menções em outra, vai gerar valores
+> desencontrados." Causa raiz real, distinta do bug de frescor logo acima
+> (esse já tinha sido corrigido antes deste pedido): o dispatcher de fases
+> (`runSyncInvocation()`) parava a invocação assim que a **primeira** fase
+> fazia trabalho real (`result.didWork === true`) — comportamento original
+> desta seção desde 2026-07-11, pensado como rede de segurança de CPU.
+> Como `daily_metrics` (3ª fase) quase sempre tem trabalho pendente a cada
+> heartbeat de 15min, o cron parava ali quase toda vez — `hourly_metrics`/
+> `weekly_monthly`/`topics`/`platform_by_narrative`/`x_insights`/
+> `top_authors`/`top_tweeters`/`author_enrichment`/`top_sites`/
+> `top_shared_sites`/`demographics`/`full_text_enrichment`/`sov` só
+> avançavam quando alguém clicava "Invoke" manualmente várias vezes
+> seguidas (cada clique comprimindo em minutos o que o cron levaria horas
+> pra alcançar) — exatamente o "1 step só, resto por intervenção manual"
+> relatado, e exatamente a causa do "SOV vs. volumetria desencontrados":
+> cada tipo de métrica podia ter sido sincronizado num ciclo de cron
+> completamente diferente do outro.
+>
+> **Corrigido** (`bw-sync/index.ts`, sem migration): o dispatcher agora
+> encadeia quantas fases o orçamento permitir dentro da MESMA invocação,
+> mesmo as que fizeram trabalho real — só para quando um `stopReason` real
+> ocorre: `cycle_complete` (as 16 fases fecharam), `stay_on_step` (o burst
+> de sentimento de `daily_metrics` continua espalhado entre heartbeats de
+> propósito — existe especificamente pra não estourar o teto de 30
+> chamadas/10min da Brandwatch dentro de uma invocação só, não é
+> "atropelado" por este loop), `call_budget_exhausted`
+> (`hasBrandwatchCallBudget()`, já compartilhado por toda fase
+> "stale-gated") ou `time_budget_exhausted` (novo `INVOCATION_TIME_BUDGET_MS
+> = 45_000`, checado só ENTRE fases — nunca interrompe uma fase no meio,
+> cada fase mantém seus próprios orçamentos internos como
+> `MENTIONS_LOOP_BUDGET_MS`). Cada fase "stale-gated" continua avançando
+> no máximo 1 `categoryTarget` por passagem (trade-off inalterado, ver
+> parágrafo logo abaixo) — o que muda é que o dispatcher agora VISITA
+> todas as fases dentro do orçamento por invocação, não só a primeira que
+> tinha trabalho, então o ciclo inteiro tende a fechar dentro da mesma
+> invocação (ou poucas, em sequência próxima) sempre que o orçamento
+> permitir, em vez de se espalhar por até 16 heartbeats de 15min cada.
+> Novo campo `stepsRun` nos logs `[bw-sync] invocation:done` — confirma,
+> invocação a invocação, quantas fases foram de fato encadeadas (`1` era o
+> máximo possível antes desta correção sempre que havia trabalho real;
+> agora pode ser bem maior). ⚠️ Não elimina o "Trade-off aceito" abaixo
+> (várias Narrativas na mesma fase "stale-gated" ainda cobrem 1
+> `categoryTarget`/invocação) — só elimina o desencontro **entre tipos de
+> métrica diferentes** dentro do mesmo ciclo, que era o problema relatado.
+
+> ⚠️ **`stay_on_step` como `stopReason` de parada, descrito no parágrafo
+> acima, foi revertido em 2026-07-16** — ver o blockquote no topo deste
+> arquivo ("`stay_on_step` deixou de encerrar a invocação"). O texto acima
+> descreve corretamente o desenho de 2026-08-06 (histórico); desde
+> 2026-07-16, `stay_on_step` não interrompe mais a invocação — a mesma
+> fase é retentada na mesma invocação até terminar ou o orçamento acabar.
+> Os outros 3 motivos de parada (`cycle_complete`/`call_budget_exhausted`/
+> `time_budget_exhausted`) continuam exatamente como descritos acima.
+
 **Estado vive inteiro no Postgres, nunca em memória do isolate** — por
 isso uma invocação **manual** (clique em "Invoke" no Dashboard do
 Supabase, útil durante testes) se comporta exatamente como um tick do
-heartbeat de 15min: lê `next_step` do par mais "devido", roda essa fase,
+heartbeat (1 minuto, desde 2026-08-09 — ver nota de topo): lê `next_step`
+do par mais "devido", roda essa fase,
 grava o próximo passo. Não há modo de teste separado nem estado
 in-memory que se perca entre invocações — clicar várias vezes seguidas
-avança o ciclo normalmente, uma fase por clique.
+avança o ciclo normalmente, mas desde 2026-08-06 uma única invocação (manual
+ou via cron) já tende a percorrer várias fases sozinha, não mais uma por
+clique.
 
 **Complementar**: `syncCategoryDailyAggregate()` (reach/engagement, a
 chamada que devolveu 4825 linhas) também passou a fazer upsert em lotes de
@@ -287,30 +635,64 @@ própria `platform_by_narrative` (passo 6.3c abaixo) — ver `data-model.md`
    Brandwatch. Isso é o que torna o "a cada 3 horas" um parâmetro de
    ambiente de verdade — mudar `BW_SYNC_INTERVAL_HOURS` (`supabase secrets
    set`) muda o comportamento na invocação seguinte, sem nova migration.
-1. `pg_cron` invoca a Edge Function `bw-sync` a cada **15 minutos** — um
-   heartbeat fixo e barato (cadência de infraestrutura, não o parâmetro de
-   negócio; só precisa ser frequente o bastante relativo aos
-   `BW_SYNC_INTERVAL_HOURS` configurados pra não gerar atraso perceptível
-   — ver migration `20260711020000`, `select net.http_post(url := ...)`,
-   `verify_jwt = false` pra esta function já que só é acionada por
-   `pg_cron`/manualmente). A maioria dos heartbeats não faz nenhum trabalho
-   — sai no gate do passo 0.5b. ⚠️ **Histórico**: até 2026-07-11, `bw-sync`
-   nunca teve `pg_cron` agendado de verdade (só invocação manual) — o
-   bloqueio documentado (mint de token gastando parte do orçamento de
-   30/10min a cada invocação, relevante numa cadência de ~20-30s) deixou de
-   valer nesse desenho, porque o gate do passo 0.5b faz o mint só acontecer
-   quando algum par está de fato devido (a cada `BW_SYNC_INTERVAL_HOURS`
-   por par, não a cada heartbeat) — sem precisar implementar o cache de
-   token no Vault antes (continua um TODO separado, só que não bloqueante).
+0.5c. **Gate de rate limit** (✅ adicionado 2026-07-16, correção de bug de
+   produção — ver item 8 abaixo). Roda depois do gate 0.5b e antes do
+   lock 0.5 (mesma ordem em código: checagem barata, sem chamar a
+   Brandwatch). Lê `bw_sync_lock.rate_limited_until` — se estiver no
+   futuro (setado por `mark_bw_rate_limited()` numa invocação anterior que
+   esgotou retry num `429`), a invocação encerra imediatamente (`HTTP 200,
+   ok: true, skipped: true, reason: "brandwatch_rate_limited"`) sem mintar
+   token nem reivindicar o lock.
+0.5d. **Gate proativo de uso real** (✅ adicionado 2026-07-21, migration
+   `20260721020000` — ver item 8 abaixo pro racional completo). Roda logo
+   depois do gate 0.5c, mesma checagem barata. Lê
+   `bw_sync_lock.last_rate_limit_used`/`last_rate_limit_observed_at` — o
+   último valor do header oficial `x-rate-limit-used` que uma invocação
+   anterior observou (não um 429, um uso normal que já reportava estar
+   perto do teto). Se esse valor está `>= 27` (de 30) **e** foi observado
+   há menos de 10 minutos (a janela real do rate limit — passado isso,
+   presume-se obsoleto), a invocação encerra (`HTTP 200, ok: true,
+   skipped: true, reason: "brandwatch_rate_limit_near_ceiling"`) sem
+   mintar token. Diferente do gate 0.5c (reage a um 429 que já
+   aconteceu), este gate impede a maioria dos 429 de sequer ocorrer.
+1. `pg_cron` invoca a Edge Function `bw-sync` a cada **1 minuto**
+   (`* * * * *`) — um heartbeat fixo e barato (cadência de
+   infraestrutura, não o parâmetro de negócio; só precisa ser frequente
+   o bastante relativo aos `BW_SYNC_INTERVAL_HOURS` configurados pra não
+   gerar atraso perceptível — ver migration `20260711020000`, `select
+   net.http_post(url := ...)`, `verify_jwt = false` pra esta function já
+   que só é acionada por `pg_cron`/manualmente). A maioria dos heartbeats
+   não faz nenhum trabalho — sai no gate do passo 0.5b. ⚠️ **Histórico**:
+   até 2026-07-11, `bw-sync` nunca teve `pg_cron` agendado de verdade (só
+   invocação manual) — o bloqueio documentado (mint de token gastando
+   parte do orçamento de 30/10min a cada invocação, relevante numa
+   cadência de ~20-30s) deixou de valer nesse desenho, porque o gate do
+   passo 0.5b faz o mint só acontecer quando algum par está de fato
+   devido (a cada `BW_SYNC_INTERVAL_HOURS` por par, não a cada
+   heartbeat) — sem precisar implementar o cache de token no Vault antes
+   (continua um TODO separado, só que não bloqueante). ✅ **Cadência
+   apertada de 15min para 1min (2026-08-09, migration
+   `20260809070000`)**: com o heartbeat fixo em 15min, o tempo entre "o
+   orçamento de chamadas liberou" e "o sistema percebe" podia chegar a
+   ~17min de espera ociosa pura (log real de produção) — reagendado via
+   `cron.alter_job` (não recriado) para `* * * * *`. Uma invocação ociosa
+   (`no_pair_due`/`rate_limit_near_ceiling_skip`) já era barata antes
+   disso (~24-46ms, sem tocar a Brandwatch), então rodar 15x mais vezes
+   não pesa em custo real — só reduz a folga entre "orçamento liberou" e
+   "o sistema percebeu". `BW_SYNC_INTERVAL_HOURS` (quando um PAR fica
+   devido) e `getSyncStalenessWindowMs()` (janela de frescor por fase)
+   continuam sendo o parâmetro de negócio, inalterados — só a cadência de
+   *checagem* mudou. Ver `CLAUDE.md`, "Heartbeat de `bw-sync` apertado de
+   15min pra 1min".
 2. A função resolve, em round-robin, o próximo par `(project_id, query_id)`
    **devido** (mesmo filtro do passo 0.5b, reaplicado aqui) com sync
    pendente, olhando `sync_cursors` (dentre os devidos, o cursor com
    `last_synced_at` mais antigo primeiro). ⚠️ **Trade-off aceito**: uma
    invocação processa só um par — se houver múltiplos pares devidos ao
-   mesmo tempo (ex: várias Queries), cada um é pego num heartbeat de 15min
-   subsequente, não todos de uma vez. Com heartbeat de 15min e um punhado
+   mesmo tempo (ex: várias Queries), cada um é pego num heartbeat de 1min
+   subsequente, não todos de uma vez. Com heartbeat de 1min e um punhado
    de pares (cenário típico de MVP — 1 Project, poucas Queries), o atraso
-   entre pares no mesmo ciclo é de no máximo alguns múltiplos de 15min —
+   entre pares no mesmo ciclo é de no máximo alguns minutos —
    desprezível frente a uma cadência de negócio de horas. O
    **backfill histórico de mentions** (`BRANDWATCH_MENTIONS_START_DATE` até
    hoje) também passa a avançar só quando o par está devido, não
@@ -338,9 +720,10 @@ própria `platform_by_narrative` (passo 6.3c abaixo) — ver `data-model.md`
    ainda é TODO. ✅ **Deixou de bloquear o agendamento via `pg_cron`
    (2026-07-11)**: o gate do passo 0.5b faz o mint só acontecer quando algum
    par está devido (a cada `BW_SYNC_INTERVAL_HOURS` por par, não a cada
-   heartbeat de 15min) — a essa cadência o mint sem cache é irrelevante para
-   o orçamento de 30/10min. O cache continua valendo a pena (evita 1
-   chamada por par devido), só não é mais pré-requisito.
+   heartbeat — 1 minuto desde 2026-08-09, era 15min antes disso) — a essa
+   cadência o mint sem cache é irrelevante para o orçamento de 30/10min.
+   O cache continua valendo a pena (evita 1 chamada por par devido), só
+   não é mais pré-requisito.
 4. Se for a primeira sincronização daquele Project (`bw_projects.name` ainda
    é o placeholder do passo 0), `bw_categories` estiver vazia, ou um refresh
    periódico (> 1h desde `synced_at` — reduzido de 24h, ver correção
@@ -392,7 +775,46 @@ própria `platform_by_narrative` (passo 6.3c abaixo) — ver `data-model.md`
    cascade` (a deleção falharia com violação de FK se a Category já virou
    Narrativa). Uma Category removida/renomeada na Brandwatch fica órfã em
    `bw_categories` até limpeza manual — mais seguro que apagar dado
-   histórico às cegas.
+   histórico às cegas. ✅ **`status` implementado (2026-07-16, migration
+   `20260716010000`)**: em vez de só ficar "órfã" silenciosamente, toda
+   Category/Subcategory do Project que não veio no `rulecategories` desta
+   checagem (a cada refresh de metadata, mesmo throttle de 1h acima) é
+   marcada `status = 'inactive'` — ainda não deletada (mesmos motivos de
+   FK/histórico acima), mas para de contar como "ativa" pro resto do
+   sistema: `fetchNarrativeCategoryIds()` (passo 6 abaixo) para de
+   sincronizar novo dado pra ela, e `get_narratives_table`/
+   `get_theme_breakdown` (aggregated-metrics) param de listá-la. Reaparece
+   automaticamente como `active` se a Category voltar a existir num
+   `rulecategories` futuro.
+   ✅ **Bug real corrigido (2026-07-23, pedido do usuário: "as categorias
+   não estão sendo colocadas como inativas quando não existem mais na
+   brandwatch")**: a lógica de desativação acima estava correta, mas este
+   passo (`runMetadataStep()`) só era disparado quando
+   `sync_cursors.next_step` chegava em `"metadata"` — a primeira fase de
+   `SYNC_STEPS`, reavaliada de novo só quando o ciclo inteiro de 16 fases
+   fecha e dá a volta (ver "Execução em fases" acima). Toda fase
+   "stale-gated" avança no máximo 1 categoryTarget/grupo por invocação, e
+   `daily_metrics` também pode se estender por várias invocações desde
+   2026-07-22 (burst de sentimento espalhado via `stayOnStep`) — pra uma
+   organização com Narrativas suficientes, um ciclo inteiro podia
+   facilmente levar bem mais que `BW_SYNC_INTERVAL_HOURS` (3h padrão) pra
+   fechar, e o throttle de 1h deste passo nunca tinha CHANCE de ser
+   reavaliado nesse meio tempo — uma Category removida na Brandwatch podia
+   ficar `active` no Supabase por um ciclo inteiro (potencialmente muito
+   mais que 1h). Corrigido: `runSyncInvocation()` agora chama
+   `needsMetadataRefresh()`/`refreshMetadata()` (que inclui a desativação)
+   **em toda invocação do par**, logo após resolver `organization_id` e
+   antes de `fetchNarrativeCategoryIds()` — independente de qual fase o
+   `next_step` do par esteja — guardado por `hasBrandwatchCallBudget()`
+   pra não competir com o orçamento da fase que de fato está na vez.
+   Barato quando não está devido (2 SELECTs); só gasta chamada de
+   Brandwatch quando o throttle de 1h realmente já passou. O passo
+   `"metadata"` continua existindo em `SYNC_STEPS` sem mudança (fica
+   redundante/no-op na maioria das vezes, mantido só por compatibilidade
+   com `next_step` já persistido). Ganhou também um log de sucesso —
+   `refreshMetadata:categories_deactivated` (`count`/`categoryIds`, via
+   `.select("id")` no `UPDATE`) — antes não havia nenhuma confirmação nos
+   logs de que a desativação de fato rodou ou quantas linhas afetou.
 5. Busca mentions daquele par — **sempre** com `startDate`/`endDate` (⚠️
    correção 2026-07-07, encontrado em teste real: a Brandwatch rejeita
    `/data/mentions` sem `startDate`, mesmo no polling, apesar do exemplo de
@@ -564,6 +986,28 @@ própria `platform_by_narrative` (passo 6.3c abaixo) — ver `data-model.md`
    range pedido numa única chamada — alargar a janela não custa chamada
    extra de rate limit, só passa a cobrir o histórico configurado de
    verdade.
+   ✅ **Correção 2026-07-19** (pedido do usuário: já existe base histórica
+   sincronizada, não faz sentido `metricsStartDate` continuar sempre igual
+   a `BRANDWATCH_MENTIONS_START_DATE` — "buscar dados incrementais, do dia
+   atual em diante"): a correção acima resolveu o problema de 2026-07-10
+   (histórico realmente populado), mas deixou todo par "maduro" pedindo e
+   re-upsertando o histórico completo (Jan/26 → hoje) em **toda**
+   invocação, mesmo depois de já ter sido sincronizado — desperdício de
+   payload/CPU/upsert crescente com o tempo, mesma classe de risco que já
+   causou `WORKER_RESOURCE_LIMIT` no polling de mentions (ver
+   `data-model.md`). `getMetricsStartDate(backfill_completed_at)` agora
+   decide por par: enquanto o backfill histórico de mentions daquele par
+   não terminou (`sync_cursors.backfill_completed_at` null), mantém o
+   range completo (`getMentionsStartDate()`) — os agregados ainda
+   dependem disso pra se popular ao longo do backfill. Uma vez que o
+   backfill termina, todos os passos 6.x passam a pedir só uma **janela
+   móvel** (`now() - BW_METRICS_INCREMENTAL_WINDOW_DAYS`, secret opcional,
+   default 30 dias) — mesmo padrão já usado pelo passo 6.3e
+   (`HOURLY_METRICS_WINDOW_MS`), só que configurável e não hardcoded.
+   Trade-off aceito: uma correção da Brandwatch a um bucket **fora** dessa
+   janela deixa de ser recapturada — histórico já sincronizado antes da
+   janela passa a ser efetivamente definitivo. Ver `bw-sync/index.ts`,
+   `getMetricsStartDate()`, pelo racional completo.
 6.1. Mesma lógica para `data/volume/sentiment/weeks`/`.../months`, upsert em
    `bw_query_metrics_weekly`/`bw_query_metrics_monthly` — mas só quando não
    existir linha "fresca" (semanal: sem `synced_at` nos últimos 7 dias;
@@ -663,8 +1107,13 @@ própria `platform_by_narrative` (passo 6.3c abaixo) — ver `data-model.md`
    **restrito a uma janela móvel de 30 dias** (`startDate = now() - 30d`) —
    diferente de todo o resto deste sync, que cobre o histórico completo
    desde `BRANDWATCH_MENTIONS_START_DATE`; aqui o propósito é só detecção
-   de curto prazo (`event-radar`) e Velocidade (`aggregated-metrics`), não
-   histórico/BI. 30 dias (não só 72h) porque cobre também a janela "Hora
+   de curto prazo (`event-radar`) e o grão `hour` do gráfico de tendência
+   (`get_volume_trend`, `aggregated-metrics`), não histórico/BI. ⚠️ Não é
+   mais usado por Tendência de Narrativa (`trend_score`, antes
+   "Velocidade"/`velocity_score`) — desde 2026-07-22 esse indicador usa a
+   série diária de `narrative_metrics`, não este grão horário, ver
+   `aggregated-metrics/sql-aggregation.md`, "Tendência". 30 dias (não só
+   72h) porque cobre também a janela "Hora
    atual vs. média das últimas 4 semanas" sem uma segunda chamada — ver
    `foundation/data-model.md`, `bw_query_metrics_hourly`, "Janela de
    captura". Roda em **toda** invocação (não é "stale-gated" — o oposto do
@@ -893,13 +1342,44 @@ própria `platform_by_narrative` (passo 6.3c abaixo) — ver `data-model.md`
    `sync_cursors.status = 'error'` + `last_error` e `sync_log.status = 'error'`
    — a Edge Function sempre responde HTTP 200 mesmo em erro (o erro fica no
    corpo da resposta), para uma eventual invocação futura via `pg_cron` não
-   ser interpretada como falha de infraestrutura.
+   ser interpretada como falha de infraestrutura. ✅ **Correção de bug de
+   produção (2026-07-16, migration `20260716020000`)**: esgotar as 3
+   tentativas também grava `bw_sync_lock.rate_limited_until = now() +
+   10min` (`mark_bw_rate_limited()`) — a janela real do rate limit da
+   Brandwatch (30 chamadas/10min por Client, não por par/invocação). Sem
+   isso, uma invocação nova começava com seu orçamento local
+   (`hasBrandwatchCallBudget()`) "cheio" e tomava 429 já na primeira
+   chamada, porque esse orçamento não tem memória de quanto invocações
+   anteriores recentes já gastaram do teto real. Ver o novo passo 0.5c
+   acima — checa `rate_limited_until` antes de mintar token ou
+   reivindicar o lock do passo 0.5, e sai cedo (mesmo padrão do gate de
+   `BW_SYNC_INTERVAL_HOURS`) se o backoff ainda está ativo.
+   ✅ **Correção definitiva (2026-07-21, migration `20260721020000`)**:
+   o backoff de `rate_limited_until` acima só reage DEPOIS que um 429 já
+   aconteceu (esgotando 3 tentativas locais, até ~60s+ perdidos por
+   invocação) — nunca evita o 429 em si. `callBrandwatch()` sempre leu o
+   header oficial `x-rate-limit-used` (contagem autoritativa da própria
+   Brandwatch do quanto do teto de 30/10min já foi gasto, inclusive por
+   invocações/testes manuais anteriores — não só desta invocação), mas só
+   pra log. Agora esse valor (`lastKnownRateLimitUsed`) também governa
+   `hasBrandwatchCallBudget()`: qualquer fase para de fazer novas chamadas
+   assim que o uso reportado pela Brandwatch chegar a `27` (de 30), mesmo
+   que o orçamento local (`brandwatchCallCount < 25`) ainda "ache" que há
+   sobra — é isso que teria evitado o 429 relatado (várias chamadas
+   bem-sucedidas de `daily_metrics` antes da que falhou já deviam ter
+   reportado uso perto do teto, sinal até então ignorado). Esse último
+   valor observado também é persistido em `bw_sync_lock.last_rate_limit_used`/
+   `last_rate_limit_observed_at` ao final de toda invocação
+   (`record_bw_rate_limit_usage()`) e checado pelo novo gate 0.5d acima —
+   fecha o buraco em que a PRÓXIMA invocação, com seu contador local
+   zerado, não tinha como saber que o teto real já estava perto do limite
+   antes de tentar a primeira chamada.
 
 ## Fluxos alternativos e erros
 
 | Situação | Comportamento esperado |
 |---|---|
-| `HTTP 429` da Brandwatch | Backoff (ver best practices da skill `brandwatch-api`), até 3 tentativas; se esgotar, marca erro e tenta o próximo par na invocação seguinte — não trava a fila inteira |
+| `HTTP 429` da Brandwatch | Backoff (ver best practices da skill `brandwatch-api`), até 3 tentativas; se esgotar, marca erro, grava `rate_limited_until` (10min, ver passo 8/0.5c) e tenta o próximo par na invocação seguinte — não trava a fila inteira |
 | Token expirado/inválido | `sync_cursors.status = 'error'`, `last_error` com mensagem; **não** derruba a Edge Function para outros pares — cada par falha isoladamente |
 | Query removida/pausada na Brandwatch | Mantida em `bw_queries` (histórico), mas sem novo `sync_cursors` de mentions; o refresh periódico de metadados (passo 4) reflete o estado atual |
 | Project sem Query Group configurado (⚠️ correção 2026-07-07, encontrado em teste real) | `GET /projects/{id}/query-groups` responde `404` em vez de `{results: []}` quando não há nenhum grupo — tratado como "nenhum grupo" (loga e segue o bootstrap normalmente), não como falha; passo 6.2 (SOV) simplesmente não roda para aquele Project. Query Group é opcional por design (só necessário pro card de SOV, ver `brandwatch-setup.md` §4) |
@@ -966,10 +1446,12 @@ só metadados (tamanho do token, expiração, ids do par processado).
 - Edge Function autossuficiente `supabase/functions/bw-sync/index.ts`
   (Princípio técnico 5, `_index.md`).
 - `pg_cron` + `pg_net` para HTTP a partir do Postgres (migration
-  `20260711020000`, heartbeat `bw-sync-heartbeat` a cada 15min via
-  `net.http_post`, URL hardcoded na migration — não é segredo, mesmo valor
-  já exposto via `NEXT_PUBLIC_SUPABASE_URL`, então sem passo manual
-  pós-deploy). Function roda com `verify_jwt = false`
+  `20260711020000`, heartbeat `bw-sync-heartbeat`, originalmente a cada
+  15min, reagendado para **a cada 1 minuto** via `cron.alter_job` na
+  migration `20260809070000` — via `net.http_post`, URL hardcoded na
+  migration — não é segredo, mesmo valor já exposto via
+  `NEXT_PUBLIC_SUPABASE_URL`, então sem passo manual pós-deploy). Function
+  roda com `verify_jwt = false`
   (`supabase/config.toml`) — sem Authorization header no cron job.
 - `BW_SYNC_INTERVAL_HOURS` (secret da Edge Function, default `3`) — o
   parâmetro de negócio de cadência de captura (ver "Objetivo" acima e passo
