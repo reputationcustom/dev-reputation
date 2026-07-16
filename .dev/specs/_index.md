@@ -275,16 +275,16 @@ deve ser conferido contra esta lista antes de ser considerado pronto.
 | `decision-center`       | AI Advisors — perguntas livres/interativas sobre mentions/narrativas, respeitando data-restrictions. **Não** se sobrepõe a `event-radar`: aquele gera cards automáticos por evento detectado (push), este responde perguntas ad-hoc do analista (pull) | rascunho     | 3      | — |
 | `executive-reports`     | Geração de relatórios periódicos (`reports_generated`: diário/semanal/mensal/executivo/crise) — reaproveita o envelope de `aggregated-metrics` (página "Relatórios") em vez de agregação própria | rascunho | 4 | — |
 | `finops`                | Painel de custo de IA (uso real via `ai_usage_log`, nunca estimativa) + custos extras cadastráveis (`manual_costs`, pontual/mensal/anual) + previsão de fim de mês. Admin-only, escopo é a plataforma inteira, não uma organização | **implementado** (2026-08-05, migration `20260805000000` + 4 Edge Functions + `/admin/finops` — ver `CLAUDE.md`, "Módulo `finops`") | — | [finops/overview.md](finops/overview.md) |
-| `sync-console`           | Observabilidade (fase atual/última sincronização/próxima prevista/lock/rate limit por par Projeto-Query) + execução manual de 1 fase específica do pipeline `bw-sync`, sob demanda. Admin-only, escopo é a plataforma inteira, não uma organização — camada fina em cima de `foundation`, nunca duplica a lógica de sincronização | pronto — não implementado (spec criada 2026-07-15) | — | [sync-console/overview.md](sync-console/overview.md) |
+| `sync-console`           | Observabilidade (fase atual/última sincronização/próxima prevista/lock/rate limit por par Projeto-Query) + histórico completo paginado de execuções (registros sincronizados por etapa) + execução manual de 1 fase específica do pipeline `bw-sync`, sob demanda. Admin-only, escopo é a plataforma inteira, não uma organização — camada fina em cima de `foundation`, nunca duplica a lógica de sincronização | **implementado** (2026-07-15, migration `20260809140000` + 3 Edge Functions + 4ª aba de "Administração", `/admin/sync-console` — ver `CLAUDE.md`, "Módulo `sync-console`") | — | [sync-console/overview.md](sync-console/overview.md) |
 
-> 📝 **Módulo `sync-console` criado (2026-07-15)**, a pedido do usuário —
-> "Como administrador eu quero poder acompanhar a fase da integração,
-> quando rolou, quando será a próxima execução, em que passo que está.
-> Além disso, quero conseguir executar partes específicas da integração".
-> Transversal/admin-only, sem Sprint própria, mesmo padrão de `finops`
-> (nó amarelo em `_architecture.md`, escopo plataforma inteira). Ainda só
-> spec — nenhuma migration/Edge Function/UI escrita nesta sessão. Ver
-> [sync-console/overview.md](sync-console/overview.md).
+> ✅ **Módulo `sync-console` criado e implementado (2026-07-15)**, a
+> pedido do usuário — "Como administrador eu quero poder acompanhar a
+> fase da integração... executar partes específicas da integração",
+> seguido de "faça os ajustes em bw_sync e implemente a especificação
+> criada" na mesma sessão. Transversal/admin-only, sem Sprint própria,
+> mesmo padrão de `finops` (nó verde em `_architecture.md`, escopo
+> plataforma inteira). Ver [sync-console/overview.md](sync-console/overview.md)
+> e `CLAUDE.md`, "Módulo `sync-console`", para o detalhe completo.
 
 > ✅ **Módulo `command-center` removido (2026-07-13)**, a pedido do
 > usuário: nunca chegou a ganhar spec própria além de um único requisito

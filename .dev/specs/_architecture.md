@@ -87,20 +87,23 @@ graph TD
     style DECISIONCENTER fill:#e2e3e5,stroke:#6c757d
     style REPORTS fill:#e2e3e5,stroke:#6c757d
     style FINOPS fill:#c3e6cb,stroke:#2e7d32
-    style SYNCCONSOLE fill:#fff3cd,stroke:#856404
+    style SYNCCONSOLE fill:#c3e6cb,stroke:#2e7d32
 ```
 
 **Como ler**: seta cheia (`-->`) = dependência forte, o módulo de origem bloqueia o de destino.
 Seta pontilhada (`-.->`) = dependência fraca/opcional — o destino funciona sem a origem (com
 fallback), mas fica mais completo com ela.
 
-> 📝 **`sync-console` adicionado (2026-07-15)**, transversal/admin-only —
-> depende de `foundation` (lê `sync_cursors`/`bw_sync_lock`/`sync_log`,
-> nunca reimplementa a lógica de sincronização) e de `auth` (gate
-> `is_admin`), mesmo padrão de dependência já usado por `finops`. Nó
-> **amarelo** (`pronto` — spec aprovada, aguardando implementação),
-> ainda sem nenhuma migration/Edge Function/UI escrita. Ver
-> [_index.md](_index.md) e [sync-console/overview.md](sync-console/overview.md).
+> ✅ **`sync-console` adicionado e implementado (2026-07-15)**,
+> transversal/admin-only — depende de `foundation` (lê/estende
+> `sync_cursors`/`bw_sync_lock`/`sync_log`, nunca reimplementa a lógica de
+> sincronização — reaproveita literalmente as 16 funções runner de
+> `bw-sync/index.ts`) e de `auth` (gate `is_admin`), mesmo padrão de
+> dependência já usado por `finops`. Nó **verde** desde o mesmo dia da
+> criação da spec — as 3 funcionalidades (`data-model`/`pipeline-monitoring`/
+> `manual-step-execution`) foram implementadas na mesma sessão. Ver
+> [_index.md](_index.md), [sync-console/overview.md](sync-console/overview.md)
+> e `CLAUDE.md`, "Módulo `sync-console`".
 
 > ✅ **`communications` adicionado (2026-07-25)**, Sprint 2.1 — fora da sequência original de
 > Sprint 2, depende de `foundation`/`auth`/`aggregated-metrics` (já implementados) e do shell de
@@ -224,7 +227,7 @@ de `intelligence-center`, ver `_index.md`, "Módulo `command-center` removido".
 | `decision-center` | AI Advisors — perguntas livres/interativas do analista sobre mentions/narrativas | rascunho | — |
 | `executive-reports` | Relatórios periódicos (diário/semanal/mensal/executivo/crise) | rascunho | — |
 | `finops` | Painel de custo de IA (uso real, `ai_usage_log`) + custos extras cadastráveis (`manual_costs`) + previsão de fim de mês — admin-only, transversal, sem Sprint própria | implementado (2026-08-05) | [finops/overview.md](finops/overview.md) |
-| `sync-console` | Observabilidade do pipeline `bw-sync` (fase atual/última+próxima sincronização/lock/rate limit por par) + execução manual de 1 fase específica sob demanda — admin-only, transversal, sem Sprint própria | pronto — não implementado (spec 2026-07-15) | [sync-console/overview.md](sync-console/overview.md) |
+| `sync-console` | Observabilidade do pipeline `bw-sync` (fase atual/última+próxima sincronização/lock/rate limit por par) + histórico completo paginado de execuções + execução manual de 1 fase específica sob demanda — admin-only, transversal, sem Sprint própria | **implementado** (2026-07-15) | [sync-console/overview.md](sync-console/overview.md) |
 
 ## Referências
 

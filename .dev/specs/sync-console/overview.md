@@ -1,19 +1,38 @@
 ---
 tipo: module-overview
 módulo: sync-console
-status: pronto
+status: implementado
 atualizado: 2026-07-15
 ---
 
 # Módulo: Sync Console (observabilidade e controle manual do pipeline Brandwatch)
 
-> 📝 **Spec criada (2026-07-15)**, ainda não implementada — pedido direto
-> do usuário: "Como administrador eu quero poder acompanhar a fase da
-> integração, quando rolou, quando será a próxima execução, em que passo
-> que está. Além disso, quero conseguir executar partes específicas da
-> integração, por exemplo: identifiquei que tópicos está inconsistente,
-> posso executar apenas essa parte do pipeline." Este módulo **não
-> reimplementa nem duplica** a lógica de sincronização em si — `bw-sync`
+> ✅ **Implementado (2026-07-15)**, mesma sessão em que a spec foi criada —
+> pedido do usuário: "faça os ajustes em bw_sync e implemente a
+> especificação criada." Migration `20260809140000_sync_console_history_columns.sql`
+> (5 colunas novas em `sync_log` + índice), mudanças em `bw-sync/index.ts`
+> (contador `recordsSyncedThisStep` + branch `manualStep`, ver
+> `data-model.md`), 3 Edge Functions (`get-sync-console-status`,
+> `get-sync-console-history`, `trigger-sync-step`) e a página
+> `/admin/sync-console`. **Desvio deliberado do texto original desta
+> spec**: em vez de um item de menu lateral próprio em CONFIGURAÇÕES (o que
+> o texto original abaixo ainda descreve), a área `/admin` já tinha evoluído
+> para um padrão de abas (`components/intelligence-center/admin-tabs.tsx`
+> — Usuários/FinOps/Entidades) numa sessão não refletida neste arquivo até
+> agora — "Sincronização" virou a 4ª aba, seguindo o padrão real já em
+> produção, em vez do padrão desatualizado que esta spec descrevia. Ver
+> `CLAUDE.md`, "Módulo `sync-console`", para o detalhamento completo da
+> sessão de implementação, incluindo um achado real (`rows_processed` só
+> refletia a fase `mentions`) e a decisão de design do contador
+> `recordsSyncedThisStep` em vez de threading por `StepResult`.
+
+> 📝 **Spec criada (2026-07-15)** — pedido direto do usuário: "Como
+> administrador eu quero poder acompanhar a fase da integração, quando
+> rolou, quando será a próxima execução, em que passo que está. Além
+> disso, quero conseguir executar partes específicas da integração, por
+> exemplo: identifiquei que tópicos está inconsistente, posso executar
+> apenas essa parte do pipeline." Este módulo **não reimplementa nem
+> duplica** a lógica de sincronização em si — `bw-sync`
 > (`foundation/sync-brandwatch.md`, `status: implementado`) continua sendo
 > a única fonte de verdade de como cada fase funciona. `sync-console` é
 > uma camada fina de observabilidade + um gatilho manual em cima do
@@ -97,12 +116,18 @@ módulo não duplica esse conteúdo — só referencia.
   execuções já ocorridas, paginado, filtrável por par —
   `pipeline-monitoring.md`) e um botão "Executar fase específica" por
   linha, que abre um modal (`manual-step-execution.md`). Segue o mesmo
-  padrão de diretório dos
-  outros 3 destinos admin já existentes (`app/(intelligence-center)/admin/{users,finops,entities}/`):
+  padrão de diretório dos outros 3 destinos admin já existentes
+  (`app/(intelligence-center)/admin/{users,finops,entities}/`):
   `page.tsx` + `sync-console-admin-view.tsx` + `types.ts` + modal(s).
-- Item de menu "Sincronização" (ou "Pipeline Brandwatch") em
-  CONFIGURAÇÕES (`sidebar.tsx`), visível só para `is_admin` — mesmo gate
-  de "Administração"/"FinOps".
+- ✅ **Implementado como 4ª aba de "Administração"** (não um item de menu
+  próprio — ver o blockquote "Implementado" no topo deste arquivo): `/admin`
+  já usa um padrão de abas (`components/intelligence-center/admin-tabs.tsx`)
+  compartilhado por `app/(intelligence-center)/admin/layout.tsx` desde uma
+  sessão anterior a esta — "Sincronização" entrou como a 4ª aba, ao lado
+  de Usuários/FinOps/Entidades, mesmo gate `is_admin` (checado em cada
+  `page.tsx`, nunca no layout compartilhado). O item "Administração" do
+  menu lateral (`sidebar.tsx`, `matchPrefix="/admin"`) já cobre esta rota
+  automaticamente, sem nenhuma mudança adicional necessária ali.
 
 ## Fora de escopo (v1)
 

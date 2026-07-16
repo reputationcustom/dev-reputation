@@ -2,9 +2,16 @@
 tipo: feature-spec
 módulo: sync-console
 funcionalidade: pipeline-monitoring
-status: pronto
+status: implementado
 atualizado: 2026-07-15
 ---
+
+> ✅ **Implementado (2026-07-15)** — `/admin/sync-console` (4ª aba de
+> "Administração", ver `overview.md`): card "Como funciona a integração" +
+> accordion das 16 fases, tooltips em toda informação técnica, tabela de
+> pares com polling de 30s, e o widget "Histórico de execuções" (paginado,
+> filtrável por par, coluna "Registros sincronizados"). Ver `CLAUDE.md`,
+> "Módulo `sync-console`", para o detalhe completo.
 
 # Funcionalidade: Monitoramento do pipeline `bw-sync`
 

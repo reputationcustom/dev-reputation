@@ -148,6 +148,20 @@ class BrandwatchApiError extends Error {
 let brandwatchCallCount = 0;
 const BRANDWATCH_CALL_BUDGET = 25;
 
+// sync-console (2026-07-15, .dev/specs/sync-console/data-model.md, "Gap
+// real... rows_processed"): antes desta mudança, `sync_log.rows_processed`
+// só refletia a fase `mentions` (result.mentionsCount ?? 0) — as outras 15
+// fases sempre gravavam 0, mesmo sincronizando dado real. Mesmo padrão de
+// contador mutável em nível de módulo já usado por `brandwatchCallCount`
+// (reiniciado a cada FASE, não a cada invocação, já que uma invocação pode
+// encadear várias fases desde 2026-08-06 e cada uma grava sua própria linha
+// em sync_log) — evita alterar a assinatura de retorno de toda função
+// sync* só pra propagar uma contagem. Cada função que faz upsert/update de
+// verdade incrementa este contador logo após a operação ter sucesso;
+// runSyncInvocation() reseta pra 0 no início de cada iteração do
+// dispatcher e lê o valor final pra gravar em sync_log.rows_processed.
+let recordsSyncedThisStep = 0;
+
 // Correção 2026-07-16 (ver migration 20260716020000): janela real do rate
 // limit da Brandwatch (30 chamadas/10min por Client, brandwatch-setup.md
 // §1) — usado como backoff persistido em bw_sync_lock.rate_limited_until
@@ -509,6 +523,7 @@ async function refreshMetadata(
       synced_at: new Date().toISOString(),
     }, { onConflict: "id" });
   if (projectError) throw new Error(`Erro atualizando bw_projects: ${projectError.message}`);
+  recordsSyncedThisStep += 1;
 
   const queriesResponse = await callBrandwatch(`/projects/${projectId}/queries/summary`, token);
   const queries = (queriesResponse.results ?? []) as any[];
@@ -530,6 +545,7 @@ async function refreshMetadata(
       { onConflict: "id" },
     );
     if (error) throw new Error(`Erro atualizando bw_queries: ${error.message}`);
+    recordsSyncedThisStep += queries.length;
   }
 
   // Query Groups são opcionais — nem todo Project tem um configurado (só é
@@ -560,6 +576,7 @@ async function refreshMetadata(
       { onConflict: "id" },
     );
     if (error) throw new Error(`Erro atualizando bw_query_groups: ${error.message}`);
+    recordsSyncedThisStep += queryGroups.length;
   }
 
   const categoriesResponse = await callBrandwatch(`/projects/${projectId}/rulecategories`, token);
@@ -614,6 +631,7 @@ async function refreshMetadata(
   if (categoryRows.length > 0) {
     const { error } = await supabase.from("bw_categories").upsert(categoryRows, { onConflict: "id" });
     if (error) throw new Error(`Erro atualizando bw_categories: ${error.message}`);
+    recordsSyncedThisStep += categoryRows.length;
   }
 
   // Pedido do usuário (2026-07-16): Category/Subcategory que suma do
@@ -642,6 +660,7 @@ async function refreshMetadata(
   if (deactivateError) {
     throw new Error(`Erro desativando bw_categories removidas da Brandwatch: ${deactivateError.message}`);
   }
+  recordsSyncedThisStep += deactivatedRows?.length ?? 0;
   log("refreshMetadata:categories_deactivated", {
     projectId,
     count: deactivatedRows?.length ?? 0,
@@ -1070,6 +1089,7 @@ async function syncSentimentMetrics(
     .upsert(rows, { onConflict: `project_id,query_id,category_id_key,${config.dateColumn}` });
 
   if (error) throw new Error(`Erro upsertando ${config.table}: ${error.message}`);
+  recordsSyncedThisStep += rows.length;
   log("syncSentimentMetrics:done", { grain, projectId, queryId, categoryId, rows: rows.length });
 }
 
@@ -1221,6 +1241,7 @@ async function syncQueryGroupSov(
       .from("bw_query_group_metrics_weekly")
       .upsert(rows, { onConflict: "query_group_id,query_id,metric_week" });
     if (error) throw new Error(`Erro upsertando bw_query_group_metrics_weekly: ${error.message}`);
+    recordsSyncedThisStep += rows.length;
     log("syncQueryGroupSov:done", { projectId, queryGroupId, rows: rows.length });
   }
 
@@ -1259,6 +1280,7 @@ async function syncQueryGroupSov(
     .from("bw_query_group_metrics_weekly")
     .upsert(reachRows, { onConflict: "query_group_id,query_id,metric_week" });
   if (reachError) throw new Error(`Erro upsertando bw_query_group_metrics_weekly (reach): ${reachError.message}`);
+  recordsSyncedThisStep += reachRows.length;
 
   log("syncQueryGroupSov:reach_done", { projectId, queryGroupId, rows: reachRows.length });
 }
@@ -1335,6 +1357,7 @@ async function syncPlatformMetrics(
     .from("bw_query_metrics_daily_by_platform")
     .upsert(uniqueRows, { onConflict: "project_id,query_id,category_id_key,page_type,metric_date" });
   if (error) throw new Error(`Erro upsertando bw_query_metrics_daily_by_platform: ${error.message}`);
+  recordsSyncedThisStep += uniqueRows.length;
 
   log("syncPlatformMetrics:done", { projectId, queryId, categoryId, rows: uniqueRows.length });
 }
@@ -1490,6 +1513,7 @@ async function syncCategoryDailyMultiAggregate(
       .upsert(chunk, { onConflict: "project_id,query_id,category_id_key,metric_date" });
     if (error) throw new Error(`Erro upsertando bw_query_metrics_daily (multiAggregate): ${error.message}`);
   }
+  recordsSyncedThisStep += rows.length;
 
   log("syncCategoryDailyMultiAggregate:done", { projectId, queryId, rows: rows.length });
 }
@@ -1551,6 +1575,7 @@ async function syncQueryDailyMultiAggregate(
     .from("bw_query_metrics_daily")
     .upsert(rows, { onConflict: "project_id,query_id,category_id_key,metric_date" });
   if (error) throw new Error(`Erro upsertando bw_query_metrics_daily (multiAggregate, query inteira): ${error.message}`);
+  recordsSyncedThisStep += rows.length;
 
   log("syncQueryDailyMultiAggregate:done", { projectId, queryId, rows: rows.length });
 }
@@ -1604,6 +1629,7 @@ async function syncPlatformMultiAggregate(
     .from("bw_query_metrics_daily_by_platform")
     .upsert(rows, { onConflict: "project_id,query_id,category_id_key,page_type,metric_date" });
   if (error) throw new Error(`Erro upsertando bw_query_metrics_daily_by_platform (multiAggregate): ${error.message}`);
+  recordsSyncedThisStep += rows.length;
 
   log("syncPlatformMultiAggregate:done", { projectId, queryId, rows: rows.length });
 }
@@ -1715,6 +1741,7 @@ async function syncTopicsData(
     .from("bw_query_topics")
     .upsert(uniqueRows, { onConflict: "project_id,query_id,category_id_key,topic_type,label,metric_week" });
   if (error) throw new Error(`Erro upsertando bw_query_topics: ${error.message}`);
+  recordsSyncedThisStep += uniqueRows.length;
 
   // Correção 2026-07-11 (pedido do usuário: "retire os cálculos locais
   // baseados em mentions... se não tem na Brandwatch, não faça cálculo
@@ -1807,6 +1834,7 @@ async function syncLegacyTopicsData(
     .from("bw_query_topics")
     .upsert(uniqueRows, { onConflict: "project_id,query_id,category_id_key,topic_type,label,metric_week" });
   if (error) throw new Error(`Erro upsertando bw_query_topics (legacy_mixed): ${error.message}`);
+  recordsSyncedThisStep += uniqueRows.length;
 
   log("syncLegacyTopicsData:done", { projectId, queryId, categoryId, rows: uniqueRows.length });
 }
@@ -1952,6 +1980,7 @@ async function syncTopAuthors(
     .from("bw_query_top_authors")
     .upsert(uniqueRows, { onConflict: "project_id,query_id,category_id_key,author,metric_week" });
   if (error) throw new Error(`Erro upsertando bw_query_top_authors: ${error.message}`);
+  recordsSyncedThisStep += uniqueRows.length;
 
   log("syncTopAuthors:done", { projectId, queryId, categoryId, rows: uniqueRows.length });
 }
@@ -2091,6 +2120,7 @@ async function syncAuthorTopics(
     .from("bw_query_author_topics")
     .upsert(uniqueRows, { onConflict: "project_id,query_id,author,topic_type,label,metric_week" });
   if (error) throw new Error(`Erro upsertando bw_query_author_topics: ${error.message}`);
+  recordsSyncedThisStep += uniqueRows.length;
 
   log("syncAuthorTopics:done", { projectId, queryId, author, rows: uniqueRows.length });
 }
@@ -2239,6 +2269,7 @@ async function syncXInsights(
       .from("bw_query_x_insights")
       .upsert(uniqueRows, { onConflict: "project_id,query_id,category_id_key,insight_type,name,metric_week" });
     if (error) throw new Error(`Erro upsertando bw_query_x_insights (${type}): ${error.message}`);
+    recordsSyncedThisStep += uniqueRows.length;
 
     log("syncXInsights:done", { projectId, queryId, categoryId, type, rows: uniqueRows.length });
   }
@@ -2363,6 +2394,7 @@ async function syncTopSites(
     .from("bw_query_top_sites")
     .upsert(uniqueRows, { onConflict: "project_id,query_id,category_id_key,domain,metric_week" });
   if (error) throw new Error(`Erro upsertando bw_query_top_sites: ${error.message}`);
+  recordsSyncedThisStep += uniqueRows.length;
 
   log("syncTopSites:done", { projectId, queryId, categoryId, rows: uniqueRows.length });
 }
@@ -2472,6 +2504,7 @@ async function syncTopSharedSites(
     .from("bw_query_top_shared_sites")
     .upsert(uniqueRows, { onConflict: "project_id,query_id,category_id_key,domain,metric_week" });
   if (error) throw new Error(`Erro upsertando bw_query_top_shared_sites: ${error.message}`);
+  recordsSyncedThisStep += uniqueRows.length;
 
   log("syncTopSharedSites:done", { projectId, queryId, categoryId, rows: uniqueRows.length });
 }
@@ -2593,6 +2626,7 @@ async function syncDemographicDimension(
       .upsert(chunk, { onConflict: "project_id,query_id,dimension_type,value,metric_date" });
     if (error) throw new Error(`Erro upsertando bw_query_demographics_daily (${dimensionType}): ${error.message}`);
   }
+  recordsSyncedThisStep += rows.length;
 
   log("syncDemographicDimension:done", { projectId, queryId, dimensionType, rows: rows.length });
 }
@@ -2651,6 +2685,7 @@ async function syncDemographicNetSentiment(
       .upsert(chunk, { onConflict: "project_id,query_id,dimension_type,value,metric_date" });
     if (error) throw new Error(`Erro upsertando bw_query_demographics_daily (net_sentiment, ${dimensionType}): ${error.message}`);
   }
+  recordsSyncedThisStep += rows.length;
 
   log("syncDemographicNetSentiment:done", { projectId, queryId, dimensionType, rows: rows.length });
 }
@@ -2704,7 +2739,36 @@ async function runDemographicsStep(
 // Handler principal
 // =========================================================================
 
-Deno.serve(async (_req: Request) => {
+// sync-console (2026-07-15, .dev/specs/sync-console/manual-step-execution.md):
+// corpo opcional reconhecido por Deno.serve() abaixo — quando presente,
+// pula a lógica normal de "escolher o par mais atrasado" e roda só a fase
+// pedida, para o par pedido, fora da rotação automática. Nunca chamado
+// pelo navegador diretamente — quem envia este corpo é a Edge Function
+// `trigger-sync-step`, server-to-server (mesmo tipo de chamada de rede
+// confiável que `net.http_post` do pg_cron já faz hoje), já depois de ter
+// validado que quem pediu é um admin autenticado.
+interface ManualStepBody {
+  projectId: number;
+  queryId: number;
+  step: string;
+  triggeredByUserId?: string | null;
+}
+
+function parseManualStepBody(raw: unknown): ManualStepBody | null {
+  if (!raw || typeof raw !== "object") return null;
+  const body = raw as Record<string, unknown>;
+  if (!body.manualStep || typeof body.manualStep !== "object") return null;
+  const m = body.manualStep as Record<string, unknown>;
+  if (typeof m.projectId !== "number" || typeof m.queryId !== "number" || typeof m.step !== "string") return null;
+  return {
+    projectId: m.projectId,
+    queryId: m.queryId,
+    step: m.step,
+    triggeredByUserId: typeof m.triggeredByUserId === "string" ? m.triggeredByUserId : null,
+  };
+}
+
+Deno.serve(async (req: Request) => {
   const invocationStartedAt = Date.now();
   // Nunca reaproveitado entre invocações — mesmo se o isolate Deno for
   // reciclado (warm start), o contador precisa começar do zero a cada
@@ -2714,12 +2778,29 @@ Deno.serve(async (_req: Request) => {
   // não reaproveitado in-memory entre requests.
   brandwatchCallCount = 0;
   lastKnownRateLimitUsed = null;
-  log("invocation:start");
 
   const supabase = createClient(
     Deno.env.get("SUPABASE_URL")!,
     Deno.env.get("SUPABASE_SECRET_KEY") ?? Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
   );
+
+  // sync-console: o heartbeat do pg_cron manda `{}` (sem `manualStep`) —
+  // JSON.parse de corpo vazio/ausente é tratado como "nenhum corpo",
+  // comportamento idêntico ao de antes desta mudança pra qualquer chamada
+  // sem `manualStep`.
+  let manualStepBody: ManualStepBody | null = null;
+  try {
+    const rawText = await req.text();
+    if (rawText) manualStepBody = parseManualStepBody(JSON.parse(rawText));
+  } catch (err) {
+    logError("invocation:manual_step_body_parse_failed", err);
+  }
+
+  if (manualStepBody) {
+    return await runManualStepInvocation(supabase, req, manualStepBody, invocationStartedAt);
+  }
+
+  log("invocation:start");
 
   // Passo 0: semeadura (idempotente — upserts `on conflict do nothing`, sem
   // chamada à Brandwatch). Roda antes do gate de intervalo abaixo, sem lock,
@@ -3000,6 +3081,7 @@ async function runMentionsStep(
     reachedNow,
     stoppedByTimeBudget,
   });
+  recordsSyncedThisStep += mentionsCount;
 
   return {
     didWork: true,
@@ -3364,6 +3446,7 @@ async function syncHourlySentimentMetrics(
     .from("bw_query_metrics_hourly")
     .upsert(rows, { onConflict: "project_id,query_id,category_id_key,metric_hour" });
   if (error) throw new Error(`Erro upsertando bw_query_metrics_hourly: ${error.message}`);
+  recordsSyncedThisStep += rows.length;
   log("syncHourlySentimentMetrics:done", { projectId, queryId, categoryId, rows: rows.length });
 }
 
@@ -3448,6 +3531,7 @@ async function syncHourlyNetSentiment(
       .upsert(chunk, { onConflict: "project_id,query_id,category_id_key,metric_hour" });
     if (error) throw new Error(`Erro upsertando bw_query_metrics_hourly (net_sentiment, ${dimension}): ${error.message}`);
   }
+  recordsSyncedThisStep += rows.length;
 
   log("syncHourlyNetSentiment:done", { projectId, queryId, dimension, rows: rows.length });
 }
@@ -3646,7 +3730,8 @@ async function runFullTextEnrichmentStep(
     if (!hasBrandwatchCallBudget()) break;
     const pendingDay = await findPendingFullTextDay(supabase, queryId, categoryId);
     if (!pendingDay) continue;
-    await enrichFullTextForNarrativeDay(supabase, token, projectId, queryId, categoryId, pendingDay);
+    const updated = await enrichFullTextForNarrativeDay(supabase, token, projectId, queryId, categoryId, pendingDay);
+    recordsSyncedThisStep += updated;
     return { didWork: true };
   }
   return { didWork: false };
@@ -3867,6 +3952,7 @@ async function syncTopTweeters(
     .from("bw_query_top_tweeters")
     .upsert(uniqueRows, { onConflict: "project_id,query_id,category_id_key,author,metric_week" });
   if (error) throw new Error(`Erro upsertando bw_query_top_tweeters: ${error.message}`);
+  recordsSyncedThisStep += uniqueRows.length;
 
   log("syncTopTweeters:done", { projectId, queryId, categoryId, rows: uniqueRows.length });
 }
@@ -3975,6 +4061,7 @@ async function runAuthorEnrichmentStep(
       .eq("author", author)
       .eq("metric_week", metricWeek);
     if (updateError) throw new Error(`Erro atualizando bw_query_top_authors.impressions: ${updateError.message}`);
+    recordsSyncedThisStep += 1;
 
     await syncAuthorTopics(supabase, token, projectId, queryId, author, metricsStartDate, now);
     return { didWork: true };
@@ -4115,6 +4202,13 @@ async function runSyncInvocation(supabase: SupabaseClient, invocationStartedAt: 
   // móvel incremental (`BW_METRICS_INCREMENTAL_WINDOW_DAYS`, default 30d).
   const metricsStartDate = getMetricsStartDate(cursor.backfill_completed_at as string | null);
 
+  // sync-console (2026-07-15, .dev/specs/sync-console/data-model.md):
+  // hoisted pra fora do try/catch abaixo pra que o bloco de erro também
+  // saiba qual fase estava rodando quando a invocação falhou
+  // (sync_log.step) — variáveis declaradas com `let`/`const` dentro de um
+  // `try {}` não são visíveis no `catch {}` correspondente em JS/TS.
+  let currentStep: SyncStep = startStep;
+
   try {
     // Resolve organization_id (necessário pro bootstrap de metadata e pro
     // upsert de mentions) via bw_projects — já existe nesse ponto, criado
@@ -4207,13 +4301,17 @@ async function runSyncInvocation(supabase: SupabaseClient, invocationStartedAt: 
     // agora visita TODAS as fases dentro do orçamento, não só a primeira
     // que tinha trabalho. Limite de iterações = número de fases, então
     // mesmo um ciclo inteiro sem trabalho nenhum termina sozinho.
-    let currentStep: SyncStep = startStep;
     let mentionsCount = 0;
     let stepsRun = 0;
     let lastStopReason: string | null = null;
     for (let i = 0; i < SYNC_STEPS.length; i++) {
       stepsRun++;
       log("invocation:step_start", { projectId, queryId, step: currentStep });
+      // Reiniciado por FASE, não por invocação — uma invocação pode
+      // encadear várias fases (2026-08-06), cada uma grava sua própria
+      // linha em sync_log com sua própria contagem.
+      recordsSyncedThisStep = 0;
+      const stepExecutionStartedAtMs = Date.now();
 
       let result: StepResult;
       switch (currentStep) {
@@ -4278,6 +4376,7 @@ async function runSyncInvocation(supabase: SupabaseClient, invocationStartedAt: 
           throw new Error(`Fase desconhecida: ${currentStep}`);
       }
 
+      const stepDurationMs = Date.now() - stepExecutionStartedAtMs;
       const { next, cycleComplete: rawCycleComplete } = nextSyncStep(currentStep);
       // ✅ 2026-07-22: `stayOnStep` (ver StepResult) mantém a MESMA fase em
       // `next_step` em vez de avançar — usado por `daily_metrics` pra
@@ -4303,13 +4402,6 @@ async function runSyncInvocation(supabase: SupabaseClient, invocationStartedAt: 
 
       if (result.mentionsCount) mentionsCount += result.mentionsCount;
 
-      await supabase.from("sync_log").insert({
-        project_id: projectId,
-        query_id: queryId,
-        status: "success",
-        rows_processed: result.mentionsCount ?? 0,
-      });
-
       const outOfCallBudget = !hasBrandwatchCallBudget();
       const outOfTimeBudget = Date.now() - invocationStartedAt > INVOCATION_TIME_BUDGET_MS;
       const stopReason = cycleComplete
@@ -4322,9 +4414,28 @@ async function runSyncInvocation(supabase: SupabaseClient, invocationStartedAt: 
         ? "time_budget_exhausted"
         : null;
 
+      // sync-console (2026-07-15, .dev/specs/sync-console/data-model.md):
+      // sync_log ganha step/duration_ms/stop_reason/trigger_source por
+      // linha — antes só status/rows_processed, e rows_processed só
+      // refletia a fase `mentions` (result.mentionsCount ?? 0), nunca as
+      // outras 15 fases. `recordsSyncedThisStep` (módulo, resetado no
+      // início desta iteração) já reflete quantas linhas ESTA fase de fato
+      // upsertou/atualizou, qualquer que ela seja.
+      await supabase.from("sync_log").insert({
+        project_id: projectId,
+        query_id: queryId,
+        status: "success",
+        rows_processed: recordsSyncedThisStep,
+        step: currentStep,
+        duration_ms: stepDurationMs,
+        stop_reason: stopReason,
+        trigger_source: "cron",
+      });
+
       log("invocation:step_done", {
         projectId, queryId, step: currentStep, didWork: result.didWork, stayOnStep: result.stayOnStep ?? false,
         nextStep: result.stayOnStep ? currentStep : next, cycleComplete, stopReason,
+        recordsSynced: recordsSyncedThisStep, durationMs: stepDurationMs,
       });
 
       // ✅ 2026-08-06: "Sincronismo entre fases" acima — não para mais só
@@ -4387,11 +4498,304 @@ async function runSyncInvocation(supabase: SupabaseClient, invocationStartedAt: 
       query_id: queryId,
       status: "error",
       error_message: message,
+      step: currentStep,
+      trigger_source: "cron",
     });
 
     return new Response(JSON.stringify({ ok: false, error: message }), {
       status: 200,
       headers: { "Content-Type": "application/json" },
     });
+  }
+}
+
+// =========================================================================
+// sync-console (2026-07-15, .dev/specs/sync-console/manual-step-execution.md)
+// — execução manual de UMA fase específica, para UM par específico, fora
+// da rotação automática. Reaproveita literalmente os mesmos runners do
+// dispatcher acima (nunca uma segunda implementação da lógica de
+// sincronização) — só troca "qual par/fase escolher" pela escolha
+// explícita do admin. Diferenças deliberadas em relação a
+// runSyncInvocation(): (1) autentica seu próprio Bearer token de admin —
+// defesa em profundidade, já que `verify_jwt = false` nesta function
+// (exigido pelo heartbeat sem cabeçalho de Authorization) significa que o
+// gateway da plataforma não valida nada sozinho; a autorização "de
+// verdade" já aconteceu antes, em `trigger-sync-step`, mas este branch
+// nunca confia cegamente em quem quer que tenha descoberto a URL; (2)
+// ignora o gate de intervalo (`BW_SYNC_INTERVAL_HOURS` — o par não
+// precisa estar "devido"; forçar execução fora do ciclo normal é o
+// propósito inteiro desta funcionalidade) mas MANTÉM os gates de
+// segurança (lock de concorrência, backoff de rate limit, teto proativo)
+// sem nenhuma exceção — nunca um bypass de emergência do orçamento
+// compartilhado da Brandwatch; (3) roda sempre exatamente 1 fase, nunca
+// encadeia como o dispatcher automático; (4) NUNCA escreve em
+// sync_cursors.next_step/last_synced_at — só grava em sync_log
+// (trigger_source: 'manual'), pra nunca perturbar a rotação automática
+// das 16 fases (regra de negócio explícita, ver manual-step-execution.md).
+// =========================================================================
+
+async function runManualStepInvocation(
+  supabase: SupabaseClient,
+  req: Request,
+  body: ManualStepBody,
+  invocationStartedAt: number,
+): Promise<Response> {
+  const { projectId, queryId, step } = body;
+
+  if (!(SYNC_STEPS as readonly string[]).includes(step)) {
+    return new Response(JSON.stringify({ ok: false, error: `Fase inválida: ${step}` }), {
+      status: 400,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  const authHeader = req.headers.get("Authorization") ?? "";
+  const bearerToken = authHeader.replace(/^Bearer\s+/i, "").trim();
+  if (!bearerToken) {
+    return new Response(JSON.stringify({ ok: false, error: "Não autenticado." }), {
+      status: 401,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+  const { data: authData, error: authError } = await supabase.auth.getUser(bearerToken);
+  if (authError || !authData?.user) {
+    return new Response(JSON.stringify({ ok: false, error: "Não autenticado." }), {
+      status: 401,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+  const adminUserId = authData.user.id;
+  const { data: profileRow, error: profileError } = await supabase
+    .from("user_profiles")
+    .select("is_admin")
+    .eq("id", adminUserId)
+    .maybeSingle();
+  if (profileError) {
+    logError("manualStep:profile_check_failed", profileError.message);
+    return new Response(JSON.stringify({ ok: false, error: profileError.message }), {
+      status: 500,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+  if (!profileRow?.is_admin) {
+    return new Response(JSON.stringify({ ok: false, error: "Acesso restrito a administradores." }), {
+      status: 403,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+  const triggeredByUserId = body.triggeredByUserId ?? adminUserId;
+
+  const { data: cursor, error: cursorError } = await supabase
+    .from("sync_cursors")
+    .select("id, last_added_cursor, backfill_completed_at")
+    .eq("project_id", projectId)
+    .eq("query_id", queryId)
+    .maybeSingle();
+  if (cursorError) {
+    logError("manualStep:cursor_lookup_failed", cursorError.message);
+    return new Response(JSON.stringify({ ok: false, error: cursorError.message }), {
+      status: 500,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+  if (!cursor) {
+    return new Response(JSON.stringify({ ok: false, error: "Par Projeto/Query não encontrado." }), {
+      status: 400,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  // Mesmos gates de segurança do handler automático (passos 0.5c/0.5d de
+  // sync-brandwatch.md) — sem exceção, ver comentário no topo do arquivo.
+  const { data: lockRow, error: lockRowError } = await supabase
+    .from("bw_sync_lock")
+    .select("rate_limited_until, last_rate_limit_used, last_rate_limit_observed_at")
+    .eq("id", true)
+    .maybeSingle();
+  if (lockRowError) {
+    logError("manualStep:rate_limit_check_failed", lockRowError.message);
+  } else if (lockRow?.rate_limited_until && new Date(lockRow.rate_limited_until as string) > new Date()) {
+    return new Response(
+      JSON.stringify({ ok: false, error: "A Brandwatch está temporariamente indisponível (limite de chamadas atingido). Tente novamente em instantes." }),
+      { status: 409, headers: { "Content-Type": "application/json" } },
+    );
+  } else if (
+    lockRow?.last_rate_limit_observed_at &&
+    Date.now() - new Date(lockRow.last_rate_limit_observed_at as string).getTime() < BRANDWATCH_RATE_LIMIT_WINDOW_MS &&
+    (lockRow.last_rate_limit_used as number | null) !== null &&
+    (lockRow.last_rate_limit_used as number) >= BRANDWATCH_SAFE_USAGE_CEILING
+  ) {
+    return new Response(
+      JSON.stringify({ ok: false, error: "O limite de chamadas à Brandwatch está próximo do teto. Tente novamente em alguns minutos." }),
+      { status: 409, headers: { "Content-Type": "application/json" } },
+    );
+  }
+
+  const { data: lockAcquired, error: lockError } = await supabase.rpc("try_acquire_bw_sync_lock", {
+    p_duration_seconds: 300,
+  });
+  if (lockError) {
+    logError("manualStep:lock_check_failed", lockError.message);
+    return new Response(JSON.stringify({ ok: false, error: lockError.message }), {
+      status: 500,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+  if (!lockAcquired) {
+    return new Response(
+      JSON.stringify({ ok: false, error: "Uma sincronização já está em andamento. Tente novamente em instantes." }),
+      { status: 409, headers: { "Content-Type": "application/json" } },
+    );
+  }
+
+  try {
+    let brandwatchToken: BrandwatchToken;
+    try {
+      brandwatchToken = await mintBrandwatchAccessToken();
+    } catch (err) {
+      logError("manualStep:mint_token_failed", err);
+      return new Response(
+        JSON.stringify({ ok: false, error: err instanceof Error ? err.message : String(err) }),
+        { status: 502, headers: { "Content-Type": "application/json" } },
+      );
+    }
+    const token = brandwatchToken.accessToken;
+    const now = new Date();
+    const metricsStartDate = getMetricsStartDate(cursor.backfill_completed_at as string | null);
+
+    const { data: projectRow, error: projectRowError } = await supabase
+      .from("bw_projects")
+      .select("organization_id")
+      .eq("id", projectId)
+      .single();
+    if (projectRowError) throw new Error(`Erro lendo organization_id de bw_projects: ${projectRowError.message}`);
+    const organizationId = projectRow.organization_id as string;
+
+    const narrativeCategoryIds = await fetchNarrativeCategoryIds(supabase, projectId, queryId);
+    const categoryTargets: (number | null)[] = [null, ...narrativeCategoryIds];
+    const cursorMentionsMeta = {
+      last_added_cursor: cursor.last_added_cursor as string | null,
+      backfill_completed_at: cursor.backfill_completed_at as string | null,
+    };
+
+    recordsSyncedThisStep = 0;
+    const stepExecutionStartedAtMs = Date.now();
+    let result: StepResult;
+    switch (step as SyncStep) {
+      case "metadata":
+        result = await runMetadataStep(supabase, token, projectId, organizationId);
+        break;
+      case "mentions":
+        result = await runMentionsStep(
+          supabase, token, projectId, queryId, organizationId, cursorMentionsMeta, invocationStartedAt,
+        );
+        break;
+      case "daily_metrics":
+        result = await runDailyMetricsStep(supabase, token, projectId, queryId, categoryTargets, metricsStartDate, now);
+        if (result.didWork) await refreshNarrativeMetricsForToday(supabase, now);
+        break;
+      case "hourly_metrics":
+        result = await runHourlyMetricsStep(supabase, token, projectId, queryId, categoryTargets, now);
+        break;
+      case "weekly_monthly":
+        result = await runWeeklyMonthlyStep(supabase, token, projectId, queryId, categoryTargets, metricsStartDate, now);
+        break;
+      case "topics":
+        result = await runTopicsStep(supabase, token, projectId, queryId, categoryTargets, metricsStartDate, now);
+        break;
+      case "platform_by_narrative":
+        result = await runPlatformByNarrativeStep(supabase, token, projectId, queryId, categoryTargets, metricsStartDate, now);
+        break;
+      case "x_insights":
+        result = await runXInsightsStep(supabase, token, projectId, queryId, categoryTargets, metricsStartDate, now);
+        break;
+      case "top_authors":
+        result = await runTopAuthorsStep(supabase, token, projectId, queryId, categoryTargets, metricsStartDate, now);
+        break;
+      case "top_tweeters":
+        result = await runTopTweetersStep(supabase, token, projectId, queryId, categoryTargets, metricsStartDate, now);
+        break;
+      case "author_enrichment":
+        result = await runAuthorEnrichmentStep(supabase, token, projectId, queryId, organizationId, metricsStartDate, now);
+        break;
+      case "top_sites":
+        result = await runTopSitesStep(supabase, token, projectId, queryId, categoryTargets, metricsStartDate, now);
+        break;
+      case "top_shared_sites":
+        result = await runTopSharedSitesStep(supabase, token, projectId, queryId, categoryTargets, metricsStartDate, now);
+        break;
+      case "demographics":
+        result = await runDemographicsStep(supabase, token, projectId, queryId, metricsStartDate, now);
+        break;
+      case "full_text_enrichment":
+        result = await runFullTextEnrichmentStep(supabase, token, projectId, queryId, categoryTargets);
+        break;
+      case "sov":
+        result = await runSovStep(supabase, token, projectId, queryId, metricsStartDate, now);
+        break;
+      default:
+        throw new Error(`Fase desconhecida: ${step}`);
+    }
+    const stepDurationMs = Date.now() - stepExecutionStartedAtMs;
+
+    // Nunca escreve em sync_cursors — ver comentário no topo desta function.
+    await supabase.from("sync_log").insert({
+      project_id: projectId,
+      query_id: queryId,
+      status: "success",
+      rows_processed: recordsSyncedThisStep,
+      step,
+      duration_ms: stepDurationMs,
+      stop_reason: null,
+      trigger_source: "manual",
+      triggered_by_user_id: triggeredByUserId,
+    });
+
+    log("manualStep:done", {
+      projectId, queryId, step, didWork: result.didWork,
+      recordsSynced: recordsSyncedThisStep, durationMs: stepDurationMs, triggeredByUserId,
+    });
+
+    return new Response(
+      JSON.stringify({
+        ok: true, projectId, queryId, step, didWork: result.didWork,
+        recordsSynced: recordsSyncedThisStep, durationMs: stepDurationMs,
+      }),
+      { headers: { "Content-Type": "application/json" } },
+    );
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    logError("manualStep:failed", err);
+
+    if (err instanceof BrandwatchApiError && err.status === 429) {
+      const { error: rateLimitError } = await supabase.rpc("mark_bw_rate_limited", {
+        p_seconds: BRANDWATCH_RATE_LIMIT_BACKOFF_SECONDS,
+      });
+      if (rateLimitError) logError("manualStep:mark_rate_limited_failed", rateLimitError.message);
+    }
+
+    await supabase.from("sync_log").insert({
+      project_id: projectId,
+      query_id: queryId,
+      status: "error",
+      error_message: message,
+      step,
+      trigger_source: "manual",
+      triggered_by_user_id: triggeredByUserId,
+    });
+
+    return new Response(JSON.stringify({ ok: false, error: message }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  } finally {
+    if (lastKnownRateLimitUsed !== null) {
+      const { error: usageError } = await supabase.rpc("record_bw_rate_limit_usage", {
+        p_used: lastKnownRateLimitUsed,
+      });
+      if (usageError) logError("manualStep:record_rate_limit_usage_failed", usageError.message);
+    }
+    const { error: releaseError } = await supabase.rpc("release_bw_sync_lock");
+    if (releaseError) logError("manualStep:lock_release_failed", releaseError.message);
   }
 }

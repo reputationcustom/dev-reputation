@@ -9,11 +9,14 @@ import { usePathname } from "next/navigation";
 // renderizado acima de {children} tanto em /admin/users quanto em
 // /admin/finops. "Entidades" (3ª guia) — Cadastro Nacional de Entidades
 // (.dev/specs/entities/entity-registration.md), mesmo gate is_admin, cada
-// page.tsx segue fazendo sua própria checagem.
+// page.tsx segue fazendo sua própria checagem. "Sincronização" (4ª guia,
+// .dev/specs/sync-console/overview.md) — observabilidade + execução
+// manual de fase do pipeline bw-sync, mesmo gate is_admin.
 const ADMIN_TABS = [
   { href: "/admin/users", label: "Usuários" },
   { href: "/admin/finops", label: "FinOps" },
   { href: "/admin/entities", label: "Entidades" },
+  { href: "/admin/sync-console", label: "Sincronização" },
 ];
 
 export function AdminTabs() {

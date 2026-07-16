@@ -209,10 +209,12 @@ export function Sidebar({
           ))}
           {/* Administração é a única real (gated por isAdmin) entre as do
               protótipo — Ajuda continua estática (tela "em desenvolvimento").
-              2 guias por dentro (Usuários/FinOps, admin/admin-tabs.tsx) —
-              pedido do usuário: FinOps deixou de ser uma opção própria do
-              menu e virou guia aqui. matchPrefix="/admin" mantém o item
-              destacado em qualquer uma das 2 guias, não só /admin/users. */}
+              4 guias por dentro (Usuários/FinOps/Entidades/Sincronização,
+              admin/admin-tabs.tsx) — pedido do usuário: FinOps deixou de ser
+              uma opção própria do menu e virou guia aqui, mesmo padrão
+              seguido pelas guias adicionadas depois. matchPrefix="/admin"
+              mantém o item destacado em qualquer uma das 4 guias, não só
+              /admin/users. */}
           {isAdmin && (
             <NavLink
               href="/admin/users"

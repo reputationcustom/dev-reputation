@@ -2,9 +2,21 @@
 tipo: feature-spec
 módulo: sync-console
 funcionalidade: manual-step-execution
-status: pronto
+status: implementado
 atualizado: 2026-07-15
 ---
+
+> ✅ **Implementado (2026-07-15)** — `trigger-sync-step` (Edge Function) +
+> `TriggerStepModal` (`app/(intelligence-center)/admin/sync-console/trigger-step-modal.tsx`).
+> `bw-sync/index.ts` ganhou o branch `manualStep` exatamente como
+> desenhado — nunca escreve em `sync_cursors`, sempre respeita lock/rate
+> limit, reaproveita literalmente as 16 funções runner já existentes. Uma
+> camada de segurança a mais em relação ao texto original desta spec:
+> `bw-sync` valida seu PRÓPRIO Bearer token de admin quando recebe
+> `manualStep` (não confia cegamente em `trigger-sync-step` já ter
+> validado, defesa em profundidade — `verify_jwt=false` nesta function
+> significa que o gateway da plataforma não barra nada sozinho). Ver
+> `CLAUDE.md`, "Módulo `sync-console`", para o detalhe completo.
 
 # Funcionalidade: Execução manual de uma fase específica
 

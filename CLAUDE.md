@@ -8676,7 +8676,7 @@ nova, já que o schema (`entities`/`entity_accounts`/`entity_tags` +
   browser disponível — a tabela/formulário/filtros não foram confirmados
   visualmente num navegador real.
 
-## Módulo `sync-console` — spec criada (2026-07-15), não implementada
+## Módulo `sync-console` — spec criada e implementada (2026-07-15)
 
 Pedido do usuário: "Crie a spec para gerenciar o pipeline de integração
 da Brandwatch, basicamente com a lógica da bw_sync. Como administrador eu
@@ -8943,6 +8943,142 @@ qualquer uma das 6 páginas muda o conjunto de tópicos/tags/nuvem de
 palavras exibido (não só a ordem), e o texto de "Conteúdos em destaque"
 de `/platforms` continua descrevendo os mesmos termos como "em alta"
 mesmo com o toggle em "Volume".
+
+### `sync-console` implementado — pedido do usuário: "faça os ajustes em bw_sync e implemente a especificação criada" (2026-07-15)
+
+Continuação direta da criação da spec `sync-console` (ver acima) — usuário
+pediu a implementação completa: os ajustes de `bw-sync` que o
+`data-model.md` já previa como pré-requisito, mais as 3 funcionalidades da
+spec (`data-model`/`pipeline-monitoring`/`manual-step-execution`).
+
+**Migration `20260809140000_sync_console_history_columns.sql`** —
+exatamente as 5 colunas propostas em `sync_log`
+(`step`/`duration_ms`/`stop_reason`/`trigger_source`/`triggered_by_user_id`)
++ `sync_log_trigger_source_check` + o índice
+`sync_log_project_query_created_idx (project_id, query_id, created_at
+desc)`, mesma cautela de "Migration hygiene" já documentada várias vezes
+neste arquivo pra tabela sem retenção.
+
+**`bw-sync/index.ts` — duas mudanças reais, não só schema**:
+
+1. **`rows_processed` generalizado para toda fase, não só `mentions`** —
+   achado real durante a implementação (já antecipado no `data-model.md`
+   como "Gap real"): o dispatcher sempre gravou
+   `rows_processed: result.mentionsCount ?? 0`, e `mentionsCount` só é
+   populado pelo `StepResult` de `runMentionsStep` — as outras 15 fases
+   sempre gravaram `0`, mesmo sincronizando dado real. A proposta original
+   do `data-model.md` era generalizar `StepResult.mentionsCount` para um
+   campo `recordsSynced?: number` devolvido por toda função
+   `run<Fase>Step()` — **implementado de forma diferente**: em vez de
+   mudar a assinatura de retorno das 16 funções runner (e, por extensão,
+   de ~20 funções `sync*`/`refreshMetadata` internas que elas chamam), um
+   contador de módulo, `recordsSyncedThisStep` (mesmo padrão mutável já
+   usado por `brandwatchCallCount`), é reiniciado no início de cada
+   iteração do loop do dispatcher (por FASE, não por invocação — uma
+   invocação pode encadear várias fases desde 2026-08-06, cada uma grava
+   sua própria linha em `sync_log`) e incrementado, em ~25 pontos de
+   escrita ao longo do arquivo, logo após cada upsert/update real ter
+   sucesso (ex: `recordsSyncedThisStep += uniqueRows.length;` depois de
+   `if (error) throw ...`). O dispatcher lê o valor final do contador
+   logo após a `switch(currentStep)` retornar e grava em
+   `sync_log.rows_processed` — sem alterar `StepResult` nem nenhuma
+   assinatura de função. Mesmo resultado observável da proposta original,
+   com uma superfície de mudança bem menor no arquivo mais crítico do
+   projeto. `duration_ms` (tempo entre o início e o fim de cada fase) e
+   `stop_reason` (só em execuções automáticas — `cycle_complete`/
+   `stay_on_step`/`call_budget_exhausted`/`time_budget_exhausted`, mesmo
+   vocabulário já usado nos logs) foram adicionados no mesmo ponto,
+   trivialmente (`Date.now()` no início/fim de cada iteração; `stopReason`
+   já existia, só precisou ser calculado ANTES do insert em vez de depois).
+   O bloco de erro (catch) também ganhou `step`/`trigger_source` — exigiu
+   içar `let currentStep` pra fora do `try` (variáveis `let`/`const`
+   declaradas dentro de um `try {}` não são visíveis no `catch {}`
+   correspondente em JS/TS).
+
+2. **Branch `manualStep`** (`manual-step-execution.md`) — `Deno.serve`
+   passou a ler o corpo da requisição de verdade (antes ignorado,
+   parâmetro `_req` nunca usado — o heartbeat sempre mandou `{}`). Quando
+   o corpo traz `{ manualStep: { projectId, queryId, step,
+   triggeredByUserId } }`, uma nova function,
+   `runManualStepInvocation()`, assume: pula a lógica normal de "par mais
+   atrasado"/`next_step`, valida a fase contra `SYNC_STEPS`, adquire o
+   MESMO `bw_sync_lock` e respeita os MESMOS gates de rate limit (reativo
+   e proativo) da invocação automática — sem exceção, nunca um bypass de
+   orçamento —, chama só a função runner correspondente (reaproveitando
+   100% do código já existente, nunca uma segunda implementação), grava
+   em `sync_log` com `trigger_source: 'manual'` e **nunca** escreve em
+   `sync_cursors.next_step`/`last_synced_at` (regra de negócio explícita
+   — uma execução manual nunca deve perturbar a rotação automática das 16
+   fases).
+   ⚠️ **Camada de segurança a mais em relação ao texto original da
+   spec**: `manual-step-execution.md` dizia "a autorização acontece
+   inteiramente em `trigger-sync-step`, antes de `bw-sync` ser chamada" —
+   na implementação real, `bw-sync` **também** valida seu próprio Bearer
+   token de admin (`supabase.auth.getUser(token)` → checar
+   `user_profiles.is_admin`) quando recebe `manualStep`, antes de fazer
+   qualquer coisa. Motivo: `bw-sync` roda com `verify_jwt = false`
+   (exigido pelo heartbeat, que não manda `Authorization`) — isso
+   significa que o gateway da própria plataforma Supabase não valida nada
+   sozinho nesta function, então confiar só na validação de
+   `trigger-sync-step` deixaria a URL de `bw-sync` (não secreta — mesmo
+   argumento já usado no projeto pra `NEXT_PUBLIC_SUPABASE_URL`) como uma
+   forma de qualquer um disparar execuções forçadas sem ser admin. Defesa
+   em profundidade: `trigger-sync-step` repassa o MESMO Bearer token do
+   admin já autenticado para a chamada a `bw-sync`, que o revalida de
+   forma independente.
+
+**3 Edge Functions novas**, mesmo padrão de auth de `finops`/`admin-*`
+(Bearer → `supabaseAdmin.auth.getUser(token)` → checar
+`user_profiles.is_admin`):
+- `get-sync-console-status` — estado atual por par (sem histórico
+  embutido) + estado global do lock/rate limit + `BW_SYNC_INTERVAL_HOURS`
+  configurado. Calcula "próxima execução prevista" em TypeScript, mesma
+  lógica de `getSyncIntervalHours()` duplicada (Princípio técnico 5).
+- `get-sync-console-history` — histórico PAGINADO (`DEFAULT_PAGE_SIZE =
+  10`), com ou sem filtro por par, resolvendo nome de quem disparou uma
+  execução manual via `left join user_profiles` direto (sem precisar de
+  uma function auxiliar tipo `list-organization-members` — recurso
+  admin-only/global, não escopado por organização).
+- `trigger-sync-step` — valida a requisição, confirma que o par existe, e
+  faz a chamada server-to-server pra `bw-sync` descrita acima.
+
+**Frontend — `/admin/sync-console`** (`page.tsx` + `sync-console-admin-view.tsx`
++ `trigger-step-modal.tsx` + `types.ts`): card "Como funciona a
+integração" sempre visível (pedido de follow-up do usuário) + accordion
+com as 16 fases + tooltips em toda informação técnica (fase atual,
+próxima execução, lock, rate limit, origem, motivo de parada, registros
+sincronizados — mesmo componente `Tooltip` já usado no resto do produto);
+tabela de pares com polling de 30s; widget "Histórico de execuções"
+sempre visível na mesma página (não escondido atrás de uma linha
+expansível), paginado, filtrável por par, nunca capado a uma janela fixa
+— satisfaz literalmente "verificar todas as execuções que ocorreram".
+⚠️ **Desvio real descoberto durante a implementação, não antecipado pela
+spec**: o texto original planejava um item de menu lateral próprio em
+CONFIGURAÇÕES — mas a área `/admin` já tinha migrado pra um padrão de
+abas (`components/intelligence-center/admin-tabs.tsx`, Usuários/FinOps/
+Entidades) numa sessão concorrente cujo resultado nunca tinha sido
+refletido neste arquivo até agora (achado ao ler o código real de
+`sidebar.tsx` antes de editá-lo, não por suposição). "Sincronização"
+entrou como a 4ª aba, seguindo o padrão real já em produção — nenhuma
+mudança em `sidebar.tsx` além de um comentário corrigido (o item
+"Administração" com `matchPrefix="/admin"` já cobria a rota nova
+automaticamente).
+
+**Verificação**: `npx tsc --noEmit` e `npm run build` (com `rm -rf .next`
+antes) passam limpos — 23 rotas, incluindo `/admin/sync-console` (nova).
+Sem `deno` disponível neste ambiente — mudanças em `bw-sync/index.ts`
+verificadas por um script Node de balanço de chaves (mesmo proxy de
+verificação de toda sessão sem acesso a Deno/Supabase real) + leitura
+manual de cada trecho editado, mas não executadas contra um Deno/Supabase
+real. Migration `20260809140000` revisada manualmente, não executada
+contra um banco real nesta sessão — mesma limitação recorrente de toda
+sessão sem credenciais de deploy; `git push` para `develop` é o próximo
+passo, e os sinais a acompanhar depois do deploy são: (1) `sync_log`
+ganhando linhas com `step`/`duration_ms`/`trigger_source` preenchidos a
+cada heartbeat; (2) a coluna "Registros sincronizados" mostrando números
+reais (não só zeros) pra fases além de `mentions`; (3) o botão "Executar
+fase específica" respondendo com sucesso/contagem real, sem alterar a
+fase que aparece na tabela de pares.
 
 ## Directory structure
 

@@ -1,14 +1,30 @@
 ---
 tipo: data-model
 módulo: sync-console
-status: pronto
+status: implementado
 atualizado: 2026-07-15
 ---
 
 # Data model: sync-console
 
-> 📝 Nenhuma migration foi criada ainda — este documento descreve a
-> mudança de schema proposta para quando o módulo for implementado.
+> ✅ **Implementado (2026-07-15)** — migration
+> `20260809140000_sync_console_history_columns.sql` (as 5 colunas + índice
+> descritos abaixo, exatamente como propostos). O "Gap real...
+> `rows_processed`" também foi fechado: `bw-sync/index.ts` ganhou um
+> contador de módulo, `recordsSyncedThisStep` (mesmo padrão mutável já
+> usado por `brandwatchCallCount`), reiniciado a cada FASE (não a cada
+> invocação — uma invocação pode encadear várias fases desde 2026-08-06) e
+> incrementado por toda função `sync*`/`refreshMetadata` que faz upsert/
+> update real, em ~25 pontos de escrita ao longo do arquivo. **Desvio
+> deliberado da proposta original** ("generalizar `StepResult.mentionsCount`
+> para um `recordsSynced?: number` devolvido por toda função runner"): a
+> implementação real não mudou `StepResult` nem a assinatura de nenhuma das
+> 16 funções `run<Fase>Step()` — usar um contador de módulo (lido pelo
+> dispatcher logo após a `switch`, e resetado no início de cada iteração do
+> loop) evita alterar ~30 assinaturas de função no arquivo mais crítico do
+> projeto, com o mesmo resultado observável. Ver `CLAUDE.md`, "Módulo
+> `sync-console`", para o detalhe completo (incl. o branch `manualStep` e a
+> auth em profundidade dentro do próprio `bw-sync`).
 
 ## Tabelas existentes, só lidas (não modificadas)
 
