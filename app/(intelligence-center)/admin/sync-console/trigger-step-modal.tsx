@@ -9,21 +9,27 @@ import { SYNC_STEPS, SYNC_STEP_DESCRIPTIONS, SYNC_STEP_LABELS, type SyncStep, ty
 // Modal "Executar fase específica" (.dev/specs/sync-console/manual-step-execution.md)
 // — sempre 1 par + 1 fase por vez (decisão deliberada, nunca um botão de
 // "re-rodar tudo"). Mostra o resultado inline antes de fechar, não só um
-// toast que já sumiu.
+// toast que já sumiu. `defaultStep` (novo) — pré-seleciona a fase clicada
+// no stepper horizontal (pipeline-stepper.tsx) quando o admin abre este
+// modal a partir de um ponto específico, em vez de sempre abrir em
+// "Menções"; continua totalmente editável via <select>, nunca trava numa
+// única fase.
 export function TriggerStepModal({
   projectId,
   queryId,
   pairLabel,
+  defaultStep,
   onClose,
   onSubmit,
 }: {
   projectId: number;
   queryId: number;
   pairLabel: string;
+  defaultStep?: SyncStep;
   onClose: () => void;
   onSubmit: (step: SyncStep) => Promise<TriggerSyncStepResult>;
 }) {
-  const [step, setStep] = useState<SyncStep>("mentions");
+  const [step, setStep] = useState<SyncStep>(defaultStep ?? "mentions");
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<TriggerSyncStepResult | null>(null);
   const [formError, setFormError] = useState<string | null>(null);

@@ -17,6 +17,15 @@ atualizado: 2026-07-15
 > validado, defesa em profundidade — `verify_jwt=false` nesta function
 > significa que o gateway da plataforma não barra nada sozinho). Ver
 > `CLAUDE.md`, "Módulo `sync-console`", para o detalhe completo.
+>
+> ✅ **Readequado (2026-07-16)** — o botão "Executar fase específica"
+> saiu da coluna "Ações" de uma linha de tabela (desenho original) e
+> passou para o cabeçalho do card de cada par, já que a linha virou um
+> card com o stepper horizontal (ver `pipeline-monitoring.md`, "Stepper
+> horizontal por par"). O modal em si (`TriggerStepModal`) ganhou uma
+> prop `defaultStep` — pré-seleciona a fase atual do par (a próxima da
+> vez) no `<select>` em vez de sempre abrir em "Menções", continuando
+> 100% editável para qualquer uma das 16 fases.
 
 # Funcionalidade: Execução manual de uma fase específica
 
@@ -95,14 +104,15 @@ Só `is_admin` (mesmo gate de `/admin/users`/`/admin/finops`/`/admin/entities`).
 
 ## Interface (UI)
 
-- Botão "Executar fase específica" por linha da tabela (não em massa —
-  sempre 1 par + 1 fase por vez, decisão deliberada para manter o
-  raciocínio "identifiquei X inconsistente, corrijo só X" do pedido
-  original, não virar um botão de "re-rodar tudo").
-- Modal com select de fase + descrição curta de cada uma + tooltip "?"
-  explicando o efeito da ação (ver "Fluxo principal", passo 3) + botão
-  "Executar" com spinner enquanto roda (regra transversal #5) —
-  desabilitado durante a chamada, nunca clicável 2x.
+- Botão "Executar fase específica" no cabeçalho do card de cada par (não
+  em massa — sempre 1 par + 1 fase por vez, decisão deliberada para
+  manter o raciocínio "identifiquei X inconsistente, corrijo só X" do
+  pedido original, não virar um botão de "re-rodar tudo").
+- Modal com select de fase (pré-selecionado com a fase atual do par, ver
+  blockquote "Readequado" no topo) + descrição curta de cada uma +
+  tooltip "?" explicando o efeito da ação (ver "Fluxo principal", passo
+  3) + botão "Executar" com spinner enquanto roda (regra transversal #5)
+  — desabilitado durante a chamada, nunca clicável 2x.
 - Resultado inline no modal (sucesso com contagem, ou erro) antes de
   fechar — não só um toast que já sumiu.
 

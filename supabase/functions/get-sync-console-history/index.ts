@@ -25,9 +25,24 @@ function jsonResponse(body: unknown, status = 200) {
 }
 
 // Mesmo default já usado em components/ui/pagination.tsx (DEFAULT_PAGE_SIZE)
-// no resto do produto — regra transversal #6.
+// no resto do produto — regra transversal #6. MAX_PAGE_SIZE bate com o
+// maior valor de PAGE_SIZE_OPTIONS (mesmo componente).
 const DEFAULT_PAGE_SIZE = 10;
-const MAX_PAGE_SIZE = 50;
+const MAX_PAGE_SIZE = 100;
+
+// Colunas reais de sync_log que a tela permite ordenar (pedido do usuário:
+// "ordenação por qualquer uma das colunas") — nunca confia no valor cru do
+// client (Princípio técnico 2), sempre valida contra esta allow-list antes
+// de usar em `.order(...)`.
+const SORTABLE_COLUMNS = new Set([
+  "created_at",
+  "step",
+  "status",
+  "rows_processed",
+  "duration_ms",
+  "trigger_source",
+  "stop_reason",
+]);
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
@@ -66,6 +81,9 @@ Deno.serve(async (req) => {
         : DEFAULT_PAGE_SIZE;
     const projectId = typeof body.projectId === "number" ? body.projectId : null;
     const queryId = typeof body.queryId === "number" ? body.queryId : null;
+    const step = typeof body.step === "string" ? body.step : null;
+    const sortBy = typeof body.sortBy === "string" && SORTABLE_COLUMNS.has(body.sortBy) ? body.sortBy : "created_at";
+    const sortAscending = body.sortDirection === "asc";
 
     const from = (page - 1) * pageSize;
     const to = from + pageSize - 1;
@@ -73,18 +91,22 @@ Deno.serve(async (req) => {
     // Escopado a 1 par: usa o índice novo (project_id, query_id,
     // created_at desc), migration 20260809140000. Sem filtro ("todos os
     // pares"): usa o índice já existente idx_sync_log_created_at
-    // (foundation) — nenhum índice novo necessário pra esse caso.
+    // (foundation) — nenhum índice novo necessário pra esse caso. Ordenar
+    // por uma coluna diferente de created_at não usa nenhum índice
+    // específico (tabela pequena o bastante, sem paginação profunda
+    // esperada nesses casos) — aceitável, sem otimização extra pedida.
     let query = supabaseAdmin
       .from("sync_log")
       .select(
         "id, project_id, query_id, step, status, rows_processed, duration_ms, stop_reason, trigger_source, triggered_by_user_id, error_message, created_at, bw_projects(name), bw_queries(name)",
         { count: "exact" },
       )
-      .order("created_at", { ascending: false })
+      .order(sortBy, { ascending: sortAscending })
       .range(from, to);
 
     if (projectId !== null) query = query.eq("project_id", projectId);
     if (queryId !== null) query = query.eq("query_id", queryId);
+    if (step !== null) query = query.eq("step", step);
 
     const { data, error, count } = await query;
     if (error) throw error;

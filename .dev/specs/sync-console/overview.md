@@ -111,12 +111,15 @@ módulo não duplica esse conteúdo — só referencia.
 
 ## Rotas / Páginas
 
-- `/admin/sync-console` — único destino. Tabela de pares (Projeto, Query)
-  com estado atual, um widget separado "Histórico de execuções" (todas as
-  execuções já ocorridas, paginado, filtrável por par —
-  `pipeline-monitoring.md`) e um botão "Executar fase específica" por
-  linha, que abre um modal (`manual-step-execution.md`). Segue o mesmo
-  padrão de diretório dos outros 3 destinos admin já existentes
+- `/admin/sync-console` — único destino. Lista de cards de pares (Projeto,
+  Query) com estado atual + stepper horizontal de 16 pontos (verde =
+  executado neste ciclo, azul = próxima fase, cinza = pendente —
+  ✅ 2026-07-16, ver `pipeline-monitoring.md`, "Stepper horizontal por
+  par"), um widget separado "Histórico de execuções" (todas as execuções
+  já ocorridas, paginado/ordenável, filtrável por par e por fase) e um
+  botão "Executar fase específica" no cabeçalho de cada card, que abre um
+  modal (`manual-step-execution.md`). Segue o mesmo padrão de diretório
+  dos outros 3 destinos admin já existentes
   (`app/(intelligence-center)/admin/{users,finops,entities}/`):
   `page.tsx` + `sync-console-admin-view.tsx` + `types.ts` + modal(s).
 - ✅ **Implementado como 4ª aba de "Administração"** (não um item de menu

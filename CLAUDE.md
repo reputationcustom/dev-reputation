@@ -9080,6 +9080,98 @@ reais (não só zeros) pra fases além de `mentions`; (3) o botão "Executar
 fase específica" respondendo com sucesso/contagem real, sem alterar a
 fase que aparece na tabela de pares.
 
+### `sync-console` — stepper horizontal, clique por fase, histórico ordenável/paginável (2026-07-16)
+
+Usuário já com a tela em produção (screenshots reais de `/admin/sync-console`
+anexados ao pedido), 4 itens: (1) linha horizontal com 1 ponto por fase do
+pipeline, verde = já executada no ciclo atual, cinza = pendente, destaque
+na próxima fase; (2) clicar em cada fase mostra o histórico daquela fase
+específica (registros atualizados, sucesso/erro, tempo de execução); (3)
+"readequar" o botão "Executar fase específica" já que o frame dele muda;
+(4) no widget "Histórico de execuções", escolher linhas por página e
+ordenar por qualquer coluna — mais um relato: "a tabela de histórico...
+não está mostrando a fase."
+
+**Investigação do item "não está mostrando a fase" — não é bug de
+código**: reconferido o `bw-sync/index.ts` linha a linha nos dois pontos
+de `sync_log.insert(...)` (dispatcher automático e `runManualStepInvocation`)
+— os dois já incluem `step`/`duration_ms`/`stop_reason`/`trigger_source`
+no payload, exatamente como implementado na sessão anterior. A explicação
+real, deduzida do próprio screenshot do usuário: a linha com
+`rows_processed: 2000` (um valor real, plausível pra 2 páginas de
+`mentions`) aparece **junto** com `step`/`duração`/`motivo de parada`
+todos vazios — isso só é possível se o código que gravou aquela linha
+nunca incluiu esses 4 campos no `insert(...)`, ou seja, é a versão
+**antiga** do `bw-sync` (anterior às mudanças desta feature) ainda rodando
+em produção. A migration + as 2 Edge Functions de leitura já parecem
+deployadas (a tela funciona, mostra dado estruturado real), mas o
+`bw-sync` atualizado — a peça que efetivamente escreve `step` — ainda não
+foi. Não é um bug a corrigir no código; é uma dependência de deploy
+("git push" pra `develop`, fluxo já estabelecido do projeto) ainda
+pendente desde a sessão anterior. Explicado ao usuário, não "corrigido"
+com uma mudança de código que não resolveria a causa real.
+
+**Item 1 — `PipelineStepper`** (novo componente,
+`app/(intelligence-center)/admin/sync-console/pipeline-stepper.tsx`): 16
+pontos conectados por um traço, 1 por fase de `SYNC_STEPS`. Nenhum dado
+novo do backend — `sync_cursors.next_step` (já devolvido como
+`currentStep`) já é "a próxima fase a rodar": índice menor que
+`currentStep` na ordem fixa = já executada neste ciclo (ponto verde,
+traço verde à direita), a própria `currentStep` = próxima da vez (ponto
+azul com anel de destaque), índice maior = ainda pendente (ponto cinza).
+Cada ponto tem `Tooltip` (nome + descrição da fase, hover) e uma legenda
+em texto abaixo ("Próxima fase: **X**"). `overflow-x-auto` — 16 pontos
+não cabem confortavelmente em toda largura de tela, mesmo padrão de
+tabela larga já usado no resto do produto.
+
+**Item 2 — clique por fase**: `onSelectStep` do stepper seta
+`historyFilter` (par) **e** um novo `historyStepFilter` (fase) no mesmo
+clique, rola até "Histórico de execuções". `get-sync-console-history`
+ganhou um parâmetro `step` (filtro `eq("step", step)`) — as colunas
+"Registros sincronizados"/"Resultado"/"Duração" já existiam na tabela de
+histórico desde a sessão anterior, então filtrar por fase já era
+suficiente pra responder "quantos registros, sucesso/erro, tempo de
+execução" daquela fase específica, sem nenhuma coluna nova.
+
+**Item 3 — readequação do "Executar fase específica"**: a tabela de pares
+virou uma lista de cards (1 por par) — cabeçalho do card
+(nome/status/última+próxima sincronização/2 botões: "Ver histórico
+completo"/"Executar fase específica") + o stepper logo abaixo. O botão
+"Executar fase específica" saiu da antiga coluna "Ações" e foi pro
+cabeçalho do card. `TriggerStepModal` ganhou uma prop `defaultStep` —
+pré-seleciona `pair.currentStep` (a próxima fase da vez) no `<select>` em
+vez de sempre abrir em "Menções", continuando 100% editável (o cenário
+motivador original — "tópicos está inconsistente" — normalmente não é a
+próxima fase da vez, então o admin ainda precisa poder trocar).
+
+**Item 4 — paginação/ordenação configuráveis**: `Pagination`
+(`components/ui/pagination.tsx`) já suportava `pageSize`/
+`onPageSizeChange`/`pageSizeOptions` desde a sessão de `entities-admin-view.tsx`
+(2026-07-16, achado ao reler o componente) — só nunca tinha sido conectado
+aqui; passou a usar `PAGE_SIZE_OPTIONS` (`[10, 25, 50, 100]`) em vez do
+`DEFAULT_PAGE_SIZE` fixo. Cabeçalhos de coluna viraram botões clicáveis
+(▲/▼ na coluna/direção ativa) — `get-sync-console-history` ganhou
+`sortBy`/`sortDirection`, validados contra uma allow-list de colunas reais
+de `sync_log` (`created_at`/`step`/`status`/`rows_processed`/
+`duration_ms`/`trigger_source`/`stop_reason` — Princípio técnico 2, nunca
+confia no valor cru do client) antes de usar em `.order(...)`.
+`MAX_PAGE_SIZE` da function subiu de 50 pra 100, pra bater com o maior
+valor de `PAGE_SIZE_OPTIONS`. "Par" (não é uma coluna real de `sync_log`,
+só um join) ficou de fora da ordenação — decisão de escopo, não um
+descuido.
+
+**Verificação**: `npx tsc --noEmit` e `npm run build` (com `rm -rf .next`
+antes) passam limpos — 23 rotas, `/admin/sync-console` 8.81kB (cresceu de
+8.31kB, consistente com o stepper/ordenação novos). Sem ambiente
+Deno/Supabase real nesta sessão — `get-sync-console-history` revisada
+manualmente, não testada contra produção; `git push` para `develop`
+continua sendo o próximo passo pendente (tanto para esta leva quanto para
+a anterior, que ainda não tinha sido deployada) — os sinais a acompanhar
+depois do deploy são os mesmos já listados na entrada anterior, mais: o
+stepper mostrando pontos verdes/cinzas condizentes com o `next_step` real
+de cada par, e clicar num ponto realmente filtrando o histórico pra
+aquela fase.
+
 ## Directory structure
 
 ```

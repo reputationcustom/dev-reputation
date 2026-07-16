@@ -10,6 +10,7 @@ import { Pagination, DEFAULT_PAGE_SIZE } from "@/components/ui/pagination";
 import { Toast } from "@/components/ui/toast";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { useSortableRows, SortableTh } from "@/components/ui/sortable-th";
+import { Tooltip } from "@/components/ui/tooltip";
 import { EntityFormModal } from "./entity-form-modal";
 import { EntityDetailPanel } from "./entity-detail-panel";
 import {
@@ -99,6 +100,44 @@ function InfluenceBadge({ value }: { value: string | null }) {
     <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium ${INFLUENCE_BADGE_CLASS[value] ?? ""}`}>
       {INFLUENCE_LEVEL_LABEL[value as keyof typeof INFLUENCE_LEVEL_LABEL] ?? value}
     </span>
+  );
+}
+
+// Ícones das ações da tabela (substituem os antigos links de texto
+// "Editar"/"Desativar"/"Reativar"/"Excluir", 2026-07-16) — SVG inline
+// simples (sem dependência nova), `currentColor` pra herdar a cor de cada
+// botão como antes (accent-blue/text-secondary/vermelho).
+function PencilIcon() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+      <path d="M13.5 3.5a1.6 1.6 0 0 1 2.26 2.26L7 14.5l-3 .75.75-3 8.75-8.75Z" />
+    </svg>
+  );
+}
+
+function PauseCircleIcon() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+      <circle cx="10" cy="10" r="7.25" />
+      <path d="M8.3 7.5v5M11.7 7.5v5" />
+    </svg>
+  );
+}
+
+function PlayCircleIcon() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+      <circle cx="10" cy="10" r="7.25" />
+      <path d="M8.5 7.2v5.6l4.3-2.8-4.3-2.8Z" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
+function TrashIcon() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4">
+      <path d="M4 6h12M8 6V4.5h4V6M6 6l.6 9.5a1 1 0 0 0 1 .9h4.8a1 1 0 0 0 1-.9L14 6" />
+    </svg>
   );
 }
 
@@ -537,47 +576,59 @@ export function EntitiesAdminView() {
                           {/* Botões visíveis, não um menu "⋮" (pedido do
                               usuário) — Editar/Desativar-Reativar/Excluir
                               sempre à mostra, mesmo padrão de
-                              finops-admin-view.tsx. stopPropagation — clicar
-                              em qualquer ação não deve também selecionar/
+                              finops-admin-view.tsx, agora como ícones com
+                              tooltip (2026-07-16, pedido do usuário: "troque
+                              as opções da coluna ação por ícones
+                              amigáveis"). stopPropagation — clicar em
+                              qualquer ação não deve também selecionar/
                               desselecionar a linha (seleção de linha é só
                               pra visualizar). */}
                           <td className="px-4 py-3" onClick={(event) => event.stopPropagation()}>
-                            <div className="flex flex-wrap items-center gap-3">
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setConflictAccount(null);
-                                  setModal({ type: "edit", entity });
-                                }}
-                                disabled={isPending}
-                                className="text-sm font-medium text-accent-blue hover:underline disabled:opacity-50"
-                              >
-                                Editar
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  entity.is_active
-                                    ? setModal({ type: "deactivate", entity })
-                                    : handleToggleActive(entity)
-                                }
-                                disabled={isPending}
-                                className="text-sm font-medium text-text-secondary hover:text-text-primary hover:underline disabled:opacity-50"
-                              >
-                                {entity.is_active ? "Desativar" : "Reativar"}
-                              </button>
+                            <div className="flex items-center gap-2">
+                              <Tooltip text="Editar" position="bottom">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setConflictAccount(null);
+                                    setModal({ type: "edit", entity });
+                                  }}
+                                  disabled={isPending}
+                                  aria-label="Editar"
+                                  className="rounded-md p-1.5 text-accent-blue hover:bg-accent-blue-bg disabled:opacity-50"
+                                >
+                                  <PencilIcon />
+                                </button>
+                              </Tooltip>
+                              <Tooltip text={entity.is_active ? "Desativar" : "Reativar"} position="bottom">
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    entity.is_active
+                                      ? setModal({ type: "deactivate", entity })
+                                      : handleToggleActive(entity)
+                                  }
+                                  disabled={isPending}
+                                  aria-label={entity.is_active ? "Desativar" : "Reativar"}
+                                  className="rounded-md p-1.5 text-text-secondary hover:bg-bg-page hover:text-text-primary disabled:opacity-50"
+                                >
+                                  {entity.is_active ? <PauseCircleIcon /> : <PlayCircleIcon />}
+                                </button>
+                              </Tooltip>
                               {/* Toda exclusão do sistema passa por
                                   confirmação — este botão só abre o
                                   ConfirmDialog abaixo, nunca chama
                                   delete-entity direto. */}
-                              <button
-                                type="button"
-                                onClick={() => setModal({ type: "delete", entity })}
-                                disabled={isPending}
-                                className="text-sm font-medium text-[#e0483e] hover:underline disabled:opacity-50"
-                              >
-                                Excluir
-                              </button>
+                              <Tooltip text="Excluir" position="bottom">
+                                <button
+                                  type="button"
+                                  onClick={() => setModal({ type: "delete", entity })}
+                                  disabled={isPending}
+                                  aria-label="Excluir"
+                                  className="rounded-md p-1.5 text-[#e0483e] hover:bg-[#fdecea] disabled:opacity-50"
+                                >
+                                  <TrashIcon />
+                                </button>
+                              </Tooltip>
                             </div>
                           </td>
                         </tr>
