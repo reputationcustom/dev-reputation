@@ -112,7 +112,7 @@ export function FinopsAdminView() {
 
   return (
     <div className="py-6">
-      <div className="mx-auto max-w-6xl">
+      <div>
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-xl font-bold text-text-primary">FinOps — Custos de IA</h1>

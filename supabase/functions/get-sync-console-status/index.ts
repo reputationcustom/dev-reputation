@@ -27,10 +27,11 @@ function jsonResponse(body: unknown, status = 200) {
 // Mesma lista/ordem de supabase/functions/bw-sync/index.ts (SYNC_STEPS) —
 // duplicada aqui por Princípio técnico 5 (nunca importar entre funções).
 // Devolvida na resposta pra o frontend não precisar manter uma terceira
-// cópia hardcoded.
+// cópia hardcoded. ✅ Reordenada (2026-07-16) junto com a cópia canônica em
+// bw-sync/index.ts — `mentions` saiu de logo após `metadata` e passou a
+// rodar perto do fim.
 const SYNC_STEPS = [
   "metadata",
-  "mentions",
   "daily_metrics",
   "hourly_metrics",
   "weekly_monthly",
@@ -43,6 +44,7 @@ const SYNC_STEPS = [
   "top_sites",
   "top_shared_sites",
   "demographics",
+  "mentions",
   "full_text_enrichment",
   "sov",
 ] as const;

@@ -27,10 +27,12 @@ function jsonResponse(body: unknown, status = 200) {
 
 // Mesma lista/ordem de supabase/functions/bw-sync/index.ts (SYNC_STEPS) —
 // duplicada aqui por Princípio técnico 5. Nunca confia só na validação
-// client-side do <select> (Princípio técnico 2).
+// client-side do <select> (Princípio técnico 2). ✅ Reordenada (2026-07-16)
+// junto com a cópia canônica — a ordem em si é irrelevante pra esta
+// validação (`.includes`), mantida em sincronia só por consistência entre
+// as 4 cópias deste array no projeto.
 const SYNC_STEPS = [
   "metadata",
-  "mentions",
   "daily_metrics",
   "hourly_metrics",
   "weekly_monthly",
@@ -43,6 +45,7 @@ const SYNC_STEPS = [
   "top_sites",
   "top_shared_sites",
   "demographics",
+  "mentions",
   "full_text_enrichment",
   "sov",
 ] as const;

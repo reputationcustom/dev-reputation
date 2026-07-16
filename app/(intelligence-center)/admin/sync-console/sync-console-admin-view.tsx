@@ -182,7 +182,7 @@ export function SyncConsoleAdminView() {
 
   return (
     <div className="py-6">
-      <div className="mx-auto max-w-6xl">
+      <div>
         <div>
           <h1 className="text-xl font-bold text-text-primary">Sincronização — Pipeline Brandwatch</h1>
           <p className="mt-1 text-sm text-text-secondary">

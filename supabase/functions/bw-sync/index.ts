@@ -1,8 +1,9 @@
 // supabase/functions/bw-sync/index.ts
 //
 // Edge Function autossuficiente (Princípio técnico 5, .dev/specs/_index.md)
-// — sem import relativo de `_shared/`. Acionada por pg_cron a cada 15min (um
-// "heartbeat" barato, fixo — ver migration `20260711020000`), mas só faz
+// — sem import relativo de `_shared/`. Acionada por pg_cron a cada 1min (um
+// "heartbeat" barato, fixo — ver migration `20260711020000`, cadência
+// apertada de 15min pra 1min em `20260809070000`), mas só faz
 // trabalho de verdade (mint de token + chamadas à Brandwatch) quando algum
 // par (project_id, query_id) está "devido": sync_cursors.last_synced_at mais
 // antigo que BW_SYNC_INTERVAL_HOURS (secret da própria função, default `3`
@@ -314,13 +315,16 @@ function getSyncIntervalHours(): number {
 // NÃO estoura o teto real da Brandwatch (30 chamadas/10min) — cada fase já
 // respeita `hasBrandwatchCallBudget()` (orçamento local + header real
 // `x-rate-limit-used`) e o dispatcher sempre processa `SYNC_STEPS` na
-// mesma ordem fixa (`metadata → mentions → daily_metrics →
-// hourly_metrics → weekly_monthly → topics → ... → sov`), então
-// volumetria/sentimento diário e mentions sempre são tentados antes de
-// qualquer fase pesada — se o orçamento acabar, só as fases do fim da
-// lista ficam pra próxima invocação, nunca as críticas. Na prática, um
-// valor muito baixo pra uma organização com muitas Narrativas só faz o
-// ciclo levar mais heartbeats pra fechar (nunca ocioso), não gera erro.
+// mesma ordem fixa (`metadata → daily_metrics → hourly_metrics →
+// weekly_monthly → topics → ... → mentions → full_text_enrichment →
+// sov` — ✅ reordenada 2026-07-16, `mentions` deixou de vir logo após
+// `metadata` e passou a rodar perto do fim, ver o comentário de
+// `SYNC_STEPS` abaixo), então volumetria/sentimento diário sempre são
+// tentados antes de qualquer fase pesada — se o orçamento acabar, só as
+// fases do fim da lista (incluindo `mentions`, agora) ficam pra próxima
+// invocação, nunca as métricas. Na prática, um valor muito baixo pra uma
+// organização com muitas Narrativas só faz o ciclo levar mais heartbeats
+// pra fechar (nunca ocioso), não gera erro.
 function getSyncStalenessWindowMs(): number {
   return getSyncIntervalHours() * 3_600_000;
 }
@@ -2958,9 +2962,25 @@ Deno.serve(async (req: Request) => {
 // `last_synced_at`) quando a última fase (`sov`) termina.
 // =========================================================================
 
+// ✅ Ordem reorganizada (2026-07-16) — pedido do usuário: "podemos deixar a
+// busca das menções para o final do pipeline, as métricas inicialmente são
+// mais importantes do que as mentions." `mentions` (a fase mais cara em
+// tempo/CPU — paginação de até 10 páginas por invocação, ver
+// `MAX_MENTIONS_PAGES_PER_INVOCATION`) saiu da 2ª posição (logo depois de
+// `metadata`) e foi pra logo ANTES de `full_text_enrichment` — não pro
+// último lugar absoluto (antes de `sov`), de propósito: `full_text_enrichment`
+// lê/enriquece mentions já sincronizadas, então mantê-la imediatamente
+// depois de `mentions` no mesmo ciclo evita que ela opere sobre um dia
+// sistematicamente mais desatualizado do que precisaria — "não ter grande
+// impacto", como pedido. `metadata` continua primeira (bootstrap de
+// `bw_categories`/`narratives`, do qual toda fase de métrica depende via
+// `categoryTargets`) — nenhuma outra fase depende de `mentions` ter rodado
+// primeiro no mesmo ciclo, então essa realocação é segura. Efeito
+// esperado: as fases de métrica (daily/hourly/weekly/topics/...) — o que o
+// usuário chamou de "mais importantes" — são tentadas antes de `mentions`
+// disputar orçamento/tempo de invocação a cada ciclo.
 const SYNC_STEPS = [
   "metadata",
-  "mentions",
   "daily_metrics",
   "hourly_metrics",
   "weekly_monthly",
@@ -2973,6 +2993,7 @@ const SYNC_STEPS = [
   "top_sites",
   "top_shared_sites",
   "demographics",
+  "mentions",
   "full_text_enrichment",
   "sov",
 ] as const;
@@ -3358,7 +3379,56 @@ async function refreshNarrativeMetricsForToday(supabase: SupabaseClient, now: Da
 // numa organização com muitas Narrativas.
 // =========================================================================
 
-const HOURLY_METRICS_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
+// Janela histórica completa (30 dias) — só usada enquanto o par ainda não
+// terminou o backfill de mentions (`backfill_completed_at` null). É o
+// fallback seguro pra um par novo: garante que o grão horário acumule
+// cobertura completa dos últimos 30 dias ao longo dos primeiros ciclos,
+// mesmo raciocínio de `getMentionsStartDate()`/`getMetricsStartDate()`
+// pros outros grãos.
+const HOURLY_METRICS_FULL_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
+
+// ✅ 2026-07-16 — janela incremental pós-backfill (pedido do usuário: "ele
+// pode passar a pegar os dados desde o último sync... isso pode deixar a
+// execução mais eficiente?"). Antes desta mudança, `runHourlyMetricsStep`
+// sempre buscava os 30 dias inteiros em TODA invocação (sem nenhum
+// throttle — roda a cada heartbeat de 1min desde 20260809070000), embora
+// `bw_query_metrics_hourly` já esteja sendo continuamente sincronizada há
+// muito tempo pra qualquer par maduro — cada chamada devolvia até ~720
+// buckets/série, a esmagadora maioria idêntica ao já gravado no minuto
+// anterior. Mesmo princípio já usado por `getMetricsStartDate()`
+// (2026-07-19) pros grãos dia/semana/mês: NÃO é literalmente "desde o
+// último sync" — uma janela exata correria o risco real de nunca
+// reabsorver uma correção/atraso de indexação da Brandwatch num bucket de
+// horas atrás (ex: uma menção que chega atrasada, uma reclassificação de
+// sentimento) — usa uma folga generosa (padrão 6h, bem maior que o
+// intervalo entre invocações) em vez do exato "desde o último sync".
+// Configurável via `HOURLY_METRICS_INCREMENTAL_WINDOW_HOURS` (secret),
+// sem precisar de deploy novo pra recalibrar.
+function getHourlyMetricsIncrementalWindowHours(): number {
+  const raw = Deno.env.get("HOURLY_METRICS_INCREMENTAL_WINDOW_HOURS");
+  if (raw) {
+    const parsed = Number(raw);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+    logError(
+      "getHourlyMetricsIncrementalWindowHours:invalid",
+      `HOURLY_METRICS_INCREMENTAL_WINDOW_HOURS="${raw}" inválido, usando default 6`,
+    );
+  }
+  return 6;
+}
+
+// Nenhuma informação da Brandwatch é perdida por esta janela mais curta:
+// `bw_query_metrics_hourly` é upsert por `(project_id, query_id,
+// category_id_key, metric_hour)`, então todo bucket já gravado por um
+// ciclo anterior (quando ele ainda estava "recente") permanece intacto —
+// esta função só reduz quanto é RE-buscado por invocação, nunca apaga
+// histórico já sincronizado. Só um par que nunca terminou o backfill (ou
+// cujo backfill ficou pausado por muito tempo) precisa da janela cheia —
+// tratado abaixo.
+function getHourlyMetricsWindowMs(backfillCompletedAt: string | null): number {
+  if (!backfillCompletedAt) return HOURLY_METRICS_FULL_WINDOW_MS;
+  return getHourlyMetricsIncrementalWindowHours() * 60 * 60 * 1000;
+}
 
 function toHourTimestamp(isoString: string): string {
   const d = new Date(isoString);
@@ -3573,8 +3643,9 @@ async function runHourlyMetricsStep(
   queryId: number,
   categoryTargets: (number | null)[],
   now: Date,
+  backfillCompletedAt: string | null,
 ): Promise<StepResult> {
-  const windowStart = new Date(now.getTime() - HOURLY_METRICS_WINDOW_MS);
+  const windowStart = new Date(now.getTime() - getHourlyMetricsWindowMs(backfillCompletedAt));
   // 3 chamadas fixas de sempre — Query inteira (volume/sentimento +
   // netSentiment) + netSentiment por Narrativa via dimensão `categories`
   // (não escalam com o número de Narrativas, sempre rodam, sem throttle).
@@ -4332,7 +4403,9 @@ async function runSyncInvocation(supabase: SupabaseClient, invocationStartedAt: 
           if (result.didWork) await refreshNarrativeMetricsForToday(supabase, now);
           break;
         case "hourly_metrics":
-          result = await runHourlyMetricsStep(supabase, token, projectId, queryId, categoryTargets, now);
+          result = await runHourlyMetricsStep(
+            supabase, token, projectId, queryId, categoryTargets, now, cursor.backfill_completed_at as string | null,
+          );
           break;
         case "weekly_monthly":
           result = await runWeeklyMonthlyStep(supabase, token, projectId, queryId, categoryTargets, metricsStartDate, now);
@@ -4695,7 +4768,9 @@ async function runManualStepInvocation(
         if (result.didWork) await refreshNarrativeMetricsForToday(supabase, now);
         break;
       case "hourly_metrics":
-        result = await runHourlyMetricsStep(supabase, token, projectId, queryId, categoryTargets, now);
+        result = await runHourlyMetricsStep(
+          supabase, token, projectId, queryId, categoryTargets, now, cursor.backfill_completed_at as string | null,
+        );
         break;
       case "weekly_monthly":
         result = await runWeeklyMonthlyStep(supabase, token, projectId, queryId, categoryTargets, metricsStartDate, now);

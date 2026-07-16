@@ -403,7 +403,7 @@ export function EntitiesAdminView() {
 
   return (
     <div className="py-6">
-      <div className="mx-auto max-w-6xl">
+      <div>
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-xl font-bold text-text-primary">Cadastro Nacional de Entidades</h1>

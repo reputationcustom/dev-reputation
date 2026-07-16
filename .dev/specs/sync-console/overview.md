@@ -2,8 +2,24 @@
 tipo: module-overview
 módulo: sync-console
 status: implementado
-atualizado: 2026-07-15
+atualizado: 2026-07-16
 ---
+
+> ✅ **Ordem do pipeline reorganizada + `hourly_metrics` incremental
+> (2026-07-16)** — pedido do usuário: "métricas inicialmente são mais
+> importantes do que as mentions... mude a ordem do pipeline" +
+> "[hourly_metrics] pode passar a pegar os dados desde o último sync...
+> deixar a execução mais eficiente?" `mentions` saiu da 2ª posição de
+> `SYNC_STEPS` (logo após `metadata`) e passou a rodar perto do fim (logo
+> antes de `full_text_enrichment`, que depende dela); `hourly_metrics`
+> deixou de buscar sempre os 30 dias inteiros em toda invocação e passou a
+> usar uma janela incremental curta (com folga) uma vez que o backfill do
+> par termina. Ver `foundation/sync-brandwatch.md` (blockquote de topo) pro
+> racional completo — este módulo só observa/executa o pipeline, não
+> reimplementa sua lógica, então a mudança em si vive lá; aqui só o reflexo
+> é automático (o stepper/`<select>` de `manual-step-execution.md` já lê a
+> ordem de um único array `SYNC_STEPS`, reordenado junto nas 4 cópias do
+> projeto — nenhuma mudança de UI necessária além disso).
 
 # Módulo: Sync Console (observabilidade e controle manual do pipeline Brandwatch)
 

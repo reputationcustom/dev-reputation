@@ -170,7 +170,7 @@ export function UsersAdminView() {
 
   return (
     <div className="py-6">
-      <div className="mx-auto max-w-5xl">
+      <div>
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-xl font-bold text-text-primary">Administração de usuários</h1>

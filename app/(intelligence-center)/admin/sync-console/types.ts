@@ -2,10 +2,13 @@
 // duplicada aqui (o frontend não pode importar de uma Edge Function,
 // Princípio técnico 5) e também devolvida por get-sync-console-status
 // (syncSteps) só como referência — este array é a fonte usada de fato pelo
-// <select> do modal de execução manual.
+// <select> do modal de execução manual e pela ordem visual do
+// PipelineStepper. ✅ Reordenada (2026-07-16) — `mentions` saiu de logo
+// após `metadata` e passou a rodar perto do fim (logo antes de
+// `full_text_enrichment`, que depende dela) — ver o comentário de
+// `SYNC_STEPS` em bw-sync/index.ts pro racional completo.
 export const SYNC_STEPS = [
   "metadata",
-  "mentions",
   "daily_metrics",
   "hourly_metrics",
   "weekly_monthly",
@@ -18,6 +21,7 @@ export const SYNC_STEPS = [
   "top_sites",
   "top_shared_sites",
   "demographics",
+  "mentions",
   "full_text_enrichment",
   "sov",
 ] as const;
@@ -51,7 +55,7 @@ export const SYNC_STEP_DESCRIPTIONS: Record<SyncStep, string> = {
   metadata: "Sincroniza Categorias e Subcategorias configuradas na Brandwatch — o que vira Narrativas no produto.",
   mentions: "Busca as publicações individuais (posts, tweets, notícias) capturadas pela Brandwatch.",
   daily_metrics: "Volume, sentimento, alcance e engajamento por dia, por Narrativa e da Query inteira.",
-  hourly_metrics: "Volume e sentimento por hora (últimos 30 dias) — alimenta gráficos de curto prazo/Diário.",
+  hourly_metrics: "Volume e sentimento por hora (janela recente, com folga pra reabsorver correções da Brandwatch) — alimenta gráficos de curto prazo/Diário.",
   weekly_monthly: "Volume e sentimento agregados por semana e por mês.",
   topics: "Termos, hashtags e frases mais citados.",
   platform_by_narrative: "Participação de cada plataforma dentro de cada Narrativa.",

@@ -9172,6 +9172,117 @@ stepper mostrando pontos verdes/cinzas condizentes com o `next_step` real
 de cada par, e clicar num ponto realmente filtrando o histórico pra
 aquela fase.
 
+### `hourly_metrics` ganha janela incremental + `mentions` movida pra perto do fim do pipeline (2026-07-16)
+
+User request, pergunta exploratória seguida de confirmação: "Pela
+documentação a bw_sync está buscando sempre os últimos 30 dias, porém, se
+temos a base atualizada ele precisa pegar apenas o incremental do dia...
+Isso pode deixar a execução mais eficiente?" — respondida primeiro como
+recomendação (2-3 frases, sem implementar ainda, per o padrão do projeto
+pra perguntas exploratórias), depois confirmada: "sim, vamos implantar
+essa fase... garantindo que não perderemos informações da brandwatch.
+Além disso, podemos deixar a busca das menções para o final do pipeline,
+as métricas inicialmente são mais importantes do que as mentions. Mude a
+ordem do pipeline garantindo que não que tenhamos grande impacto." Duas
+mudanças independentes, ambas só em `bw-sync/index.ts` (sem migration).
+
+- **`getMetricsStartDate()`/`daily_metrics`/`weekly_monthly`/etc. já
+  faziam exatamente o que o usuário descreveu**, desde 2026-07-19 — janela
+  móvel incremental uma vez que o backfill de um par termina. **A exceção
+  real era `hourly_metrics`**: usava uma constante própria e fixa
+  (`HOURLY_METRICS_WINDOW_MS = 30 dias`), sempre pedia 30 dias de buckets
+  horários (até ~720 linhas/série) em TODA invocação, sem gate de
+  frescor algum — e desde `20260809070000` isso roda a cada 1min, então
+  quase todas essas 720 linhas voltavam idênticas ao que já estava no
+  banco no minuto anterior. Fixed: `getHourlyMetricsWindowMs(backfillCompletedAt)`
+  — enquanto o par não terminou o backfill de mentions, continua usando a
+  janela cheia de 30 dias (`HOURLY_METRICS_FULL_WINDOW_MS`, mesmo nome
+  antigo renomeado); depois disso, usa uma janela móvel curta
+  (`HOURLY_METRICS_INCREMENTAL_WINDOW_HOURS`, secret novo, default 6h) —
+  mesmo raciocínio já usado por `getMetricsStartDate()` (2026-07-19): não
+  é literalmente "desde o último sync" (o usuário pediu explicitamente
+  para "garantir que não perderemos informações da brandwatch") — uma
+  janela exata correria o risco real de nunca reabsorver uma correção/
+  atraso de indexação da Brandwatch num bucket de horas atrás (ex: uma
+  menção que chega atrasada, uma reclassificação de sentimento), então a
+  janela tem folga generosa (6h, bem maior que o heartbeat de 1min) em vez
+  do mínimo exato. **Nenhuma informação é de fato perdida**:
+  `bw_query_metrics_hourly` é upsert por `(project_id, query_id,
+  category_id_key, metric_hour)` — todo bucket já gravado por um ciclo
+  anterior (quando ainda estava "recente") permanece intacto; a mudança só
+  reduz quanto é RE-buscado/re-upsertado por invocação, nunca apaga
+  histórico já sincronizado. `backfillCompletedAt` já estava disponível em
+  ambos os call sites de `runHourlyMetricsStep` (`cursor.backfill_completed_at`,
+  automático e `manualStep`) — só precisou ser repassado como novo
+  parâmetro, sem nenhuma leitura adicional ao banco.
+- **`SYNC_STEPS` reorganizada** — `mentions` (a fase mais cara em tempo/
+  CPU do pipeline, paginação de até 10 páginas por invocação) saiu da 2ª
+  posição (logo após `metadata`) e passou a rodar logo ANTES de
+  `full_text_enrichment`, não no último lugar absoluto (antes de `sov`) —
+  de propósito: `full_text_enrichment` lê/enriquece mentions já
+  sincronizadas no mesmo ciclo, então mantê-la imediatamente depois de
+  `mentions` evita que ela opere sobre um dia sistematicamente mais
+  desatualizado do que precisaria, satisfazendo o "sem grande impacto" do
+  pedido. `metadata` continua primeira (bootstrap de `bw_categories`/
+  `narratives`, do qual toda fase de métrica depende via
+  `categoryTargets`) — nenhuma outra fase depende de `mentions` ter
+  rodado primeiro no mesmo ciclo (confirmado por leitura de cada fase
+  antes de mover), então a realocação é segura. Efeito esperado: as fases
+  de métrica (agora logo depois de `metadata`) são tentadas antes de
+  `mentions` disputar orçamento/tempo de invocação em cada ciclo —
+  exatamente "métricas são mais importantes" — sem quebrar o dispatcher em
+  si (`nextSyncStep()` só depende da posição no array, a ordem dos `case`s
+  no `switch` é irrelevante).
+- **4 cópias do array `SYNC_STEPS` reordenadas em conjunto** (Princípio
+  técnico 5 — cada Edge Function é autossuficiente, sem import
+  compartilhado): `bw-sync/index.ts` (canônica), `get-sync-console-status`
+  (retorna `syncSteps` na resposta, hoje não consumido pelo frontend mas
+  mantido em sincronia), `trigger-sync-step` (validação de `step`,
+  independente de ordem mas mantida em sincronia por consistência), e
+  `app/(intelligence-center)/admin/sync-console/types.ts` (fonte real do
+  `<select>` do modal e da ordem visual do `PipelineStepper` — todo
+  consumidor já itera `SYNC_STEPS.map(...)`, então reordenar esse único
+  array bastou para o stepper/select/accordion de referência refletirem a
+  nova ordem, sem tocar em `pipeline-stepper.tsx`/`sync-console-admin-view.tsx`/
+  `trigger-step-modal.tsx`).
+- **Comentários desatualizados corrigidos de passagem**: o comentário de
+  `getSyncStalenessWindowMs()` (linhas ~310-323) ainda descrevia
+  `mentions`/`daily_metrics`/`hourly_metrics` como "sempre tentados
+  primeiro" — corrigido pra refletir que só `daily_metrics`/
+  `hourly_metrics` continuam nesse grupo agora; o cabeçalho do arquivo
+  ainda dizia "acionada a cada 15min" (desatualizado desde
+  `20260809070000`, nunca corrigido nesta linha específica antes) —
+  corrigido pra "1min" na mesma passada.
+- **Documentação**: `foundation/sync-brandwatch.md` — novo blockquote de
+  topo, tabela de fases ("Execução em fases") reordenada pra bater com a
+  ordem real (nota explícita de que a numeração histórica "Passo N" não
+  implica mais ordem de execução), linha de `hourly_metrics` reescrita
+  (não é mais "janela móvel de 30 dias buscada a cada invocação"), e a
+  frase sobre `mentions` "sempre tentada primeiro" (dentro do blockquote
+  de 2026-07-14 sobre staleness unificada) corrigida com uma ressalva
+  datada em vez de deixada incorreta. `sync-console/overview.md` — novo
+  blockquote referenciando a mudança (o módulo só observa/executa o
+  pipeline existente, não duplica a lógica — a mudança em si vive em
+  `sync-brandwatch.md`).
+
+**Verificação**: `npx tsc --noEmit` e `npm run build` (com `rm -rf .next`
+antes) passam limpos — 23 rotas, mesma contagem de antes (mudança é
+backend/Edge-Function-only + reordenação de um array de tipos no
+frontend, sem rota nova). Balanço de parênteses conferido nos 4 arquivos
+Deno tocados via o mesmo script Node de sempre — `bw-sync/index.ts`
+mantém o único desbalanceamento (`+1`) já documentado como pré-existente
+(artefato de comentário em prosa, confirmado idêntico contra `git show
+HEAD` antes desta sessão, não introduzido agora); os outros 3 arquivos
+fecham em 0/0/0. Sem ambiente Deno/Supabase real nesta sessão — não
+testado contra produção; `git push` para `develop` é o próximo passo
+(mesma pendência de deploy já registrada nas 2 entradas anteriores de
+`sync-console`, ainda não resolvida). Sinais a acompanhar depois do
+deploy: `[bw-sync] syncHourlySentimentMetrics:done`/`syncHourlyNetSentiment:done`
+com bem menos linhas por chamada uma vez que um par já tenha
+`backfill_completed_at` preenchido; e o stepper de `/admin/sync-console`
+mostrando `mentions` perto do fim da linha horizontal, não mais como o 2º
+ponto.
+
 ## Directory structure
 
 ```

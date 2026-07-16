@@ -3,8 +3,52 @@ tipo: feature-spec
 módulo: foundation
 funcionalidade: sync-brandwatch
 status: implementado
-atualizado: 2026-08-09
+atualizado: 2026-07-16
 ---
+
+> ✅ **`mentions` movida pra perto do fim de `SYNC_STEPS` + `hourly_metrics`
+> ganha janela incremental (2026-07-16)** — pedido do usuário: "as métricas
+> inicialmente são mais importantes do que as mentions. Mude a ordem do
+> pipeline garantindo que não tenhamos grande impacto" + "se temos a base
+> atualizada, [bw-sync] pode passar a pegar os dados desde o último sync...
+> isso pode deixar a execução mais eficiente?" Duas mudanças independentes,
+> ambas só em `bw-sync/index.ts` (sem migration):
+> 1. **Ordem de `SYNC_STEPS` reorganizada** — `mentions` (a fase mais cara
+>    em tempo/CPU, paginação de até 10 páginas por invocação) saiu da 2ª
+>    posição (logo após `metadata`) e passou a rodar logo ANTES de
+>    `full_text_enrichment` (não no último lugar absoluto, antes de `sov`)
+>    — de propósito: `full_text_enrichment` lê/enriquece mentions já
+>    sincronizadas, então mantê-la logo depois de `mentions` no mesmo ciclo
+>    evita que ela opere sobre um dia sistematicamente mais desatualizado
+>    do que precisaria, satisfazendo o "sem grande impacto" do pedido.
+>    `metadata` continua primeira (bootstrap do qual toda fase de métrica
+>    depende via `categoryTargets`) — nenhuma outra fase depende de
+>    `mentions` ter rodado primeiro no mesmo ciclo, então a realocação é
+>    segura. Efeito: as fases de métrica (agora logo depois de `metadata`)
+>    são tentadas antes de `mentions` disputar orçamento/tempo de
+>    invocação a cada ciclo — exatamente o "métricas são mais importantes"
+>    pedido. A tabela de fases abaixo já reflete a nova ordem; as 4 cópias
+>    do array (`bw-sync`, `get-sync-console-status`, `trigger-sync-step`,
+>    `sync-console/types.ts`, Princípio técnico 5) foram atualizadas juntas.
+> 2. **`hourly_metrics` ganha janela incremental** — antes buscava os 30
+>    dias inteiros em TODA invocação (sem throttle, roda a cada heartbeat
+>    de 1min), reprocessando ~720 buckets/série quase sempre idênticos ao
+>    já gravado no minuto anterior. Mesmo princípio já usado por
+>    `getMetricsStartDate()` (2026-07-19) pros outros grãos: enquanto o
+>    backfill de mentions do par não terminou (`backfill_completed_at`
+>    null), continua usando a janela cheia de 30 dias (par ainda "novo",
+>    precisa acumular cobertura histórica); depois disso, usa uma janela
+>    móvel curta (`HOURLY_METRICS_INCREMENTAL_WINDOW_HOURS`, secret, default
+>    6h) — folga generosa o bastante pra reabsorver correção/atraso de
+>    indexação da Brandwatch em buckets recentes, **nunca** literalmente
+>    "desde o último sync" (janela exata demais correria o risco real de
+>    nunca reabsorver uma correção tardia). Nenhuma informação da
+>    Brandwatch é perdida: `bw_query_metrics_hourly` é upsert por
+>    `(project_id, query_id, category_id_key, metric_hour)`, então todo
+>    bucket já gravado por um ciclo anterior (quando ele ainda estava
+>    "recente") permanece intacto — só reduz quanto é RE-buscado por
+>    invocação, nunca apaga histórico. Ver `bw-sync/index.ts`,
+>    `getHourlyMetricsWindowMs()`, pro racional completo.
 
 > ✅ **Correção de documentação (constatada numa auditoria pedida pelo
 > usuário, junto com a criação da spec `sync-console`)**: este documento
@@ -52,10 +96,13 @@ atualizado: 2026-08-09
 > confirmado pelo usuário: baixar o intervalo aumenta MUITO o custo de
 > chamadas dessas fases (de 1x/semana pra 1x/intervalo); isso não estoura
 > o teto real da Brandwatch (30 chamadas/10min — `hasBrandwatchCallBudget()`
-> + a ordem fixa de `SYNC_STEPS` já garantem que `mentions`/`daily_metrics`/
+> + a ordem fixa de `SYNC_STEPS` já garantem que `daily_metrics`/
 > `hourly_metrics` são sempre tentados primeiro, nunca starvados pelas
-> fases pesadas), só faz o ciclo levar mais heartbeats pra fechar quando
-> uma organização tem muitas Narrativas. `needsMetadataRefresh()` (throttle
+> fases pesadas — ⚠️ `mentions` deixou de fazer parte desse grupo "sempre
+> tentado primeiro" em 2026-07-16, ver blockquote no topo: passou a rodar
+> perto do fim de propósito, já que métricas são mais importantes pro
+> produto do que o polling bruto de mentions), só faz o ciclo levar mais
+> heartbeats pra fechar quando uma organização tem muitas Narrativas. `needsMetadataRefresh()` (throttle
 > de 1h pra categorias/subcategorias) foi deixado fora desta unificação de
 > propósito — não é uma "fase" de score, é um bootstrap estrutural
 > (lista de Narrativas), sem o mesmo risco de "desencontro" entre 2 scores
@@ -143,12 +190,19 @@ computação síncrona, diferente de esperar rede).
 **Correção**: o trabalho de um par "devido" foi quebrado em fases
 (`sync_cursors.next_step`), uma por invocação:
 
+✅ **Ordem reorganizada (2026-07-16)** — a tabela abaixo segue a ordem real
+de execução do dispatcher hoje (`SYNC_STEPS`), não mais a numeração
+histórica "Passo N" (mantida só como referência cruzada pras seções
+numeradas mais abaixo neste documento — não implica mais ordem de
+execução). `mentions` era a 2ª fase (logo após `metadata`) e passou a
+rodar perto do fim, logo antes de `full_text_enrichment` — ver o
+blockquote no topo deste arquivo pro racional completo.
+
 | Fase (`next_step`) | Cobre os passos numerados abaixo |
 |---|---|
 | `metadata` | Passo 3 (bootstrap/refresh condicional) |
-| `mentions` | Passo 5 (polling paginado) |
 | `daily_metrics` | Passos 6, 6.3, 6.3b, 6.3d (sentimento diário + reach/engagement/autores únicos/impressões/**net sentiment** por Narrativa e Query inteira + plataforma incl. autores/engajamento/sentimento líquido por plataforma — sempre rodam, não são "stale-gated", mas cada chamada agora é guardada por `hasBrandwatchCallBudget()`, ver nota logo abaixo) |
-| `hourly_metrics` | ✅ Passo 6.3e — **implementado 2026-07-13, migration `20260713040000`**: volume/sentimento/net sentiment em grão horário (`bw_query_metrics_hourly`), janela móvel de 30 dias buscada a cada invocação — sempre roda, não é "stale-gated" (é o oposto do throttle semanal: precisa estar sempre fresco pra detecção de curto prazo). Sem job de retenção/limpeza — mesma filosofia de histórico acumulando indefinidamente já aplicada a `daily`/`weekly`/`monthly` (ver `data-model.md`). ✅ **Volume por Narrativa adicionado (2026-08-09)** — as 3 chamadas fixas originais nunca gravavam `total_mentions` por Narrativa (bug real, ver `data-model.md`); um novo loop throttled (round-robin por staleness, capado em `MAX_HOURLY_VOLUME_TARGETS_PER_INVOCATION = 8`, `stayOnStep: true` se sobrar trabalho — mesmo padrão de `daily_metrics`) busca `total_mentions` por Narrativa via `syncHourlySentimentMetrics(..., categoryId, ...)`, agora sim escalando com o número de Narrativas (com throttle, diferente das 3 chamadas fixas de sempre) |
+| `hourly_metrics` | ✅ Passo 6.3e — **implementado 2026-07-13, migration `20260713040000`**: volume/sentimento/net sentiment em grão horário (`bw_query_metrics_hourly`) — sempre roda, não é "stale-gated" (é o oposto do throttle semanal: precisa estar sempre fresco pra detecção de curto prazo). ✅ **Janela de busca ficou incremental (2026-07-16)** — deixou de ser sempre os 30 dias inteiros; agora é a janela cheia só enquanto o par ainda não terminou o backfill de mentions, e uma janela móvel curta (`HOURLY_METRICS_INCREMENTAL_WINDOW_HOURS`, default 6h) depois disso — ver blockquote no topo. Sem job de retenção/limpeza — mesma filosofia de histórico acumulando indefinidamente já aplicada a `daily`/`weekly`/`monthly` (ver `data-model.md`). ✅ **Volume por Narrativa adicionado (2026-08-09)** — as 3 chamadas fixas originais nunca gravavam `total_mentions` por Narrativa (bug real, ver `data-model.md`); um novo loop throttled (round-robin por staleness, capado em `MAX_HOURLY_VOLUME_TARGETS_PER_INVOCATION = 8`, `stayOnStep: true` se sobrar trabalho — mesmo padrão de `daily_metrics`) busca `total_mentions` por Narrativa via `syncHourlySentimentMetrics(..., categoryId, ...)`, agora sim escalando com o número de Narrativas (com throttle, diferente das 3 chamadas fixas de sempre) |
 | `weekly_monthly` | Passo 6.1 (semanal/mensal, throttle 7/30 dias) |
 | `topics` | Passo 6.4 (temas — endpoint novo `data/topics` + endpoint legado `data/volume/topics/queries`, throttle 7 dias) |
 | `platform_by_narrative` | Passo 6.3c (breakdown de plataforma por Narrativa, throttle 7 dias) |
@@ -159,6 +213,7 @@ computação síncrona, diferente de esperar rede).
 | `top_sites` | Passo 6.8 (ranking de sites/domínios de onde as mentions vêm, throttle 7 dias) |
 | `top_shared_sites` | ✅ Passo 6.8b — **novo** (2026-07-12): ranking de domínios mais compartilhados/linkados dentro do conteúdo das mentions (`data/sharedsites`, `bw_query_top_shared_sites`), distinto de `top_sites` — throttle 7 dias |
 | `demographics` | Passo 6.6 (demografia — gender/localização + sentimento líquido por localização, throttle 7 dias) |
+| `mentions` | ✅ Passo 5 (polling paginado) — **reposicionada (2026-07-16)**: era a 2ª fase do ciclo, hoje roda aqui, logo antes de `full_text_enrichment` (que depende dela) e depois de toda fase de métrica. Ver blockquote no topo. |
 | `full_text_enrichment` | ✅ Passo 5 (nota) — **implementado 2026-07-13**: busca seletiva de `full_text` (top-N por engajamento/`reach_estimate`, por Narrativa/dia, só fontes não-redigidas), throttle "1 Narrativa×dia pendente por invocação" (ver nota própria abaixo) |
 | `sov` | Passo 6.2 (Share of Voice de Query Group + reach por candidato, throttle 7 dias) |
 
