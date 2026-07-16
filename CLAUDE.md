@@ -560,6 +560,70 @@ acceptable state.
   directly in new code — `users-admin-view.tsx` and `app/perfil/page.tsx`
   both go through it.
 
+### Falha de comunicação com o Supabase no middleware (2026-07-16)
+
+User report: build local passava limpo (23 rotas, sem erro) mas o serviço
+em produção não respondia — pediu para investigar. Descartadas as 3 causas
+já documentadas em "Deploy (Hostinger)" (nenhuma presente:
+`next.config.ts` sem `output: 'standalone'`, `middleware.ts` já deixava
+`/` passar sem redirect, `.nvmrc`/`engines.node` consistentes em `24`).
+Perguntado em seguida se um erro de comunicação com o Supabase apareceria
+como mensagem amigável — resposta: **não em todo lugar**, e os 2 gaps reais
+encontrados foram corrigidos nesta sessão.
+
+- **`middleware.ts`** roda em **toda rota exceto `/`**, chamando `await
+  supabase.auth.getUser()` sem nenhum `try/catch`. Diferente de uma falha
+  de auth normal (que resolve com `{ data: { user: null }, error }`, sem
+  lançar exceção — já tratado desde sempre pelo redirect pra `/login`), uma
+  falha de rede/DNS/timeout real ao chamar o Supabase **lança uma exceção**
+  — e middleware roda **antes** de qualquer render, então isso não é
+  coberto por `app/error.tsx` (só captura exceções de Server Component sob
+  o layout raiz). O resultado seria a página de erro genérica/interna do
+  Next.js em qualquer rota real da aplicação, nunca a mensagem amigável do
+  produto — exatamente o sintoma "serviço não responde" mesmo com o
+  `/` de health check (que bypassa a checagem) respondendo 200 normalmente.
+  Corrigido: todo o bloco de auth do middleware agora roda dentro de um
+  `try/catch` — no catch, loga o erro completo (`console.error`, só
+  aparece no log do servidor, nunca pro usuário, mesmo princípio de "Edge
+  Function error handling" aplicado aqui) e redireciona para uma nova rota,
+  `/backend-unavailable?next=<path original>`.
+- **Nova página `app/backend-unavailable/page.tsx`** — Server Component
+  simples (mesmo padrão `searchParams: Promise<...>` já usado por
+  `app/login/page.tsx`), sem nenhuma dependência de cliente Supabase, então
+  sempre renderiza mesmo com o backend inteiramente fora do ar. Mostra
+  `BACKEND_ERROR_MESSAGE` (`lib/errors.ts`, já usado por `app/error.tsx`) +
+  um link "Tentar novamente" de volta pro `next` original (ou `/` se
+  ausente/inválido). `middleware.ts` nunca aplica a checagem de auth pra
+  esta rota (mesmo bypass já usado por `/`) — sem isso, um backend ainda
+  fora do ar faria essa própria página redirecionar pra si mesma de novo.
+- **Segundo gap real, mesma causa raiz**: `app/page.tsx` (a rota `/`) faz
+  `supabase.auth.getSession()` **client-side**, num `useEffect`, **sem
+  nenhum `.catch()`** — se a chamada rejeitar (mesmo tipo de falha de
+  rede), a promise nunca resolve o `router.replace(...)`, e a página fica
+  em branco para sempre (nem spinner, nem erro — literalmente nada),
+  violando a própria regra já estabelecida em "Backend communication
+  failures" ("um fetch inicial sem tratamento de erro é sempre bug").
+  Corrigido com um `.catch()` que loga o erro e redireciona pra
+  `/backend-unavailable` — mesmo destino do middleware, mesma mensagem.
+- **Deliberadamente não alterado**: o `throw` de env var ausente
+  (`NEXT_PUBLIC_SUPABASE_URL`/`NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`)
+  continua dentro do mesmo `try` do middleware (cai no mesmo catch/
+  redirect acima) — tratado como mais uma causa de "não foi possível
+  falar com o Supabase" do ponto de vista do usuário, já que o efeito
+  observável é idêntico.
+
+**Verificação**: `npx tsc --noEmit` e `npm run build` (`rm -rf .next`
+antes) passam limpos — 24 rotas, `/backend-unavailable` nova (141 B,
+Server Component estático). Sem ambiente com o Supabase real
+inacessível neste ambiente para simular a falha de rede de ponta a ponta
+— revisado por leitura de código (o `try/catch` cobre literalmente todo o
+bloco que antes podia lançar, e a nova rota não tem nenhuma dependência
+que a faria falhar por tabela). Sinal a acompanhar em produção: com o
+Supabase genuinamente inacessível, qualquer rota (exceto `/`, que sempre
+foi 200) deve mostrar "Não foi possível conectar ao servidor. Tente
+novamente em instantes." em vez de uma tela de erro crua do Next.js ou
+uma página em branco.
+
 ## Database security (Security Advisor)
 
 Added 2026-07-13. Running Supabase's Security Advisor (Dashboard →
