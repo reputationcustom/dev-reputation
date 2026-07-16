@@ -30,6 +30,8 @@ const EVENT_ICON: Record<string, string> = {
   negative_sentiment_increase: "●",
   negative_sentiment_spike: "●",
   momentum_spike: "⚡",
+  emerging_topic: "✦",
+  notable_mention: "★",
 };
 
 const SEVERITY_BORDER: Record<string, string> = {

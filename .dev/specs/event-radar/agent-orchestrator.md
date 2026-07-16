@@ -3,10 +3,27 @@ tipo: feature-spec
 módulo: event-radar
 funcionalidade: agent-orchestrator
 status: implementado
-atualizado: 2026-08-06
+atualizado: 2026-07-16
 ---
 
 # Orquestrador de Agent (única chamada à IA por evento)
+
+> ✅ **2 `event_type` novos (2026-07-16)** — `emerging_topic`/`notable_mention`
+> (ver `detection-engine.md` pro contexto completo). `feedEventType()`
+> ganhou os 2 mapeamentos diretos (mesmo enum `feed_event_type`, 2 valores
+> novos). `event_radar_build_agent_payload()` ganhou branches pra
+> `scope_type in ('topic', 'mention')`, adicionando 2 chaves novas ao
+> payload — `topic_detail` (label/tipo/volume/trending do assunto) e
+> `mention_detail` (autor/domínio/fonte/alcance/impacto/texto da menção,
+> sempre `coalesce(full_text, snippet)` truncado — nunca o campo bruto sem
+> fallback). `SYSTEM_PROMPT` ganhou uma exceção deliberada à sua própria
+> regra "nunca texto bruto de menções individuais": quando o payload traz
+> `mention_detail` (evento `notable_mention`), esse É o conteúdo da menção
+> sendo reportada — a IA usa esse texto pra descrever do que se trata, mas
+> é instruída a não generalizar a partir dele como se representasse todo o
+> volume/sentimento da conversa (é uma amostra individual, não uma
+> estatística) — mesma disciplina já usada por `narrative-summary-composer`'s
+> `sample_mentions` (`CLAUDE.md`, "Amostragem de mentions via Brandwatch").
 
 > ✅ **Implementado (2026-07-31)** — Edge Function
 > `supabase/functions/event-radar-agent-orchestrator/index.ts` (migration

@@ -66,11 +66,13 @@ function logError(step: string, err: unknown) {
 const AGENT_BATCH_SIZE = Number(Deno.env.get("EVENT_RADAR_AGENT_BATCH_SIZE") ?? "5");
 const AGENT_MODEL = Deno.env.get("EVENT_RADAR_AGENT_MODEL") ?? "claude-haiku-4-5";
 
-const SYSTEM_PROMPT = `Você é um analista de inteligência de comunicação para uma campanha política/monitoramento de reputação. Você recebe eventos estatísticos já agregados (picos/quedas de volume, mudanças de sentimento, momentum explosivo — crescimento combinado de volume/engajamento/autores/alcance de uma narrativa) sobre menções de mídia/redes sociais — nunca texto bruto de menções individuais — e transforma cada evento em um card legível para a equipe de comunicação.
+const SYSTEM_PROMPT = `Você é um analista de inteligência de comunicação para uma campanha política/monitoramento de reputação. Você recebe eventos estatísticos já agregados (picos/quedas de volume, mudanças de sentimento, momentum explosivo — crescimento combinado de volume/engajamento/autores/alcance de uma narrativa, assunto/termo emergente — trending fora ou dentro de qualquer categoria já mapeada, menção individual de destaque por engajamento/impacto nas últimas 72h) sobre menções de mídia/redes sociais e transforma cada evento em um card legível para a equipe de comunicação.
 
 Regras obrigatórias:
 - Nunca invente números ou causas que não estejam no payload fornecido. Use apenas os dados agregados recebidos.
 - Diferencie correlação de causa: use linguagem como "associado a" ou "coincide com" quando a evidência for insuficiente para afirmar causalidade direta.
+- Exceção deliberada à regra de "nunca texto bruto de menção individual": quando o payload trouxer "mention_detail" (evento "notable_mention"), esse é o próprio conteúdo da menção de destaque sendo reportada — use-o para descrever do que se trata, mas não generalize a partir dela como se representasse todo o volume/sentimento da conversa (ela é uma amostra individual, não uma estatística).
+- Quando o payload trouxer "topic_detail" (evento "emerging_topic"), descreva o assunto emergente (label/tipo/volume/crescimento) — não presuma se ele já pertence a alguma Narrativa monitorada ou não; o payload não traz essa informação.
 - Tom (skill humanizer-pt-br): direto e humano, não robótico. Vá direto ao ponto, sem abertura nem frase de efeito, sem "gancho" dramático. Frases curtas; declare os fatos — nunca "sinalize" importância com frases como "desempenha papel fundamental", "reflete uma tendência mais ampla", "representa um marco". Proibido: "além disso", "nesse sentido", "é importante destacar/ressaltar", "cabe salientar", travessão decorativo, atribuição vaga ("especialistas apontam"), conclusão genérica/otimista, gerúndio final pra simular profundidade ("destacando...", "reforçando..."), listas forçadas de exatamente 3 itens. Seja objetivo e eficiente — sem preencher espaço pra parecer mais completo.
 - "title": no máximo 90 caracteres.
 - "summary": no máximo 300 caracteres.
@@ -145,7 +147,16 @@ interface EligibleEvent {
 // `momentum_spike` (20260807000000) é, como volume_spike/volume_drop, um
 // indicador numérico cruzando um limiar configurado — mesma categoria
 // "threshold_triggered", não "sentiment_changed" (não é sobre sentimento).
-function feedEventType(radarEventType: string): "threshold_triggered" | "sentiment_changed" {
+// `emerging_topic`/`notable_mention` (2026-07-16) ganharam valores
+// dedicados no enum — nenhum dos 5 valores já reservados (narrative_detected/
+// case_created/case_status_changed/note_published/new_entity_detected)
+// cobre "um assunto emergente" ou "uma menção individual de destaque" sem
+// overload semântico.
+function feedEventType(
+  radarEventType: string,
+): "threshold_triggered" | "sentiment_changed" | "emerging_topic" | "notable_mention" {
+  if (radarEventType === "emerging_topic") return "emerging_topic";
+  if (radarEventType === "notable_mention") return "notable_mention";
   return radarEventType.startsWith("volume_") || radarEventType === "momentum_spike"
     ? "threshold_triggered"
     : "sentiment_changed";

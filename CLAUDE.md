@@ -9397,6 +9397,243 @@ regra só formaliza esse cuidado como obrigatório daqui pra frente, em vez
 de depender de lembrar caso a caso. Nenhuma mudança de código nesta
 entrada — puramente documentação.
 
+### `event-radar` — janelas de calendário comparavam "hoje" (incompleto) com um dia histórico fechado (2026-07-16)
+
+User report: cards do Radar de Eventos mostrando, por exemplo, "No
+Twitter, o volume despencou 80,7% em 3 dias (de 196.455 para 37.927
+menções), enquanto o Reddit registrou queda de 79,6% em 3 dias e 98,9% na
+comparação semanal" — números que o usuário confirma serem irreais (o
+volume diário do Twitter se mantém estável, 50-55% das menções). Hipótese
+do próprio usuário: "parece estar comparando o dia que ainda não foi
+concluído com um dia concluído" — pedido: confirmar que diário = últimas
+24h, semanal = últimos 7 dias, mensal = últimos 30 dias.
+
+**Confirmado por leitura de código, exatamente a causa apontada pelo
+usuário**: `run_event_detection()` (`event-radar`, 1.1) tinha 2 janelas de
+calendário que sempre incluíam `current_date` (hoje) como fronteira do
+período "atual" — `today_vs_last_week` (`current_date` a `current_date`)
+e `3d` (`current_date - 2` a `current_date`) — comparadas contra períodos
+históricos JÁ FECHADOS por completo (`current_date - 7`, ou
+`current_date - 5` a `current_date - 3`). Como o dia de hoje está sempre
+em andamento (só uma fração das 24h já se passou/sincronizou), somar
+"hoje" sistematicamente subestima o volume real do dia — produzindo uma
+"queda" artificial que não reflete a realidade, tanto mais pronunciada
+quanto mais cedo no dia o `pg_cron` roda (a cada 15min). Mesmo bug,
+mesma causa, também embutido em `event_radar_narrative_momentum()` (fonte
+da regra `momentum_spike`, 2026-08-07) — sua janela "3 dias" também somava
+`current_date - 2` a `current_date`. As janelas `3h`/`24h`
+(`event_radar_hourly_symmetric`, baseadas em `now()` real, nunca em
+fronteira de calendário) e `current_hour_vs_4week_avg` (usa explicitamente
+"a última hora já fechada", `date_trunc('hour', now()) - interval '1
+hour'`) nunca tiveram esse problema — são as únicas janelas que já
+cobriam corretamente "diário = últimas 24h" para `query`/`narrative`.
+`platform` (Twitter/Reddit no exemplo do usuário) nunca teve grão horário
+(`bw_query_metrics_daily_by_platform` é só diário) — por isso só era
+coberto por `today_vs_last_week`/`3d`, as duas janelas bugadas, o que
+explica por que o sintoma apareceu especificamente ali.
+
+**Fix** (migration
+`20260809150000_event_radar_windows_exclude_incomplete_today.sql`):
+toda janela de calendário passou a ancorar em "ontem"
+(`current_date - 1`, o último dia já fechado), nunca em `current_date`:
+- `today_vs_last_week` **removida** como regra ativa (o `window` value
+  continua aceito no CHECK constraint só para não invalidar linhas
+  históricas já fechadas com esse valor) e substituída por uma nova janela
+  `7d` — últimos 7 dias completos (`current_date-7..current_date-1`) vs.
+  7 dias completos anteriores (`current_date-14..current_date-8`) —
+  "semanal = últimos 7 dias", conforme pedido, em vez de um snapshot
+  "hoje vs. mesmo dia da semana passada" que sempre comparava um dia
+  parcial com um dia inteiro.
+- `3d` corrigida para 3 dias completos (`current_date-3..current_date-1`)
+  vs. 3 dias completos anteriores (`current_date-6..current_date-4`),
+  excluindo hoje.
+- Nova janela `30d` — últimos 30 dias completos vs. 30 dias completos
+  anteriores ("mensal = últimos 30 dias") — gap real, nenhuma janela
+  mensal existia antes desta correção.
+- `event_radar_narrative_momentum()` (fonte de `momentum_spike`) corrigida
+  com a mesma mudança (3 dias completos, exclui hoje) — mesma fórmula/
+  pesos de Momentum de sempre, só a janela de datas muda.
+- CHECK constraint de `radar_staging_events."window"` alterado (`drop
+  constraint`/`add constraint`) pra aceitar `7d`/`30d` além dos valores já
+  existentes — aditivo, nenhuma linha existente pode violar (superset dos
+  valores já aceitos).
+`event_radar_daily_range()` (helper genérico) não precisou de nenhuma
+mudança — já recebia datas explícitas como parâmetro, nunca hardcodava
+"hoje"; o bug estava inteiramente em COMO `run_event_detection()`/
+`event_radar_narrative_momentum()` chamavam esse helper.
+
+**Confirmado, sem mudança de código**: "diário = últimas 24h" já estava
+correto desde sempre para `query`/`narrative` (janela `24h`, baseada em
+`now()` real). `platform` continua sem uma janela diária real (só
+`3d`/`7d`/`30d`, todas agora corrigidas) — não existe grão horário por
+plataforma, gap honesto documentado, fora do escopo deste bug fix
+(nenhuma fonte de dado horária por plataforma existe pra construir uma
+janela "últimas 24h" real ali).
+
+**Nenhuma mudança em `event-radar-agent-orchestrator`**: o campo
+`window` (`'3h'`/`'24h'`/`'7d'`/`'30d'`/`'current_hour_vs_4week_avg'`) já
+era passado cru no payload da IA (`event_radar_build_agent_payload`) e o
+`SYSTEM_PROMPT` já não tinha nenhum mapeamento hardcoded window→frase —
+a IA sempre interpretou/parafraseou o valor sozinha. Com os novos valores
+`7d`/`30d` seguindo a mesma convenção de nomenclatura de `3h`/`24h`/`3d`,
+o texto gerado deve naturalmente descrever "em 7 dias"/"em 30 dias" em
+vez de "na comparação semanal" — sem precisar de nenhum ajuste de prompt.
+
+**Documentação**: `event-radar/detection-engine.md` — novo blockquote de
+topo + tabela "Janelas de comparação" reescrita.
+
+**Verificação**: balanço de parênteses/`$$` do arquivo de migration
+conferido via script Node (mesmo proxy de verificação de toda sessão sem
+acesso a Deno/Supabase real). Sem ambiente Supabase real disponível nesta
+sessão — a migration não foi executada contra um banco real, mesma
+limitação recorrente de toda sessão sem credenciais de deploy neste
+ambiente. `git push` para `develop` é o próximo passo; o sinal a
+acompanhar depois do deploy é o card de um evento de plataforma (Twitter/
+Reddit) parar de descrever quedas na casa de 70-90% quando o volume real
+do dia se mantém estável — e `radar_staging_events` deixando de gravar
+novas linhas com `window = 'today_vs_last_week'` (só linhas históricas já
+fechadas mantêm esse valor).
+
+### `event-radar` — foco ampliado além de volume/sentimento: assuntos emergentes + menções de destaque (2026-07-16)
+
+User request, mesma sessão do fix de janelas acima: "Hj o foco do radar
+está no volume, correto? Precisamos acrescentar o foco nas trends, nos
+principais assuntos não só os que estão categorizados, mas nos que
+possam estar fora das categorias também. Nas trends, seria interessante
+capturar de tempos em tempos algumas menções que estão no top de
+engajamento (publicação, repost e comentario) e com maior impacto e
+também colocar no radar. Lembrando de considerar somente as últimas 72h
+na análise."
+
+Confirmado: sim, até esta sessão o motor de detecção (1.1) só olhava
+volume/sentimento (+ Momentum, via `momentum_spike`) — nunca "o quê"
+está sendo falado nem menções individuais de destaque. Antes de
+implementar, 3 decisões reais de produto foram confirmadas com o usuário
+via `AskUserQuestion` (dado o histórico deste projeto de incidentes reais
+de rate-limit com a Brandwatch e de custo de IA — nenhuma das duas
+deveria ser decidida silenciosamente): (1) **assuntos emergentes reusam
+`bw_query_topics` já sincronizado** (sem chamada nova à Brandwatch, em
+vez de uma captura dedicada de 72h) — "as últimas 72h" pedidas pelo
+usuário viram um **gate de frescor** sobre o snapshot já sincronizado
+(`synced_at >= now() - 72h`), não uma nova janela de data pedida à
+Brandwatch; (2) **menções de destaque viram cards completos via IA**
+(mesmo pipeline de severidade + agent-orchestrator já usado por volume/
+sentimento/momentum), não uma lista passiva sem custo de IA; (3)
+**assuntos emergentes só no escopo Query inteira** (não perguntado de
+novo pra menções, por consistência — mesma escolha aplicada lá também,
+documentada como inferência, não uma segunda pergunta).
+
+Migration `20260809160000_event_radar_topics_and_notable_mentions.sql`:
+
+- **2 `scope_type` novos**: `topic` (`scope_id` = `<topic_type>:<label>`
+  — evita colisão entre um mesmo texto aparecendo sob tipos diferentes,
+  ex: `hashtags:eleicao` vs. `words:eleicao`) e `mention` (`scope_id` =
+  `mentions.resource_id`). CHECK constraint de `scope_type` e de
+  `"window"` (novo valor `72h`) alterados via `drop constraint`/`add
+  constraint` — aditivo, nenhuma linha existente pode violar.
+- **`emerging_topic`** — fonte `bw_query_topics` com `category_id is
+  null` (assunto da **Query inteira** — que, por já cobrir todas as
+  menções da Query, inclui qualquer assunto esteja ele mapeado a uma
+  Narrativa ou não, satisfazendo diretamente o "não só os categorizados...
+  fora das categorias também" do pedido, sem nenhuma lógica extra pra
+  achar "o que não tem categoria"), restrito a `synced_at >= now() - 72h`.
+  Dispara quando `volume >= min_volume` (reaproveitado) e `trending >=
+  event_radar_config().topic_trending_threshold` (novo, 50 — mesma escala
+  assumida de `spike_pct`, não confirmada contra um payload real da
+  Brandwatch, mesmo tipo de inferência de MVP já documentada pra outros
+  thresholds deste módulo). `comparison_value` grava o próprio limiar
+  configurado, mesmo padrão de `momentum_spike` (o `trending` da
+  Brandwatch já É o delta, não há "valor anterior" a comparar).
+- **`notable_mention`** — fonte `mentions` das últimas 72h, **organização
+  inteira** (todas as Queries, não por Narrativa), ranqueadas por
+  engajamento (soma de retweets/replies/shares/comments por plataforma a
+  partir de `mentions.engagement`, jsonb já sincronizado desde
+  2026-07-10) + `mentions.impact` combinados — top
+  `event_radar_config().notable_mentions_limit` (novo, default 5). Nova
+  function `event_radar_notable_mentions()` **seleciona linhas
+  individuais** já sincronizadas (mesma categoria de uso já sancionada
+  por `full_text_enrichment`, que já seleciona top-N mentions por
+  `reach_estimate`) — não é uma violação da premissa "nunca somar/agregar
+  `mentions` pra representar um total" (2026-07-11), já que nenhuma soma
+  é usada como estatística, só como critério de ranking pra escolher QUAIS
+  linhas individuais destacar. `comparison_value` grava `0` (baseline —
+  qualquer engajamento acima de zero já qualifica pro top-N).
+- **`feed_event_type` (enum) ganhou 2 valores dedicados**
+  (`emerging_topic`/`notable_mention`, via `alter type ... add value if
+  not exists`) — nenhum dos 5 valores já reservados
+  (`narrative_detected`/`case_created`/`case_status_changed`/
+  `note_published`/`new_entity_detected`, confirmados por grep como nunca
+  usados em código nenhum até hoje) cobria "um assunto emergente" ou "uma
+  menção individual de destaque" sem overload semântico — `narrative_detected`
+  em particular foi deixado de propósito reservado pra uma futura detecção
+  real de Narrativa, não repurposed pra assunto/termo. Seguro adicionar
+  fora de uma transação que também usa os valores em DML (só consumidos
+  em runtime, pela Edge Function, bem depois desta migration).
+- **`event-radar-agent-orchestrator/index.ts`**: `feedEventType()` ganhou
+  os 2 mapeamentos diretos; `SYSTEM_PROMPT` ganhou menção aos 2 novos
+  tipos de evento e uma **exceção deliberada** à sua própria regra "nunca
+  texto bruto de menções individuais" — quando o payload traz
+  `mention_detail` (evento `notable_mention`), esse É o conteúdo da
+  menção sendo reportada (autor/domínio/fonte/alcance/impacto/
+  `coalesce(full_text, snippet)` truncado a 500 caracteres), e a IA é
+  instruída a descrevê-lo sem generalizar como se representasse todo o
+  volume/sentimento da conversa — mesma disciplina já usada pelos
+  `sample_mentions` de `narrative-summary-composer` (ver "Amostragem de
+  mentions via Brandwatch" acima neste arquivo).
+- **`event_radar_build_agent_payload()`** ganhou branches pra `scope_type
+  in ('topic', 'mention')` e 2 chaves novas no payload — `topic_detail`
+  (label/tipo/volume/trending/percentual) e `mention_detail` (sempre
+  presentes no jsonb, `null` quando não se aplicam, mesma convenção de
+  `top_topics`/`top_platforms`/`top_authors` sempre-presentes já usada
+  pelas branches existentes).
+- **Achado real ao revisar a severidade existente, corrigido na mesma
+  migration**: `event_radar_volume_severity`/`event_radar_sentiment_severity`
+  (20260729000000) tinham o **mesmo bug** de "hoje incompleto vs. dia
+  histórico fechado" já corrigido em `run_event_detection()` pela sessão
+  anterior deste mesmo dia — só que na PRÓPRIA fórmula de severidade
+  (fallback usado sempre que não há z-score horário, ou seja, **sempre**
+  pra escopo `platform`, que nunca tem grão horário). A correção anterior
+  só tinha tocado as janelas de DETECÇÃO (`run_event_detection`), nunca as
+  de SEVERIDADE (funções à parte, só chamadas de dentro do bloco de
+  severidade) — por isso ficou pra trás. Corrigido agora com a mesma
+  janela de 3 dias completos (`current_date-3..current_date-1` vs.
+  `current_date-6..current_date-4`) — relevante particularmente agora,
+  já que os 2 novos `scope_type` (`topic`/`mention`) também caem sempre
+  nesse mesmo fallback (nenhum dos dois tem grão horário).
+  `event_radar_reach_engagement_severity` também ganhou 2 branches novos
+  (`topic`: volume do assunto relativo ao maior volume entre assuntos
+  frescos da organização; `mention`: `reach_estimate` da menção relativo
+  ao maior `reach_estimate` entre mentions das últimas 72h da organização)
+  — sem eles, os 2 novos tipos sempre cairiam no `coalesce(..., 50)`
+  neutro do fator de maior peso (15%) entre os que se aplicam a eles.
+- **Frontend**: `EVENT_ICON` (`recent-events-panel.tsx`) ganhou ícones
+  pros 2 novos `event_type` granulares (`emerging_topic`: "✦",
+  `notable_mention`: "★") — `get_recent_highlights`/`related_narrative_id`
+  já lidam com os 2 novos tipos sem nenhuma mudança (`related_narrative_id`
+  já é condicional na renderização do link "Ver Narrativa →", e fica
+  `null` pra ambos por construção, já que nenhum dos dois tem uma
+  Narrativa relacionada por definição).
+
+**Documentação**: `detection-engine.md` (novo blockquote de topo +
+"Escopo do evento"/"Regras de negócio"/"Dados envolvidos" atualizados),
+`severity.md` (bug + 2 branches), `agent-orchestrator.md` (2 event_type
+novos + exceção do prompt), `data-model.md` (`scope_type`/`scope_id`/
+`feed_event_type`).
+
+**Verificação**: balanço de parênteses/`$$` da migration conferido via
+script Node (8 pares, mesmo proxy de verificação de toda sessão sem
+acesso a Deno/Supabase real). Sem ambiente Supabase/Anthropic real
+disponível nesta sessão — a migration e a chamada real à IA com os novos
+tipos de payload não foram testadas contra produção, mesma limitação
+recorrente de toda sessão sem credenciais de deploy neste ambiente.
+`git push` para `develop` é o próximo passo (acumulado com o fix de
+janelas da mesma sessão, ainda não enviado); os sinais a acompanhar
+depois do deploy são: `radar_staging_events` ganhando linhas com
+`scope_type in ('topic', 'mention')` no próximo ciclo de
+`run_event_detection()` (a cada 15min), e cards do tipo "✦"/"★"
+aparecendo no widget "Radar de Eventos" (`/overview`/`/radar`) assim que
+o agent-orchestrator processar os primeiros eventos enfileirados.
+
 ## Directory structure
 
 ```

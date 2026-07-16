@@ -3,10 +3,32 @@ tipo: feature-spec
 módulo: event-radar
 funcionalidade: severity
 status: implementado
-atualizado: 2026-08-08
+atualizado: 2026-07-16
 ---
 
 # Severidade (SQL, sem IA)
+
+> ⚠️ **Bug real corrigido + 2 branches novos (2026-07-16)** — migration
+> `20260809160000_event_radar_topics_and_notable_mentions.sql`, ver
+> `detection-engine.md` pro contexto completo (sessão que também acrescentou
+> `emerging_topic`/`notable_mention`). **Bug**: `event_radar_volume_severity`/
+> `event_radar_sentiment_severity` tinham o mesmo problema já corrigido em
+> `run_event_detection()` por uma sessão anterior (2026-07-16, ver
+> `detection-engine.md`) — o fallback usado quando não há z-score horário
+> (ou seja, **sempre** pra escopo `platform`, que nunca tem grão horário)
+> comparava `current_date - 2..current_date` (hoje, incompleto) contra
+> `current_date - 5..current_date - 3` (histórico fechado). Corrigido para
+> `current_date - 3..current_date - 1` vs. `current_date - 6..current_date - 4`
+> (3 dias completos vs. 3 dias completos), igual à janela de detecção já
+> corrigida. **Branches novos**: `event_radar_reach_engagement_severity`
+> ganhou ramos pra `scope_type in ('topic', 'mention')` — sem eles, os 2
+> novos tipos de evento sempre cairiam no `coalesce(fator, 50)` neutro
+> neste fator de 15% (o maior entre os que se aplicam a eles, já que
+> Sentimento/Velocidade/Relevância de autores/Risco de narrativa
+> relacionada não têm sinal nenhum pra `topic`/`mention`). `topic`: volume
+> do assunto relativo ao maior volume entre assuntos frescos (72h) da
+> organização. `mention`: `reach_estimate` da menção relativa ao maior
+> `reach_estimate` entre mentions das últimas 72h da organização.
 
 > ✅ **Implementado (2026-07-29)** — migration
 > `20260729000000_event_radar_severity.sql`. Anexado dentro do próprio
