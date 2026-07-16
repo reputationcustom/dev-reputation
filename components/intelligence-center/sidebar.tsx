@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useUserProfile } from "@/hooks/use-user-profile";
+import { NavIcon } from "./nav-icons";
+import { Tooltip } from "@/components/ui/tooltip";
 
 // Módulo `event-radar` — pedido do usuário (2026-08-02): página dedicada
 // além do widget de /overview, mesmo feed fixo de 72h ("o que ocorreu,
@@ -64,9 +66,17 @@ function NavLink({
     ? pathname === matchPrefix || pathname.startsWith(`${matchPrefix}/`)
     : pathname === href || pathname.startsWith(`${href}/`);
 
-  // Collapsed (rail) mode: a single dot, not a truncated label — matches the
-  // prototype's rail (48px, `width:8px;height:8px;border-radius:50%` dots),
-  // avoids the earlier bug where a nav item collapsed to a single letter.
+  // Collapsed (rail) mode: an icon representing the page + a hover tooltip
+  // with its label — pedido do usuário 2026-07-16. Antes disso era um
+  // ponto colorido sem nenhuma pista visual de qual página cada um
+  // representa (herdado do protótipo, ver CLAUDE.md "Prototype-parity
+  // pass") — o usuário só descobria passando o mouse item por item, sem
+  // conseguir reconhecer a página de relance. `title`/`aria-label` no
+  // `<Link>` continuam (leitores de tela e o tooltip nativo do navegador
+  // como fallback), mas o `Tooltip` compartilhado (`components/ui/tooltip.tsx`,
+  // `position="right"` — evita o corte na borda esquerda da tela que um
+  // tooltip centralizado sofreria numa coluna de 64px) é o que de fato
+  // aparece ao passar o mouse.
   if (collapsed) {
     return (
       <Link
@@ -74,9 +84,13 @@ function NavLink({
         onClick={onNavigate}
         title={label}
         aria-label={label}
-        className="flex items-center justify-center rounded-md py-2.5 transition-colors hover:bg-bg-sidebar-active"
+        className={`flex items-center justify-center rounded-md py-2.5 transition-colors hover:bg-bg-sidebar-active hover:text-white ${
+          active ? "text-accent-blue" : "text-text-sidebar-inactive"
+        }`}
       >
-        <span className={`h-2 w-2 rounded-full ${active ? "bg-accent-blue" : "bg-text-sidebar-inactive"}`} />
+        <Tooltip text={label} position="right">
+          <NavIcon href={href} className="h-5 w-5" />
+        </Tooltip>
       </Link>
     );
   }

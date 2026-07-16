@@ -143,6 +143,24 @@ aberto: breakpoint exato **não confirmado** contra o protótipo real —
 `lg` do Tailwind foi usado como aproximação razoável, não um valor
 validado (`_pending.md` item #15).
 
+✅ **Rail colapsado ganha ícone por página + tooltip (2026-07-16)** —
+pedido do usuário: o rail (item acima) mostrava só um ponto colorido por
+item, herdado do protótipo original — sem nenhuma pista visual de qual
+página cada um representa, o usuário só descobria passando o mouse item
+por item. `components/intelligence-center/nav-icons.tsx` (novo) — um
+ícone SVG desenhado à mão por rota (nenhuma lib de ícones nova, mesmo
+princípio já usado pelo logo/gráficos deste projeto), herdando a cor
+ativo/inativo via `currentColor` das mesmas classes de texto que o
+`NavLink` já calculava para o modo expandido. `components/ui/tooltip.tsx`
+ganhou `position="right"` — um tooltip `top`/`bottom` (centralizado
+horizontalmente sobre o ícone) seria cortado pela borda esquerda da tela
+numa coluna de 64px colada a ela; abrindo à direita, o tooltip sempre cai
+sobre a área de conteúdo. `title`/`aria-label` no `<Link>` continuam como
+estavam (leitor de tela + fallback nativo do navegador), o `Tooltip`
+compartilhado é o que efetivamente aparece ao passar o mouse. Ver
+CLAUDE.md, "Sidebar colapsada — ícones + tooltip por página", para o
+detalhe completo.
+
 ## Premissas de visualização de dados (2026-07-15)
 
 Regras adicionadas a pedido do usuário, a partir de uma revisão do

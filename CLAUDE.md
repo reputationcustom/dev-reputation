@@ -9698,6 +9698,68 @@ depois do deploy são: `radar_staging_events` ganhando linhas com
 aparecendo no widget "Radar de Eventos" (`/overview`/`/radar`) assim que
 o agent-orchestrator processar os primeiros eventos enfileirados.
 
+### Sidebar colapsada — ícones + tooltip por página (2026-07-16)
+
+User request, com screenshot do rail colapsado: os itens do menu lateral
+minimizado (`Sidebar`, ver "Full prototype re-import..." acima — o rail é
+herdado do protótipo original, `width:8px;height:8px;border-radius:50%`)
+apareciam só como pontos coloridos, sem nenhuma pista visual de qual
+página cada um representa — o usuário só descobria passando o mouse item
+por item. Pedido: trocar por ícones representativos de cada página +
+tooltip informativo, e documentar.
+
+- **`components/intelligence-center/nav-icons.tsx`** (novo) — um ícone
+  SVG desenhado à mão por rota (`NavIcon({ href })`, mapa
+  `NAV_ICON_BY_HREF` cobrindo as 13 rotas do menu: `/radar`, `/overview`,
+  `/narratives`, `/sentiment`, `/platforms`, `/themes`, `/authors`,
+  `/alerts`, `/communications`, `/reports`, `/admin/users`, `/help`,
+  `/perfil`) — nenhuma lib de ícones nova (`lucide-react`/`heroicons`/etc.),
+  mesmo princípio já usado pelo logo (`public/logo.svg`, `<img>` simples)
+  e pelos gráficos deste projeto (SVG cru feito à mão, nunca uma lib de
+  charting). Cada ícone herda a cor via `stroke="currentColor"` — o
+  `NavLink` continua sendo quem decide a cor (ativo = `text-accent-blue`,
+  inativo = `text-text-sidebar-inactive`, hover = `text-white`), exatamente
+  a mesma lógica de cor que o modo expandido já usava pro texto do link,
+  só reaproveitada como classe no `<Link>` em vez de no `<span>` do ponto.
+  Um `FallbackIcon` (círculo sólido) cobre qualquer rota futura adicionada
+  a `NAV_ITEMS`/`ANALYSIS_ITEMS`/etc. sem uma entrada correspondente no
+  mapa — nunca uma tela em branco no rail, só um ícone genérico até
+  alguém atualizar o mapa.
+- **`components/ui/tooltip.tsx` ganhou `position="right"`** — o `Tooltip`
+  compartilhado já existia (KPIs da Visão Geral, cabeçalhos de
+  `NarrativesTable`/`XInsightsPanel`), sempre com `position="top"`
+  (padrão) ou `"bottom"`, ambos centralizados horizontalmente sobre o
+  elemento (`left-1/2 -translate-x-1/2`) — correto quando há espaço dos
+  dois lados, mas o rail colapsado tem só 64px de largura colados à borda
+  esquerda da tela: um tooltip centralizado teria sua metade esquerda
+  cortada pra fora do viewport. `"right"` abre à direita do ícone,
+  verticalmente centralizado (`left-full top-1/2 ml-2 -translate-y-1/2`),
+  caindo sempre sobre a área de conteúdo à direita da sidebar, nunca
+  cortado.
+- **`sidebar.tsx`'s `NavLink`** — o branch `collapsed` trocou o
+  `<span className="h-2 w-2 rounded-full ...">` (o ponto) por
+  `<Tooltip text={label} position="right"><NavIcon href={href}
+  className="h-5 w-5" /></Tooltip>`, mantendo o `<Link>` como o item
+  flexível de largura cheia da coluna (`Tooltip` só envolve o ícone, não o
+  `<Link>` inteiro — colocar o `Tooltip` por fora do `<Link>` deslocaria a
+  centralização do ícone, já que o `<span>` do `Tooltip` é `inline-flex`
+  e não herda o `justify-center` do `<Link>`). `title`/`aria-label` no
+  `<Link>` continuam presentes (leitor de tela + fallback nativo do
+  navegador caso o `Tooltip` falhe por algum motivo), só deixaram de ser
+  o único mecanismo visível de identificação do item.
+- **Modo expandido inalterado** — o pedido era especificamente sobre o
+  rail colapsado; o menu expandido continua só com o rótulo em texto,
+  sem ícone ao lado, mesmo comportamento de sempre (evitar escopo além do
+  pedido).
+
+**Verificação**: `npx tsc --noEmit` e `npm run build` (com `rm -rf .next`
+antes) passam limpos — 24 rotas, mesma contagem de antes (mudança é
+puramente de componente/estilo, nenhuma rota nova). Sem automação de
+browser disponível neste ambiente — a aparência real dos 13 ícones e o
+posicionamento do tooltip no rail não foram confirmados visualmente num
+navegador real, mesma limitação já registrada em toda sessão anterior de
+`intelligence-center` neste arquivo.
+
 ## Directory structure
 
 ```
