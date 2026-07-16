@@ -125,6 +125,40 @@ limit, gate proativo via `x-rate-limit-used`), e o comportamento do
 dispatcher (encadeamento de fases por invocação, `stopReason`). Este
 módulo não duplica esse conteúdo — só referencia.
 
+> ⚠️ **Regra permanente (2026-07-16): `sync-console` depende totalmente
+> de `bw-sync` — qualquer mudança na ORDEM do pipeline exige revisar e
+> ajustar `sync-console` na mesma sessão, nunca como um follow-up
+> separado.** `sync-console` não tem nenhuma lógica própria de
+> sincronização — ele só observa/reflete o que `bw-sync` já faz, então
+> qualquer coisa que mude "em que ordem/quando cada fase roda" em
+> `bw-sync` se propaga automaticamente pras suposições deste módulo. Uma
+> mudança na ordem de `SYNC_STEPS` (como a reorganização de 2026-07-16,
+> que moveu `mentions` pra perto do fim — ver `foundation/sync-brandwatch.md`)
+> ou no comportamento do dispatcher (como `stay_on_step` passar a
+> encadear na mesma invocação em vez de encerrá-la, mesma data) exige, no
+> mínimo, checar:
+> - **As 4 cópias do array `SYNC_STEPS`** (Princípio técnico 5 — nenhuma
+>   pode importar da outra): `bw-sync/index.ts` (canônica),
+>   `get-sync-console-status`, `trigger-sync-step`, e
+>   `app/(intelligence-center)/admin/sync-console/types.ts` (a fonte real
+>   do `<select>` de `manual-step-execution.md` e da ordem visual do
+>   `PipelineStepper` de `pipeline-monitoring.md`) — devem ficar
+>   idênticas em ordem, sempre.
+> - **`pipeline-monitoring.md`**: qualquer descrição em prosa da ordem do
+>   pipeline (ex: a tabela "Execução em fases" espelhada de
+>   `sync-brandwatch.md`, o texto do stepper/accordion) precisa bater com
+>   a nova ordem real.
+> - **`manual-step-execution.md`**: a descrição do que cada fase faz
+>   (usada no resumo de 1 linha do modal) e qualquer suposição sobre
+>   dependência entre fases (ex: `full_text_enrichment` depender de
+>   `mentions` ter rodado antes no mesmo ciclo).
+> - **`data-model.md`**: se a mudança adicionar/remover uma fase, ou
+>   mudar o que "registros sincronizados" significa pra ela.
+> Esta seção existe justamente porque a sessão de 2026-07-16 que
+> reordenou `SYNC_STEPS` já cobriu isso corretamente por iniciativa
+> própria — a regra formaliza esse cuidado como obrigatório daqui pra
+> frente, não como algo a lembrar caso a caso.
+
 ## Rotas / Páginas
 
 - `/admin/sync-console` — único destino. Lista de cards de pares (Projeto,

@@ -9376,6 +9376,27 @@ dos ~50s-11min de distância observados no log que motivou este fix — e
 `stepsRun` (`[bw-sync] invocation:done`) deve aparecer maior nas
 invocações que antes ficavam presas numa única passagem de round-robin.
 
+### Regra permanente: `sync-console` depende totalmente de `bw-sync` (2026-07-16)
+
+Pedido explícito do usuário, depois das duas mudanças de pipeline acima
+(reordenação de `SYNC_STEPS`, `stay_on_step` deixando de encerrar a
+invocação): "atualize na documentação que o sync console depende
+totalmente do bw_sync, portanto sempre que houver uma atualização na
+ordem do pipeline do bw_sync, obrigatoriamente será necessário revisar e
+ajustar o sync console." Formalizado como regra permanente em 2 lugares
+(não só um, já que quem edita `bw-sync/index.ts` normalmente está olhando
+`foundation/sync-brandwatch.md`, não `sync-console/overview.md`):
+`sync-brandwatch.md` ganhou o aviso logo no topo do arquivo (antes de
+qualquer outro blockquote), e `sync-console/overview.md` ganhou a
+checklist completa do que verificar (as 4 cópias do array `SYNC_STEPS`,
+`pipeline-monitoring.md`, `manual-step-execution.md`, `data-model.md`) na
+seção "Relação com `foundation/sync-brandwatch.md`". As duas mudanças
+desta mesma sessão (reordenação + `stay_on_step`) já tinham sido
+propagadas corretamente por iniciativa própria antes deste pedido — a
+regra só formaliza esse cuidado como obrigatório daqui pra frente, em vez
+de depender de lembrar caso a caso. Nenhuma mudança de código nesta
+entrada — puramente documentação.
+
 ## Directory structure
 
 ```

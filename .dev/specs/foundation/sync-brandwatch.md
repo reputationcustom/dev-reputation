@@ -6,6 +6,21 @@ status: implementado
 atualizado: 2026-07-16
 ---
 
+> ⚠️ **Regra permanente (2026-07-16): `.dev/specs/sync-console/` depende
+> totalmente deste documento — qualquer mudança na ORDEM do pipeline
+> (`SYNC_STEPS`) ou no comportamento do dispatcher (encadeamento entre
+> fases, `stopReason`) exige revisar e ajustar `sync-console` na MESMA
+> sessão**, nunca deixado como follow-up. `sync-console` não tem lógica
+> própria de sincronização — ele só observa/reflete o que `bw-sync` já
+> faz (`sync-console/overview.md`, "Relação com `foundation/sync-brandwatch.md`"
+> tem a checklist completa do que verificar: as 4 cópias do array
+> `SYNC_STEPS`, `pipeline-monitoring.md`, `manual-step-execution.md`,
+> `data-model.md`). As duas mudanças documentadas logo abaixo (reordenação
+> de `SYNC_STEPS` e `stay_on_step` deixando de encerrar a invocação, ambas
+> 2026-07-16) já foram propagadas pra `sync-console` como parte da mesma
+> sessão — usar essas duas como referência de "como fica" quando uma
+> futura mudança de ordem/dispatcher precisar do mesmo tratamento.
+
 > ✅ **`mentions` movida pra perto do fim de `SYNC_STEPS` + `hourly_metrics`
 > ganha janela incremental (2026-07-16)** — pedido do usuário: "as métricas
 > inicialmente são mais importantes do que as mentions. Mude a ordem do
