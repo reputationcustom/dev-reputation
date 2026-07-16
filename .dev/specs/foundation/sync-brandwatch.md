@@ -50,6 +50,48 @@ atualizado: 2026-07-16
 >    invocação, nunca apaga histórico. Ver `bw-sync/index.ts`,
 >    `getHourlyMetricsWindowMs()`, pro racional completo.
 
+> ✅ **`stay_on_step` deixou de encerrar a invocação — encadeamento
+> também DENTRO de uma fase, não só entre fases distintas (2026-07-16)** —
+> pedido do usuário a partir de um log real de produção colado
+> (`sync_log`, 4 invocações separadas em ~14min, cada uma parando
+> imediatamente após `hourly_metrics` devolver `stayOnStep`): "não seria
+> possível rodar duas fases em uma execução já que são menores? Assim
+> otimizaríamos as chamadas a brandwatch." O log confirmou dois fatos ao
+> mesmo tempo: (1) o encadeamento entre fases DISTINTAS já funcionava
+> perfeitamente desde 2026-08-06 — o mesmo log mostra `weekly_monthly →
+> topics → platform_by_narrative → x_insights` completos em ~18 segundos,
+> uma única invocação; (2) mas assim que `hourly_metrics` (ou
+> `daily_metrics`, mesmo mecanismo) devolvia `stayOnStep: true` — seu
+> próprio round-robin interno por Narrativa (`MAX_HOURLY_VOLUME_TARGETS_PER_INVOCATION`/
+> `MAX_SENTIMENT_TARGETS_PER_INVOCATION`, ambos = 8) ainda não tinha
+> terminado — a invocação inteira parava ali, mesmo sobrando orçamento de
+> chamadas e tempo de parede, e mesmo que a PRÓPRIA fase pudesse
+> processar mais categorias na mesma invocação. Essa parada era uma
+> decisão deliberada de 2026-08-06 ("`stayOnStep` não deve ser atropelado
+> por este loop") — fazia sentido antes de `hasBrandwatchCallBudget()`/
+> `INVOCATION_TIME_BUDGET_MS` cobrirem qualquer fase "stale-gated", mas
+> ficou redundante depois: hoje esses dois já são a salvaguarda real
+> contra estourar o teto da Brandwatch numa invocação só. Corrigido: o
+> dispatcher só encerra a invocação de verdade em
+> `cycle_complete`/`call_budget_exhausted`/`time_budget_exhausted` —
+> `stay_on_step` agora faz a MESMA fase ser tentada de novo imediatamente
+> na mesma invocação (nunca avança `currentStep`), até ela terminar de
+> verdade ou o orçamento acabar. Seguro por construção: cada runner
+> releitura o frescor por categoria do zero a cada chamada
+> (`fetchHourlyVolumeFreshness`/`fetchDailySentimentFreshness`), então uma
+> passagem nunca reprocessa o que a passagem anterior, na mesma invocação,
+> acabou de gravar; `sync_cursors.next_step` continua sendo escrito como a
+> mesma fase em toda passagem intermediária, então uma interrupção no
+> meio (budget/tempo/erro) deixa o cursor num estado idêntico ao de antes
+> desta mudança. `MAX_HOURLY_VOLUME_TARGETS_PER_INVOCATION`/
+> `MAX_SENTIMENT_TARGETS_PER_INVOCATION` continuam existindo sem mudança
+> (cada PASSAGEM ainda processa no máximo 8 categorias) — o que mudou é
+> quantas passagens uma única invocação pode encadear antes de devolver o
+> controle pro heartbeat. **Não é implementação da execução manual**
+> (`sync-console/manual-step-execution.md`) — aquele fluxo continua
+> explicitamente "1 fase, 1 tentativa" por desenho (o admin vê o
+> resultado de uma tentativa por vez), não retenta sozinho.
+
 > ✅ **Correção de documentação (constatada numa auditoria pedida pelo
 > usuário, junto com a criação da spec `sync-console`)**: este documento
 > ainda descrevia o heartbeat do `pg_cron` como "a cada 15 minutos" em
@@ -406,6 +448,15 @@ de 30/10min). Duas correções, sem migration (mudança só na Edge Function):
 > (várias Narrativas na mesma fase "stale-gated" ainda cobrem 1
 > `categoryTarget`/invocação) — só elimina o desencontro **entre tipos de
 > métrica diferentes** dentro do mesmo ciclo, que era o problema relatado.
+
+> ⚠️ **`stay_on_step` como `stopReason` de parada, descrito no parágrafo
+> acima, foi revertido em 2026-07-16** — ver o blockquote no topo deste
+> arquivo ("`stay_on_step` deixou de encerrar a invocação"). O texto acima
+> descreve corretamente o desenho de 2026-08-06 (histórico); desde
+> 2026-07-16, `stay_on_step` não interrompe mais a invocação — a mesma
+> fase é retentada na mesma invocação até terminar ou o orçamento acabar.
+> Os outros 3 motivos de parada (`cycle_complete`/`call_budget_exhausted`/
+> `time_budget_exhausted`) continuam exatamente como descritos acima.
 
 **Estado vive inteiro no Postgres, nunca em memória do isolate** — por
 isso uma invocação **manual** (clique em "Invoke" no Dashboard do

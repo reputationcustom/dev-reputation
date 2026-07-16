@@ -9283,6 +9283,99 @@ com bem menos linhas por chamada uma vez que um par já tenha
 mostrando `mentions` perto do fim da linha horizontal, não mais como o 2º
 ponto.
 
+### `stay_on_step` deixa de encerrar a invocação — encadeamento também dentro de uma fase (2026-07-16)
+
+Follow-up direto, mesma sessão da reordenação acima. User request, com um
+CSV real de `sync_log` colado (91 linhas, incluindo 4 execuções separadas
+de `hourly_metrics` em ~14 minutos): "com atualização diária, não seria
+possível rodar duas fases em uma execução já que são menores? Assim
+otimizaríamos as chamadas a brandwatch e conseguiríamos obter mais dados
+com menos chamadas. Veja o que estamos tendo de tempo de processamento
+das fases e registros retornados, avalie a possibilidade de melhoria."
+
+**Leitura do CSV, não suposição**: confirmou dois fatos ao mesmo tempo.
+(1) O encadeamento entre fases DISTINTAS já funciona — as linhas de
+17:41:12 a 17:41:30 mostram `hourly_metrics → weekly_monthly → topics →
+platform_by_narrative → x_insights`, 5 fases, uma única invocação (~18s
+de span), só parando em `x_insights` por `call_budget_exhausted`. (2) Mas
+os 4 registros anteriores de `hourly_metrics` (17:27:16, 17:28:14,
+17:29:08, 17:40:16), cada um em ~50s-11min de distância do seguinte, cada
+um com `stop_reason: stay_on_step` e ~20-24 mil `rows_processed`, mostram
+que a invocação parava IMEDIATAMENTE assim que `hourly_metrics` devolvia
+`stayOnStep` — nenhuma outra fase (nem sequer outra passagem da própria
+`hourly_metrics`) tinha chance de rodar na mesma invocação, mesmo com
+orçamento de chamadas e tempo de parede sobrando. Causa raiz, confirmada
+lendo o dispatcher: `if (stopReason) { break; }` tratava `stay_on_step`
+exatamente igual a `call_budget_exhausted`/`time_budget_exhausted` — uma
+decisão deliberada de 2026-08-06 ("`stayOnStep` não deve ser atropelado
+por este loop"), correta na época, mas que ficou redundante depois que
+`hasBrandwatchCallBudget()`/`INVOCATION_TIME_BUDGET_MS` passaram a cobrir
+qualquer fase "stale-gated" — hoje esses dois já são a salvaguarda real
+contra estourar o teto de 30 chamadas/10min da Brandwatch numa invocação
+só, tornando "parar sempre que `stayOnStep`" uma parada desnecessária
+(mais um round-trip HTTP + cold start por passagem do round-robin, exatamente
+o "otimizar as chamadas" que o usuário pediu).
+
+**Fix** (`bw-sync/index.ts`, sem migration): o dispatcher só interrompe a
+invocação de verdade em `cycle_complete`/`call_budget_exhausted`/
+`time_budget_exhausted` — `stay_on_step` não avança mais `currentStep`,
+fazendo a MESMA fase ser tentada de novo na iteração seguinte do mesmo
+loop, até ela terminar de verdade (`stayOnStep: false`) ou o orçamento
+acabar; só então o loop segue pra próxima fase distinta (mesmo
+encadeamento que já existia desde 2026-08-06). Seguro por construção,
+sem nenhuma mudança nas funções runner em si: `fetchHourlyVolumeFreshness()`/
+`fetchDailySentimentFreshness()` já releituram o frescor por categoria do
+zero a cada chamada, então uma passagem nunca reprocessa o que a
+passagem anterior, na mesma invocação, acabou de gravar; `cursorUpdate.next_step`
+continua sendo escrito como a mesma fase em toda passagem intermediária
+(idêntico ao valor que já era escrito antes desta mudança), então uma
+interrupção no meio (erro/budget/tempo) deixa `sync_cursors` num estado
+indistinguível de antes — o próximo heartbeat resume exatamente a mesma
+fase, sem pular nem retroceder nada. `MAX_HOURLY_VOLUME_TARGETS_PER_INVOCATION`/
+`MAX_SENTIMENT_TARGETS_PER_INVOCATION` (ambos = 8) não mudaram — cada
+PASSAGEM continua limitada a 8 categorias; o que mudou é só quantas
+passagens uma invocação pode encadear antes de devolver o controle pro
+heartbeat.
+
+**Rede de segurança do loop ajustada em conjunto**: o limite de iterações
+do `for` (antes `SYNC_STEPS.length`, pensado como "no máximo 1 tentativa
+por fase distinta, então mesmo um ciclo sem trabalho nenhum termina
+sozinho") precisava de folga, já que agora uma única fase pode consumir
+várias iterações retentando a si mesma. Trocado por `MAX_DISPATCHER_ITERATIONS
+= SYNC_STEPS.length * 6` — generoso o bastante pra várias passagens de
+round-robin, mas ainda finito como salvaguarda final; quem de fato limita
+quantas passagens acontecem na prática continua sendo o orçamento
+real de chamadas/tempo (`hasBrandwatchCallBudget()`/`INVOCATION_TIME_BUDGET_MS`),
+não este contador.
+
+**Deliberadamente não estendido à execução manual**
+(`sync-console/manual-step-execution.md`) — `runManualStepInvocation()`
+continua fazendo exatamente 1 tentativa de 1 fase e retornando o
+resultado, nunca retentando sozinha; é um desenho intencional e distinto
+("o admin vê o resultado de uma tentativa por vez, não um loop aberto"),
+não algo que este fix deveria alterar.
+
+**Documentação**: `foundation/sync-brandwatch.md` — novo blockquote de
+topo com o racional completo, mais um `⚠️` inline logo após o parágrafo
+de 2026-08-06 que descrevia o desenho antigo (histórico, preservado como
+estava — só uma nota apontando pra correção, não reescrito).
+
+**Verificação**: `npx tsc --noEmit` e `npm run build` (com `rm -rf .next`
+antes) passam limpos — 23 rotas, mesma contagem de antes (mudança é
+100% Edge-Function-only). Balanço de parênteses conferido em
+`bw-sync/index.ts` — mesmo `+1` pré-existente de sempre (comentário em
+prosa), nada novo introduzido. Sem ambiente Deno/Supabase real nesta
+sessão — a mudança não foi testada contra uma invocação real; `git push`
+para `develop` continua sendo o próximo passo pendente (acumulado com as
+2 entradas anteriores de `sync-console`/`hourly_metrics`, ainda não
+enviadas). Sinal a acompanhar depois do deploy: no CSV de `sync_log`, uma
+sequência de `hourly_metrics`/`daily_metrics` com `stop_reason:
+stay_on_step` deve passar a aparecer com timestamps muito próximos entre
+si (mesma invocação, diferença de milissegundos/poucos segundos) em vez
+dos ~50s-11min de distância observados no log que motivou este fix — e
+`stepsRun` (`[bw-sync] invocation:done`) deve aparecer maior nas
+invocações que antes ficavam presas numa única passagem de round-robin.
+
 ## Directory structure
 
 ```

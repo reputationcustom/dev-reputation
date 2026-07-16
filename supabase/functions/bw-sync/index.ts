@@ -4356,26 +4356,60 @@ async function runSyncInvocation(supabase: SupabaseClient, invocationStartedAt: 
     //
     // Corrigido: a invocação agora encadeia quantas fases o orçamento
     // permitir, mesmo as que fizeram trabalho real — só para quando: (a) o
-    // ciclo inteiro fecha (`cycleComplete`); (b) uma fase pede
-    // `stayOnStep` (o burst de sentimento de `daily_metrics` continua
-    // espalhado entre heartbeats de propósito — existe especificamente
-    // pra não estourar o teto de 30 chamadas/10min da Brandwatch dentro de
-    // uma única invocação, não deve ser "atropelado" por este loop); (c)
-    // o orçamento de chamadas Brandwatch acaba (`hasBrandwatchCallBudget()`,
-    // já compartilhado por toda fase "stale-gated"); ou (d) o orçamento de
-    // tempo de parede da invocação inteira acaba
-    // (`INVOCATION_TIME_BUDGET_MS`, novo — mesma rede de segurança de CPU
-    // que a parada-na-primeira-fase cumpria antes, só que agora medida
-    // direto em vez de inferida de "uma fase só"). Cada fase "stale-gated"
-    // continua avançando no máximo 1 categoryTarget por passagem (trade-off
-    // inalterado, ver `sync-brandwatch.md`) — o que muda é que o dispatcher
-    // agora visita TODAS as fases dentro do orçamento, não só a primeira
-    // que tinha trabalho. Limite de iterações = número de fases, então
-    // mesmo um ciclo inteiro sem trabalho nenhum termina sozinho.
+    // ciclo inteiro fecha (`cycleComplete`); (b) o orçamento de chamadas
+    // Brandwatch acaba (`hasBrandwatchCallBudget()`, já compartilhado por
+    // toda fase "stale-gated"); ou (c) o orçamento de tempo de parede da
+    // invocação inteira acaba (`INVOCATION_TIME_BUDGET_MS` — mesma rede de
+    // segurança de CPU que a parada-na-primeira-fase cumpria antes, só que
+    // agora medida direto em vez de inferida de "uma fase só"). Cada fase
+    // "stale-gated" continua avançando no máximo 1 categoryTarget por
+    // passagem (trade-off inalterado, ver `sync-brandwatch.md`) — o que
+    // muda é que o dispatcher agora visita TODAS as fases dentro do
+    // orçamento, não só a primeira que tinha trabalho.
+    //
+    // ✅ 2026-07-16 — `stayOnStep` deixou de ser motivo de parada da
+    // invocação. Pedido do usuário, a partir de um log real de produção:
+    // 4 invocações separadas em ~14min, cada uma parando imediatamente
+    // após `hourly_metrics` devolver `stayOnStep` (round-robin interno de
+    // `MAX_HOURLY_VOLUME_TARGETS_PER_INVOCATION` categorias ainda não
+    // terminado) — nenhuma outra fase (nem sequer outra passagem da mesma
+    // fase) tinha chance de rodar na mesma invocação, mesmo sobrando
+    // orçamento de chamadas e tempo de parede. A cautela original
+    // (2026-08-06: "não deve ser atropelado por este loop") fazia sentido
+    // antes de `hasBrandwatchCallBudget()`/`INVOCATION_TIME_BUDGET_MS`
+    // cobrirem toda fase "stale-gated" — hoje esses dois já são a
+    // salvaguarda real contra estourar o teto da Brandwatch numa única
+    // invocação, tornando "parar sempre que `stayOnStep`" redundante e
+    // caro (mais um round-trip HTTP + cold start pra cada passagem do
+    // round-robin). Agora: quando `result.stayOnStep` é `true`, o loop
+    // NÃO avança `currentStep` — a mesma fase é tentada de novo
+    // imediatamente nesta mesma invocação, e só passa pra próxima quando
+    // ela finalmente terminar (`stayOnStep: false`) ou o orçamento
+    // acabar. Seguro por construção: cada função runner já releitura o
+    // frescor por categoria do zero a cada chamada (`fetchHourlyVolumeFreshness`/
+    // `fetchDailySentimentFreshness`), então uma passagem nunca reprocessa
+    // o que a passagem anterior, na mesma invocação, acabou de gravar —
+    // e `cursorUpdate.next_step` continua sendo escrito como a MESMA fase
+    // em toda passagem intermediária, então mesmo isso sendo cortado no
+    // meio (por budget/tempo/erro) deixa `sync_cursors` num estado
+    // idêntico ao de antes desta mudança (o próximo heartbeat resume a
+    // mesma fase, sem pular nem retroceder nada).
     let mentionsCount = 0;
     let stepsRun = 0;
     let lastStopReason: string | null = null;
-    for (let i = 0; i < SYNC_STEPS.length; i++) {
+    // Limite de iterações generoso (bem maior que `SYNC_STEPS.length`) —
+    // antes bastava 1 iteração por fase distinta pra "nada devido" parar o
+    // loop sozinho; agora uma fase "stay_on_step" pode consumir várias
+    // iterações retentando a SI MESMA antes de liberar a próxima. O
+    // orçamento de chamadas/tempo (não este contador) é quem de fato
+    // limita quantas passagens acontecem — este teto é só uma rede de
+    // segurança final contra um loop sem fim numa fase que, por algum bug
+    // futuro, nunca parasse de devolver `stayOnStep` mesmo sem gastar
+    // orçamento algum (`didWork:false` + `stayOnStep:true`, combinação que
+    // nenhuma função runner produz hoje, mas que este limite continua
+    // cobrindo mesmo assim).
+    const MAX_DISPATCHER_ITERATIONS = SYNC_STEPS.length * 6;
+    for (let i = 0; i < MAX_DISPATCHER_ITERATIONS; i++) {
       stepsRun++;
       log("invocation:step_start", { projectId, queryId, step: currentStep });
       // Reiniciado por FASE, não por invocação — uma invocação pode
@@ -4513,12 +4547,18 @@ async function runSyncInvocation(supabase: SupabaseClient, invocationStartedAt: 
 
       // ✅ 2026-08-06: "Sincronismo entre fases" acima — não para mais só
       // porque `result.didWork` foi true. Continua encadeando fases até um
-      // motivo real de parar (ver `stopReason`).
-      if (stopReason) {
-        lastStopReason = stopReason;
+      // motivo real de parar (ver `stopReason`). ✅ 2026-07-16: `stay_on_step`
+      // deixou de ser um desses motivos — só interrompe a invocação de
+      // verdade em `cycle_complete`/`call_budget_exhausted`/
+      // `time_budget_exhausted`; enquanto `stayOnStep`, a MESMA fase
+      // (`currentStep` inalterado) é tentada de novo na próxima iteração
+      // deste mesmo loop, em vez de encerrar a invocação — ver o
+      // comentário completo acima de `MAX_DISPATCHER_ITERATIONS`.
+      lastStopReason = stopReason;
+      if (stopReason === "cycle_complete" || stopReason === "call_budget_exhausted" || stopReason === "time_budget_exhausted") {
         break;
       }
-      currentStep = next;
+      if (!result.stayOnStep) currentStep = next;
     }
 
     // stepsRun > 1 nos logs confirma, invocação a invocação, que a
