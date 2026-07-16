@@ -3,10 +3,72 @@ tipo: feature-spec
 módulo: event-radar
 funcionalidade: frontend-highlights-feed
 status: implementado
-atualizado: 2026-07-14
+atualizado: 2026-07-16
 ---
 
 # Radar de Eventos — Feed das Últimas 72h (frontend)
+
+> ✅ **"Resumo executivo" reescrito de novo — combina eventos do radar com
+> o que mudou nas Narrativas monitoradas (2026-07-16)** — pedido do
+> usuário: "o Resumo executivo do radar de eventos deve resumir tudo que
+> aconteceu nas últimas 72h, seja o que apareceu no radar, seja o que
+> ocorreu e estão aparecendo nas categorias... conter associação entre
+> assuntos quentes, com maior engajamento, assuntos que melhoraram ou
+> pioraram o sentimento, algum ponto de vista sobre engajamento das
+> plataformas e autores... falar do momentum, da criticidade e tendência."
+> Até esta sessão, a aba "Resumo executivo" só reaproveitava
+> `envelope.narrative_text` — o mesmo texto período-escopado de "O que os
+> gráficos mostram?" (Camada 0/1 de `ai-synthesis.md`, escopado só a
+> `feed_events`) — que (a) variava com o período do header, o oposto do
+> que "últimas 72h" promete, e (b) nunca lia o snapshot das Narrativas/
+> categorias, então nunca conseguia falar de Momentum/Tendência/Risco por
+> Narrativa nem de mudanças de sentimento reais (só resumia os próprios
+> `feed_events`, reescritos em prosa).
+>
+> Fechado com uma **4ª seção Camada 2** (`ai-synthesis.md`) — `page =
+> 'overview'`, `section = 'radar_summary'` —, a primeira desse módulo com
+> uma característica nova: **janela fixa de 72h, independente do período
+> do header** (mesma regra central deste spec, "Por que não é o bloco
+> `highlights` genérico"), via um `PageContext` próprio
+> (`radarSummaryPeriodContext`, `aggregated-metrics-service.ts`) cuja
+> chave usa só o dia UTC corrente como "balde" (nunca o período de 72h em
+> si, que é sempre relativo a "agora") — uma única linha por organização
+> por dia, recomposta intra-dia pelo mesmo gatilho de tempo
+> (`AI_SYNTHESIS_REFRESH_HOURS`) **e** de evento novo do radar
+> (`anyCreatedAtNewerThan`, mesmo princípio de `highlightsNewerThan` já
+> usado pela Camada 1) já usados por toda outra seção deste módulo.
+> `/overview` e `/radar` chamam a mesma Edge Function (`get-page-overview`)
+> pra este bloco, então o texto é sempre idêntico nas duas telas.
+>
+> O payload (`buildRadarExecutiveSummaryPayload`) combina 2 fontes que
+> nunca tinham sido lidas juntas: (1) até 30 `feed_events` das últimas 72h
+> (`get_recent_highlights`, mesma function já usada pela aba "Lista" —
+> nenhuma chamada nova), agrupados por severidade/tipo + os 10 de maior
+> `severity_score`; (2) um snapshot de TODAS as Narrativas-folha
+> (`get_narratives_table`, `p_scope: 'leaves'`, sem filtro de organização
+> além disso) para as últimas 72h **e** para as 72h imediatamente
+> anteriores (mesmo padrão de `previousPeriodRange`/período-comparação já
+> usado por "Comparação entre períodos" de `/themes`) — o delta real entre
+> as 2 janelas é o que permite identificar de verdade "quais Narrativas
+> melhoraram/pioraram de sentimento" (`sentiment_delta`), não só o valor
+> do momento, além de top-8 por menções/risco/momentum. Complementado por
+> `get_platform_breakdown` (participação por plataforma) e
+> `get_authors_ranking` (top 5 autores por engajamento — snapshot, mesma
+> limitação estrutural já documentada em `entities/author-linking.md`: o
+> período não filtra de fato essa function). O prompt
+> (`RADAR_EXECUTIVE_SUMMARY_SYSTEM_PROMPT`) instrui a IA a combinar as duas
+> fontes num único relato, nunca tratá-las como 2 seções separadas, e a
+> citar explicitamente Momentum/Tendência/Risco das Narrativas mais
+> relevantes — meta de até 8 frases/1400 caracteres (maior que o padrão de
+> 900 das outras 3 seções Camada 2, dado o escopo mais amplo pedido).
+>
+> Frontend: `RecentEventsPanel` perdeu os props `narrativeText`/`page`/
+> `onGenerated` (não fazem mais sentido pra esta aba — não há botão de
+> atualização manual ainda, ver "Gaps conhecidos" abaixo) e ganhou
+> `radarSummaryText` (`envelope.ui_meta.radar_summary_text`), renderizado
+> com o mesmo `ExpandableText` (não mais `NarrativeTextPanel`) já usado
+> pelas outras seções Camada 2. As KPIs de severidade (linha de
+> `SummaryStat`) continuam exatamente como antes, acima do texto.
 
 > ✅ **Seletor de período escondido em `/radar` + botão "Atualizar resumo
 > executivo" atrás de uma preferência de admin (2026-07-14, mesma data,
@@ -217,11 +279,12 @@ própria UI, não só na documentação.
    `NarrativeCard`/`NarrativesTable`).
 5. Cada card tem um menu de feedback (ver "Feedback do analista" abaixo).
 6. Um toggle "Lista"/"Resumo executivo" no topo do widget alterna entre a
-   visualização de cards (itens 3-5 acima, sempre 72h fixo) e o
-   `narrative_text` período-escopado da página hospedeira (✅ reformulado
-   2026-07-14 — ver blockquote de topo; versão original mostrava contagens
-   agregadas dos mesmos eventos de 72h, não um texto, e nunca refletia o
-   período selecionado no header).
+   visualização de cards (itens 3-5 acima, sempre 72h fixo) e um texto de
+   IA que também é janela fixa de 72h (`ui_meta.radar_summary_text`, ✅
+   reescrito 2026-07-16 — ver blockquote de topo), combinando os eventos
+   do radar com o snapshot das Narrativas/categorias monitoradas na mesma
+   janela — nunca o `narrative_text` período-escopado da página
+   hospedeira (usado só por "O que os gráficos mostram?").
 
 ## Interface (UI)
 
@@ -242,24 +305,21 @@ própria UI, não só na documentação.
   persiste entre navegações (mesmo padrão de `filtrosOpen` no header).
   - **Lista** (default): os cards individuais, exatamente como descrito
     nos itens 3-5 do "Fluxo principal".
-  - **Resumo executivo** — ✅ **reformulado 2026-07-14** (ver blockquote
-    de topo): renderiza `NarrativeTextPanel` (mesmo componente de "O que
-    os gráficos mostram?"/"Insights" nas outras páginas) com
-    `narrativeText`/`page`/`onGenerated` recebidos via prop da página
-    hospedeira (`/overview` já tinha `envelope.narrative_text` pronto;
-    `/radar` passou a chamar `usePageEnvelope("get-page-overview")` só
-    pra isso). Período-escopado por construção (mesma chave de
-    `page_narrative_synthesis` já usada em toda outra página) — muda ao
-    trocar Diário/Semanal/Mensal no header, ao contrário da versão
-    anterior. `blankOnCustom` (novo prop de `NarrativeTextPanel`) faz esta
-    instância específica renderizar em branco (só o botão "Analisar
-    período com IA") em período personalizado, em vez do template
-    Camada 0 que todo outro uso do componente mostra. **Removido**: as 5
-    estatísticas/chips por tipo/top 5 eventos (`RecentEventsExecutiveSummary`)
-    da versão original (2026-07-14, mesmo dia — nunca chegou a ficar mais
-    de algumas horas em produção) — a informação de eventos individuais já
-    está na aba "Lista", e a versão em estatísticas nunca tinha um texto
-    de verdade, o que motivou a reformulação.
+  - **Resumo executivo** — ✅ **reescrito de novo 2026-07-16** (ver
+    blockquote de topo): 5 KPIs de severidade (`SummaryStat`, "Quantidade
+    de alertas por risco", reintroduzidas 2026-07-14, inalteradas) + um
+    parágrafo de IA (`ExpandableText`, `ui_meta.radar_summary_text`) que
+    combina os eventos do radar das últimas 72h com o snapshot das
+    Narrativas/categorias monitoradas na mesma janela (e na janela de 72h
+    imediatamente anterior, pra comparação) — Momentum/Tendência/Risco/
+    sentimento por Narrativa, participação por plataforma, top autores por
+    engajamento. Janela fixa de 72h por construção (`radarSummaryPeriodContext`,
+    não `ctx.period` do header) — não muda ao trocar Diário/Semanal/Mensal,
+    ao contrário do `narrative_text` que essa aba usava antes. Sem botão de
+    atualização manual por enquanto (`compose-narrative-synthesis` só
+    recompõe a seção `main`, ver "Gaps conhecidos") — o texto se atualiza
+    sozinho pelo mesmo gatilho de tempo/evento novo do radar de qualquer
+    outra seção Camada 2.
 - **Cada card** (reaproveita o padrão visual de borda colorida por
   severidade já existente em `HighlightsPanel`, não reinventa):
   - Ícone por `event_type`: `volume_spike` (↑), `volume_drop` (↓),
@@ -362,6 +422,15 @@ própria UI, não só na documentação.
   resposta (`get_recent_highlights` já retorna `id`/`created_at` desde o
   início, sem precisar alterar o contrato do envelope existente e sem
   arriscar quebrar as páginas que já consomem `Highlight` como está).
+- ✅ **"Resumo executivo" (2026-07-16)** — lê `get_recent_highlights`
+  (mesma function acima, até 30 itens desta vez), `get_narratives_table`
+  (`p_scope: 'leaves'`, janela atual + janela anterior de 72h),
+  `get_platform_breakdown` e `get_authors_ranking` — todas já existentes,
+  nenhuma function nova. Escreve em `page_narrative_synthesis`
+  (`page: 'overview'`, `section: 'radar_summary'`, mesma tabela de toda
+  outra seção Camada 2, ver `ai-synthesis.md`) — chave usa o dia UTC
+  corrente como período (não os 72h em si), então há no máximo 1 linha
+  ativa por organização por dia.
 
 ## Permissões
 
@@ -390,6 +459,13 @@ usuário autenticado da organização (RLS já implementada,
   dia pra usar `NarrativeTextPanel`/`narrative_text` (`aggregated-metrics/
   ai-synthesis.md`) em vez de estatísticas locais; `/radar` ganhou
   `usePageEnvelope("get-page-overview")`, sem dependência nova além disso.
+- ✅ "Resumo executivo" reescrito de novo (2026-07-16) — nova seção Camada
+  2 `radar_summary` (`ai-synthesis.md`), `buildRadarExecutiveSummaryPayload`/
+  `composeRadarSummaryText`/`fetchRadarSummaryText`
+  (`aggregated-metrics-service.ts`, propagado nas 8 Edge Functions
+  deployadas por Princípio técnico 5). `RecentEventsPanel` trocou
+  `narrativeText`/`page`/`onGenerated` por `radarSummaryText`, renderizado
+  com `ExpandableText` (não mais `NarrativeTextPanel`).
 
 ## Gaps conhecidos (fora de escopo deste spec)
 
@@ -399,6 +475,13 @@ usuário autenticado da organização (RLS já implementada,
   pedido foi "visão rápida e fácil", um filtro a mais vai contra esse
   objetivo; o bloco `highlights` genérico de cada página já cobre uma
   visão mais filtrável quando necessário.
+- Botão de atualização manual do "Resumo executivo" (`radar_summary`) —
+  `compose-narrative-synthesis` (o endpoint por trás de "Analisar período
+  com IA"/"Atualizar resumo executivo" nas outras seções) só recompõe a
+  seção `main`, escopada por `page`/`period` do header; esta seção usa uma
+  chave própria (dia UTC corrente, sem período de header). Estender esse
+  endpoint pra aceitar `section: 'radar_summary'` não foi pedido nesta
+  sessão — o texto já se atualiza sozinho (tempo + evento novo do radar).
 - Notificação em tempo real (push/toast quando um evento novo é
   publicado) — este spec é só sobre a exibição ao carregar a página, não
   sobre atualização ao vivo.

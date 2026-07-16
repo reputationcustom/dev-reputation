@@ -9912,6 +9912,132 @@ os gráficos mostram?" ao lado) deixarem de mostrar uma queda no início do
 dia/semana/mês quando o volume real, comparável hora-a-hora, está estável
 ou crescendo.
 
+### Radar de Eventos — "Resumo executivo" reescrito de novo, combinando eventos do radar com o snapshot das Narrativas (2026-07-16)
+
+User request: "O Resumo executivo do radar de eventos deve resumir tudo
+que aconteceu nas últimas 72h, seja o que apareceu no radar, seja o que
+ocorreu e estão aparecendo nas categorias... conter associação entre
+assuntos quentes, com maior engajamento, assuntos que melhoraram ou
+pioraram o sentimento, algum ponto de vista sobre engajamento das
+plataformas e autores... falar do momentum, da criticidade e tendência."
+
+**Estado antes desta sessão**: a aba "Resumo executivo" de
+`RecentEventsPanel` (widget "Radar de Eventos", `/overview` e `/radar`)
+já tinha sido reescrita duas vezes antes (ver "Radar de Eventos — 'Resumo
+executivo' trocado de estatísticas fixas-72h por texto período-escopado",
+2026-07-14, e "'Resumo executivo' — 3 seções reais + resumo executivo em
+`/narratives`" / "Resumo executivo passa a acompanhar o radar", ambos
+mesma data) — a versão mais recente reaproveitava `envelope.narrative_text`
+(Camada 0/1 de `ai-synthesis.md`), que (a) variava com o período do
+header — o oposto do que "últimas 72h" promete — e (b) só é composto a
+partir de `feed_events` (o próprio radar), nunca lê o snapshot das
+Narrativas/categorias monitoradas — então nunca conseguia falar de
+Momentum/Tendência/Risco por Narrativa nem de mudanças de sentimento
+reais, exatamente os 3 pontos que este pedido cita explicitamente.
+
+**Fechado com uma 5ª seção Camada 2** (`ai-synthesis.md`) —
+`page = 'overview'`, `section = 'radar_summary'` — a primeira desse
+módulo com 2 características fora do padrão das 4 anteriores
+(`platforms:featured_content`/`themes:period_comparison`/
+`authors:overview`/`narratives:overview`): (1) **janela fixa de 72h,
+independente do período do header** (mesma regra central de
+`event-radar/frontend-highlights-feed.md`, "Por que não é o bloco
+`highlights` genérico") — via um `PageContext` próprio
+(`radarSummaryPeriodContext`, `aggregated-metrics-service.ts`) cuja chave
+de `page_narrative_synthesis` usa só o dia UTC corrente como "balde"
+(nunca o período de 72h em si, que é sempre relativo a "agora") — uma
+única linha por organização por dia, recomposta intra-dia; (2) **também
+reage a evento novo do radar** (`anyCreatedAtNewerThan`, mesmo princípio
+de `highlightsNewerThan` já usado pela Camada 1), além do gatilho de
+tempo (`AI_SYNTHESIS_REFRESH_HOURS`) — as outras 4 seções Camada 2 não
+têm essa noção porque não dependem de `highlights`; esta depende, é
+literalmente sobre eles. `/overview` e `/radar` chamam a mesma Edge
+Function (`get-page-overview`) pra este bloco, então o texto é sempre
+idêntico nas duas telas.
+
+**Payload** (`buildRadarExecutiveSummaryPayload`) combina 2 fontes que
+nunca tinham sido lidas juntas: (1) até 30 `feed_events` das últimas 72h
+(`get_recent_highlights`, mesma function já usada pela aba "Lista" —
+nenhuma chamada nova), agrupados por severidade/tipo + os 10 de maior
+`severity_score`; (2) um snapshot de todas as Narrativas-folha
+(`get_narratives_table`, `p_scope: 'leaves'`) pras últimas 72h **e** pras
+72h imediatamente anteriores (mesmo padrão de período-comparação já
+usado por "Comparação entre períodos" de `/themes`,
+`buildThemesPeriodComparisonPayload`) — o delta real entre as 2 janelas
+(`buildRadarNarrativeMovers`) é o que permite identificar de verdade
+"quais Narrativas melhoraram/pioraram de sentimento" (`sentiment_delta =
+net_sentiment atual - anterior`), não só o valor do momento, além de
+top-8 por menções/risco/momentum. Complementado por
+`get_platform_breakdown` (participação por plataforma) e
+`get_authors_ranking` (top 5 por engajamento — snapshot, mesma limitação
+estrutural já documentada em `entities/author-linking.md`: o período não
+filtra de fato essa function, ela sempre devolve o snapshot mais
+recente). O prompt (`RADAR_EXECUTIVE_SUMMARY_SYSTEM_PROMPT`) instrui a IA
+a combinar as duas fontes num único relato — nunca tratá-las como 2
+seções separadas — e a citar explicitamente Momentum/Tendência/Risco das
+Narrativas mais relevantes; meta de até 8 frases/1400 caracteres (maior
+que o padrão de 900 das outras 4 seções Camada 2, dado o escopo mais
+amplo pedido — `max_tokens: 900`, `truncateAtSentence(text, 1400)`).
+
+**Frontend**: `RecentEventsPanel` perdeu os props `narrativeText`/`page`/
+`onGenerated` (não fazem mais sentido pra esta aba — não há botão de
+atualização manual ainda, ver abaixo) e ganhou `radarSummaryText`
+(`envelope.ui_meta.radar_summary_text`), renderizado com o mesmo
+`ExpandableText` já usado pelas outras seções Camada 2 (não mais
+`NarrativeTextPanel`, que só faz sentido pra texto período-escopado com
+o botão "Analisar com IA"/"Atualizar resumo executivo" atrelado a
+`page`/`period` do header). As KPIs de severidade (`SummaryStat`, linha
+de 5 colunas) continuam exatamente como estavam, acima do texto.
+`overview/page.tsx`/`radar/page.tsx` atualizados para ler
+`envelope.ui_meta.radar_summary_text` (mesmo padrão já usado por
+`featured_content_text`/`period_comparison_text`/etc.) em vez de
+`envelope.narrative_text`.
+
+**Propagação (Princípio técnico 5)**: todo o código novo
+(interfaces/constantes/`radarSummaryPeriodContext`/
+`fetchRecentRadarHighlights`/`fetchRadarNarrativesWindow`/
+`buildRadarNarrativeMovers`/`buildRadarExecutiveSummaryPayload`/
+`composeRadarSummaryText`/`composeAndPersistRadarSummary`/
+`fetchRadarSummaryText`/`fetchOverviewRadarSummaryText`, mais o novo
+branch `else if (page === 'overview')` em `assemblePageResponse`) foi
+inserido no arquivo canônico (`aggregated-metrics-service.ts`) e
+propagado às 8 Edge Functions deployadas
+(`get-page-{overview,narratives,sentiment,platforms,themes,authors}`,
+`get-narrative-detail`, `compose-narrative-synthesis`) via um script Node
+de uso único que localiza os mesmos 2 blocos-âncora (confirmados
+únicos, 1 ocorrência por arquivo, antes de aplicar) em vez da técnica
+"wholesale prefix replace" que já causou 2 incidentes reais de produção
+neste projeto (ver "`[get-page-*] unhandled error ReferenceError:
+createClient is not defined`" acima) — confirmado por diff isolado que o
+bloco inserido é byte-idêntico ao canônico nos 8 arquivos, e que o import
+combinado `{ createClient, type SupabaseClient }` de cada arquivo
+deployado permaneceu intacto.
+
+**Deliberadamente fora de escopo**: nenhum botão de atualização manual
+pra esta seção — `compose-narrative-synthesis` (o endpoint por trás de
+"Analisar período com IA"/"Atualizar resumo executivo" nas outras seções)
+só recompõe a seção `main`, escopada por `page`/`period` do header;
+`radar_summary` usa uma chave própria (dia UTC corrente, sem período de
+header), então reaproveitar esse botão sem adaptação regeneraria a coisa
+errada. Estender o endpoint pra aceitar `section: 'radar_summary'` não
+foi pedido nesta sessão — o texto já se atualiza sozinho (gatilho de
+tempo de 1h + evento novo do radar).
+
+**Verificação**: `npx tsc --noEmit` e `npm run build` (com `rm -rf .next`
+antes) passam limpos — 24 rotas, mesma contagem de antes (mudança é
+backend + troca de props num componente já existente, sem rota nova).
+Balanço de parênteses/chaves conferido no arquivo canônico e nos 8
+arquivos deployados (mesmo proxy de verificação de toda sessão sem
+acesso a Deno/Supabase real). Sem ambiente Deno/Supabase/Anthropic real
+disponível nesta sessão — não testado contra uma chamada real à API da
+Anthropic nem contra produção, mesma limitação recorrente de toda sessão
+sem credenciais de deploy neste ambiente. `git push` para `develop` é o
+próximo passo; o sinal a acompanhar depois do deploy é a aba "Resumo
+executivo" do Radar de Eventos (`/overview` e `/radar`) mostrando um
+parágrafo que cita Narrativas pelo nome, associa assuntos quentes a
+mudanças de sentimento, e menciona Momentum/Tendência/Risco — não mais
+uma reescrita genérica dos próprios `feed_events`.
+
 ## Directory structure
 
 ```

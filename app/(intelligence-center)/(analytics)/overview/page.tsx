@@ -133,18 +133,22 @@ export default function OverviewPage() {
             página pra isso). Substitui o antigo widget "Insights"
             (HighlightsPanel, bloco `highlights` genérico por período) só
             neste lugar — HighlightsPanel continua existindo pra uso futuro
-            em outra página. ✅ 2026-07-14: o "Resumo executivo" (2ª aba do
-            toggle) já **é** período-escopado — recebe `narrative_text`
-            desta mesma página (`envelope.narrative_text`), não a janela
-            fixa de 72h. */}
+            em outra página. ✅ 2026-07-16: o "Resumo executivo" (2ª aba do
+            toggle) também é janela fixa de 72h agora, mas com sua própria
+            seção Camada 2 (`ui_meta.radar_summary_text`) que combina os
+            eventos do radar com o que mudou nas Narrativas monitoradas —
+            não mais `envelope.narrative_text` (período-escopado, usado só
+            por "O que os gráficos mostram?" acima). */}
         <div className="rounded-xl border border-border-default bg-bg-card p-5">
           <h2 className="text-sm font-bold text-text-primary">Radar de Eventos</h2>
           <p className="text-xs text-text-tertiary">Últimas 72 horas</p>
           <div className="mt-4">
             <RecentEventsPanel
-              narrativeText={envelope?.narrative_text ?? null}
-              page="overview"
-              onGenerated={retry}
+              radarSummaryText={
+                envelope?.ui_meta && typeof envelope.ui_meta.radar_summary_text === "string"
+                  ? envelope.ui_meta.radar_summary_text
+                  : null
+              }
               defaultView="summary"
             />
           </div>

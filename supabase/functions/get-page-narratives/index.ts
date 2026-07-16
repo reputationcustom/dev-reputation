@@ -1760,6 +1760,365 @@ function narrativesOverviewFallback(narratives: NarrativeRow[]): string {
   return 'Preparando um resumo executivo das Narrativas deste período.'
 }
 
+// =========================================================================
+// Radar de Eventos — "Resumo executivo" das últimas 72h
+// (event-radar/frontend-highlights-feed.md). ✅ Adicionado 2026-07-16,
+// pedido do usuário: o resumo precisa cobrir TUDO que aconteceu nas
+// últimas 72h — tanto o que o radar já publicou (mesmo sem Narrativa/
+// categoria associada: assuntos emergentes, menções de destaque, picos de
+// momentum/volume) quanto o que mudou nas próprias Narrativas monitoradas,
+// ainda que não tenha virado um evento do radar — com associação entre
+// assunto quente/engajamento, sentimento que melhorou/piorou, e leitura de
+// Momentum/Tendência/Risco. Antes desta mudança, a aba "Resumo executivo"
+// só reaproveitava o `narrative_text` período-escopado da página
+// hospedeira (Camada 0/1 de `ai-synthesis.md`) — nunca combinava eventos
+// do radar com o snapshot das Narrativas, e variava com o período do
+// header, o oposto do que este widget promete ("últimas 72h", sempre).
+//
+// Diferente de toda outra seção Camada 2 (featured_content/
+// period_comparison/overview acima), esta seção é INDEPENDENTE do período
+// selecionado no header — usa um PageContext próprio
+// (radarSummaryPeriodContext), nunca `context`/`ctx.period` da página que
+// chamou assemblePageResponse. Isso é o que permite `/overview` e `/radar`
+// (que renderizam o mesmo widget, RecentEventsPanel, com o período do
+// header podendo divergir entre navegações) compartilharem exatamente a
+// mesma linha/texto — a chave usa `period_start`/`period_end` só como um
+// "balde" do dia corrente (UTC), nunca o período de 72h em si (que é
+// sempre relativo a "agora"), pra não depender do header nem crescer sem
+// limite (1 linha por organização por dia UTC, recomposta intra-dia pelo
+// mesmo gatilho de tempo/evento novo de qualquer outra seção).
+// =========================================================================
+
+const RADAR_SUMMARY_WINDOW_HOURS = 72
+const RADAR_SUMMARY_HIGHLIGHTS_LIMIT = 30
+
+const EMPTY_ENVELOPE_FILTERS: EnvelopeFilters = {
+  narratives: [],
+  themes: [],
+  platforms: [],
+  sentiment: [],
+  region: [],
+  author_type: [],
+  risk_level: [],
+}
+
+interface RecentHighlightRow {
+  id: string
+  event_type: string
+  severity: RiskLevel | null
+  severity_score: number | null
+  title: string
+  summary: string
+  tags: string[] | null
+  related_narrative_id: string | null
+  created_at: string
+}
+
+// Chave de cache "por dia UTC corrente" (nunca o período do header) — um
+// PageContext dedicado, mode 'daily' (isFinalForPeriod nunca fecha esta
+// seção, mesma regra de qualquer outro período aberto) só pra reusar
+// cacheFingerprint/page_narrative_synthesis sem uma tabela nova.
+function radarSummaryPeriodContext(organizationId: string): PageContext {
+  const now = new Date()
+  const dayStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()))
+  const dayEnd = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000)
+  return {
+    organizationId,
+    period: {
+      start: dayStart.toISOString(),
+      end: dayEnd.toISOString(),
+      granularity: 'day',
+      comparison: 'previous_period',
+      mode: 'daily',
+    },
+    filters: EMPTY_ENVELOPE_FILTERS,
+  }
+}
+
+async function fetchRecentRadarHighlights(supabase: SupabaseClient, organizationId: string): Promise<RecentHighlightRow[]> {
+  try {
+    const { data, error } = await supabase.rpc('get_recent_highlights', {
+      p_organization_id: organizationId,
+      p_hours: RADAR_SUMMARY_WINDOW_HOURS,
+      p_limit: RADAR_SUMMARY_HIGHLIGHTS_LIMIT,
+    })
+    if (error) throw error
+    return (data ?? []) as RecentHighlightRow[]
+  } catch (err) {
+    console.error('[aggregated-metrics] fetchRecentRadarHighlights failed', err)
+    return []
+  }
+}
+
+function anyCreatedAtNewerThan(rows: { created_at: string }[], generatedAt: string): boolean {
+  const generatedMs = new Date(generatedAt).getTime()
+  return rows.some((r) => new Date(r.created_at).getTime() > generatedMs)
+}
+
+// Snapshot de Narrativas das últimas 72h + das 72h imediatamente
+// anteriores (mesmo padrão de buildThemesPeriodComparisonPayload) — é o
+// que permite identificar de verdade "quais assuntos melhoraram/pioraram
+// de sentimento" (delta real entre 2 janelas), não só o valor do momento.
+async function fetchRadarNarrativesWindow(
+  supabase: SupabaseClient,
+  organizationId: string,
+  periodStart: string,
+  periodEnd: string,
+  referenceAt: string,
+): Promise<NarrativeTableRow[]> {
+  const { data, error } = await supabase.rpc('get_narratives_table', {
+    p_organization_id: organizationId,
+    p_period_start: periodStart,
+    p_period_end: periodEnd,
+    p_filters: EMPTY_ENVELOPE_FILTERS,
+    p_pauta_id: null,
+    p_scope: 'leaves',
+    p_topic_sort: 'trending',
+    p_reference_at: referenceAt,
+  })
+  if (error) throw error
+  return (data ?? []) as NarrativeTableRow[]
+}
+
+function buildRadarNarrativeMovers(current: NarrativeTableRow[], previous: NarrativeTableRow[]): unknown {
+  const previousById = new Map(previous.map((n) => [n.id, n]))
+  const movers = current.map((n) => {
+    const prev = previousById.get(n.id)
+    const sentimentDelta =
+      prev && prev.net_sentiment !== null && n.net_sentiment !== null ? n.net_sentiment - prev.net_sentiment : null
+    return {
+      title: n.title,
+      category_label: n.category_label,
+      total_mentions: n.total_mentions,
+      mentions_delta: prev ? n.total_mentions - prev.total_mentions : null,
+      sentiment_label: n.sentiment_label,
+      net_sentiment: n.net_sentiment,
+      sentiment_delta: sentimentDelta,
+      momentum_score: n.momentum_score,
+      trend_label: n.trend_label,
+      risk_score: n.risk_score,
+      risk_label: n.risk_label,
+      positive_topics: n.positive_topics,
+      negative_topics: n.negative_topics,
+    }
+  })
+  const topByMentions = [...movers].sort((a, b) => b.total_mentions - a.total_mentions).slice(0, 8)
+  const topByRisk = [...movers].sort((a, b) => (b.risk_score ?? 0) - (a.risk_score ?? 0)).slice(0, 8)
+  const topByMomentum = [...movers].sort((a, b) => (b.momentum_score ?? 0) - (a.momentum_score ?? 0)).slice(0, 8)
+  const sentimentImproved = movers
+    .filter((m) => (m.sentiment_delta ?? 0) > 5)
+    .sort((a, b) => (b.sentiment_delta ?? 0) - (a.sentiment_delta ?? 0))
+    .slice(0, 5)
+  const sentimentWorsened = movers
+    .filter((m) => (m.sentiment_delta ?? 0) < -5)
+    .sort((a, b) => (a.sentiment_delta ?? 0) - (b.sentiment_delta ?? 0))
+    .slice(0, 5)
+  return {
+    total: current.length,
+    top_by_mentions: topByMentions,
+    top_by_risk: topByRisk,
+    top_by_momentum: topByMomentum,
+    sentiment_improved: sentimentImproved,
+    sentiment_worsened: sentimentWorsened,
+  }
+}
+
+async function buildRadarExecutiveSummaryPayload(
+  supabase: SupabaseClient,
+  organizationId: string,
+  highlights: RecentHighlightRow[],
+): Promise<unknown> {
+  const now = new Date()
+  const windowMs = RADAR_SUMMARY_WINDOW_HOURS * 60 * 60 * 1000
+  const currentStart = new Date(now.getTime() - windowMs).toISOString()
+  const currentEnd = now.toISOString()
+  const previousStart = new Date(now.getTime() - 2 * windowMs).toISOString()
+  const previousEnd = currentStart
+
+  const baseArgs = {
+    p_organization_id: organizationId,
+    p_period_start: currentStart,
+    p_period_end: currentEnd,
+    p_filters: EMPTY_ENVELOPE_FILTERS,
+  }
+
+  const [currentNarratives, previousNarratives, platformRes, authorsRes] = await Promise.all([
+    fetchRadarNarrativesWindow(supabase, organizationId, currentStart, currentEnd, currentEnd),
+    fetchRadarNarrativesWindow(supabase, organizationId, previousStart, previousEnd, previousEnd),
+    supabase.rpc('get_platform_breakdown', baseArgs),
+    supabase.rpc('get_authors_ranking', { ...baseArgs, p_scope: null }),
+  ])
+
+  const platforms = (platformRes.data ?? []) as BreakdownRow[]
+  const authors = (authorsRes.data ?? []) as AuthorRankingRow[]
+
+  const eventsBySeverity: Record<string, number> = { critical: 0, high: 0, medium: 0, low: 0 }
+  const eventsByType: Record<string, number> = {}
+  for (const h of highlights) {
+    if (h.severity && h.severity in eventsBySeverity) eventsBySeverity[h.severity] += 1
+    eventsByType[h.event_type] = (eventsByType[h.event_type] ?? 0) + 1
+  }
+  const topEvents = [...highlights]
+    .sort((a, b) => (b.severity_score ?? 0) - (a.severity_score ?? 0))
+    .slice(0, 10)
+    .map((h) => ({
+      event_type: h.event_type,
+      severity: h.severity,
+      title: h.title,
+      summary: h.summary,
+      tags: h.tags ?? [],
+      related_narrative_id: h.related_narrative_id,
+    }))
+
+  return {
+    window_hours: RADAR_SUMMARY_WINDOW_HOURS,
+    radar_events: {
+      total: highlights.length,
+      by_severity: eventsBySeverity,
+      by_type: eventsByType,
+      top_events: topEvents,
+    },
+    narratives: buildRadarNarrativeMovers(currentNarratives, previousNarratives),
+    platforms: platforms.slice(0, 6).map((p) => ({ label: p.label, pct: p.pct })),
+    top_authors: [...authors]
+      .sort((a, b) => (b.engagement ?? 0) - (a.engagement ?? 0))
+      .slice(0, 5)
+      .map((a) => ({ name: a.name, entity_type: a.entity_type, reach: a.reach, engagement: a.engagement, mentions: a.mentions })),
+  }
+}
+
+const RADAR_EXECUTIVE_SUMMARY_SYSTEM_PROMPT = `Você escreve, em português do Brasil, o resumo executivo do "Radar de Eventos" de uma campanha política/monitoramento de reputação — cobrindo tudo que aconteceu nas ÚLTIMAS 72 HORAS, a partir de um payload já agregado com: eventos que o radar de detecção publicou (inclusive assuntos/menções sem nenhuma Narrativa associada) e o snapshot das Narrativas/categorias monitoradas nesta janela e na janela de 72h imediatamente anterior (pra comparação real).
+
+O leitor precisa terminar com uma visão geral completa do período: quais assuntos estão mais quentes/com mais engajamento, a associação entre esses assuntos e mudanças de sentimento (o que melhorou, o que piorou, citando o nome), uma leitura sobre a distribuição por plataforma e os autores mais engajados, e o que os indicadores de Momentum, Tendência e Risco mostram para as Narrativas mais relevantes. Combine as duas fontes num só relato — eventos do radar (mesmo sem Narrativa associada) e o que mudou nas Narrativas monitoradas mesmo sem ter virado um evento do radar — não as trate como duas seções separadas.
+
+Regras obrigatórias:
+- NUNCA invente número/fato que não esteja no payload.
+- Cite Narrativas/assuntos pelo nome quando relevante.
+- Tom (skill humanizer-pt-br): direto e humano — sem gancho dramático, sem vocabulário de IA ("além disso", "desempenha papel fundamental", "nesse sentido"), sem atribuição vaga, sem conclusão genérica/otimista, sem gerúndio final de falsa profundidade.
+- Até 8 frases, até 1400 caracteres.
+- Responda só com o parágrafo, sem título, sem marcadores, sem aspas.`
+
+async function composeRadarSummaryText(supabase: SupabaseClient, ctx: PageContext, payload: unknown): Promise<string | null> {
+  const apiKey = Deno.env.get('ANTHROPIC_API_KEY')
+  if (!apiKey) {
+    console.error('[aggregated-metrics] composeRadarSummaryText: ANTHROPIC_API_KEY não configurada')
+    return null
+  }
+  try {
+    const anthropic = new Anthropic({ apiKey })
+    const response = await anthropic.messages.create({
+      model: NARRATIVE_SYNTHESIS_MODEL,
+      max_tokens: 900,
+      system: RADAR_EXECUTIVE_SUMMARY_SYSTEM_PROMPT,
+      messages: [{ role: 'user', content: `Dados das últimas ${RADAR_SUMMARY_WINDOW_HOURS}h:\n\n${JSON.stringify(payload)}` }],
+    })
+    await recordAiUsage(supabase, {
+      source: 'ai_synthesis_narrative',
+      model: NARRATIVE_SYNTHESIS_MODEL,
+      inputTokens: response.usage.input_tokens,
+      outputTokens: response.usage.output_tokens,
+      organizationId: ctx.organizationId,
+      referenceId: `overview:radar_summary:${ctx.period.start}..${ctx.period.end}`,
+    })
+    const textBlock = response.content.find((block) => block.type === 'text')
+    if (!textBlock || textBlock.type !== 'text') return null
+    const text = textBlock.text.trim()
+    return text ? truncateAtSentence(text, 1400) : null
+  } catch (err) {
+    console.error('[aggregated-metrics] composeRadarSummaryText failed', err)
+    return null
+  }
+}
+
+async function composeAndPersistRadarSummary(
+  supabase: SupabaseClient,
+  ctx: PageContext,
+  filtersHashValue: string,
+  highlights: RecentHighlightRow[],
+): Promise<void> {
+  const payload = await buildRadarExecutiveSummaryPayload(supabase, ctx.organizationId, highlights)
+  const text = await composeRadarSummaryText(supabase, ctx, payload)
+  if (!text) return
+  const { error } = await supabase.from('page_narrative_synthesis').upsert(
+    {
+      organization_id: ctx.organizationId,
+      page: 'overview',
+      section: 'radar_summary',
+      period_start: ctx.period.start,
+      period_end: ctx.period.end,
+      filters_hash: filtersHashValue,
+      narrative_text: text,
+      layer: 'layer_2',
+      is_final: false,
+      generated_at: new Date().toISOString(),
+    },
+    { onConflict: 'organization_id,page,section,period_start,period_end,filters_hash' },
+  )
+  if (error) {
+    console.error('[aggregated-metrics] composeAndPersistRadarSummary upsert failed', error)
+  } else {
+    console.log('[aggregated-metrics] composeAndPersistRadarSummary:success', { organizationId: ctx.organizationId })
+  }
+}
+
+function radarSummaryFallback(highlights: RecentHighlightRow[]): string {
+  if (highlights.length === 0) {
+    return 'Nenhum evento detectado pelo radar nas últimas 72 horas até o momento.'
+  }
+  return 'Preparando o resumo executivo das últimas 72 horas.'
+}
+
+// Mesmo mecanismo de fetchNarrativeText (linha existe → devolve + agenda
+// refresh em background se vencida por tempo OU por evento novo do radar;
+// não existe → fallback + agenda composição) — só com uma chave de
+// período fixa (radarSummaryPeriodContext), não a do header.
+async function fetchRadarSummaryText(
+  supabase: SupabaseClient,
+  organizationId: string,
+  highlights: RecentHighlightRow[],
+): Promise<string | null> {
+  const ctx = radarSummaryPeriodContext(organizationId)
+  try {
+    const hash = await cacheFingerprint(ctx)
+    const { data, error } = await supabase
+      .from('page_narrative_synthesis')
+      .select('narrative_text, is_final, generated_at')
+      .eq('organization_id', organizationId)
+      .eq('page', 'overview')
+      .eq('section', 'radar_summary')
+      .eq('period_start', ctx.period.start)
+      .eq('period_end', ctx.period.end)
+      .eq('filters_hash', hash)
+      .maybeSingle()
+    if (error) throw error
+    const row = data as SectionSynthesisRow | null
+    if (row) {
+      const timeStale = isNarrativeTextStale(row.generated_at)
+      const hasNewHighlight = anyCreatedAtNewerThan(highlights, row.generated_at)
+      if (timeStale || hasNewHighlight) {
+        console.log('[aggregated-metrics] fetchRadarSummaryText:stale_refresh_scheduled', {
+          organizationId,
+          generatedAt: row.generated_at,
+          reason: hasNewHighlight ? 'new_highlight' : 'time_window',
+        })
+        scheduleBackground(composeAndPersistRadarSummary(supabase, ctx, hash, highlights))
+      }
+      return row.narrative_text
+    }
+    console.log('[aggregated-metrics] fetchRadarSummaryText:initial_compose_scheduled', { organizationId })
+    scheduleBackground(composeAndPersistRadarSummary(supabase, ctx, hash, highlights))
+    return radarSummaryFallback(highlights)
+  } catch (err) {
+    console.error('[aggregated-metrics] fetchRadarSummaryText failed', err)
+    return radarSummaryFallback(highlights)
+  }
+}
+
+async function fetchOverviewRadarSummaryText(supabase: SupabaseClient, organizationId: string): Promise<string | null> {
+  const highlights = await fetchRecentRadarHighlights(supabase, organizationId)
+  return fetchRadarSummaryText(supabase, organizationId, highlights)
+}
+
 async function fetchGraph(supabase: SupabaseClient, ctx: PageContext): Promise<DisseminationGraph | null> {
   if (!ctx.narrativeId) return null
   try {
@@ -1935,6 +2294,14 @@ export async function assemblePageResponse(
       () => Promise.resolve(buildNarrativesOverviewPayload(narratives)),
       narrativesOverviewFallback(narratives),
     )
+  } else if (page === 'overview') {
+    // ✅ 2026-07-16 — "Resumo executivo" do widget "Radar de Eventos"
+    // (event-radar/frontend-highlights-feed.md), independente do período
+    // do header (ver bloco de justificativa acima de
+    // radarSummaryPeriodContext). `/overview` e `/radar` chamam esta mesma
+    // função (page === 'overview' nas duas), então o texto é sempre o
+    // mesmo em ambas.
+    uiMeta.radar_summary_text = await fetchOverviewRadarSummaryText(supabase, context.organizationId)
   }
 
   return {

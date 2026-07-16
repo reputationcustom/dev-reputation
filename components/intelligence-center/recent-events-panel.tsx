@@ -2,12 +2,11 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import type { PageKey } from "@reputation/shared-types";
 import { useIntelligenceCenterHeader } from "@/components/intelligence-center/header-context";
 import { useUserProfile } from "@/hooks/use-user-profile";
 import { useRecentHighlights, type RecentHighlight } from "@/hooks/use-recent-highlights";
 import { RiskBadge } from "@/components/intelligence-center/score-badges";
-import { NarrativeTextPanel } from "@/components/intelligence-center/insights-panel";
+import { ExpandableText } from "@/components/ui/expandable-text";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ErrorMessage } from "@/components/ui/error-message";
 import { EmptyState } from "@/components/ui/empty-state";
@@ -18,11 +17,28 @@ import { createClient } from "@/lib/supabase/client";
 // event-radar/frontend-highlights-feed.md — widget "Radar de Eventos". A
 // aba "Lista" tem janela FIXA de 72h, independente do período selecionado
 // no header (por isso busca `highlights` com seu próprio fetch/estado, via
-// `useRecentHighlights`, não vem do envelope da página); a aba "Resumo
-// executivo" é período-escopada (`narrativeText`, recebido por prop da
-// página hospedeira). Substitui HighlightsPanel (bloco `highlights`
-// genérico, por período) apenas neste lugar específico de /overview —
-// HighlightsPanel continua existindo pra uso futuro em outras páginas.
+// `useRecentHighlights`, não vem do envelope da página). Substitui
+// HighlightsPanel (bloco `highlights` genérico, por período) apenas neste
+// lugar específico de /overview — HighlightsPanel continua existindo pra
+// uso futuro em outras páginas.
+//
+// ✅ "Resumo executivo" reescrito (2026-07-16) — pedido do usuário: o texto
+// precisa cobrir tudo que aconteceu nas últimas 72h (eventos do radar E o
+// que mudou nas Narrativas monitoradas, mesmo sem virar evento), com
+// associação entre assunto quente/engajamento, sentimento que
+// melhorou/piorou, plataformas/autores, Momentum/Tendência/Risco. Antes
+// disso, esta aba só reaproveitava `narrative_text` — o mesmo texto
+// período-escopado de "O que os gráficos mostram?", que nunca combinava
+// eventos do radar com o snapshot das Narrativas e variava com o período
+// do header (o oposto do que "últimas 72h" promete). Agora recebe
+// `radarSummaryText` (ver `aggregated-metrics-service.ts`,
+// fetchOverviewRadarSummaryText/ui_meta.radar_summary_text) — uma seção
+// Camada 2 própria, com janela fixa de 72h, independente do período do
+// header, igual à aba "Lista". Sem botão de atualização manual por
+// enquanto (fora de escopo desta rodada — `compose-narrative-synthesis`
+// só recompõe a seção `main`, não `radar_summary`); o texto se atualiza
+// sozinho via o mesmo gatilho de tempo/evento novo de qualquer outra
+// seção Camada 2.
 const EVENT_ICON: Record<string, string> = {
   volume_spike: "↑",
   volume_drop: "↓",
@@ -89,25 +105,11 @@ function SummaryStat({ label, value }: { label: string; value: number }) {
 // consomem este mesmo componente — um único lugar garante que as duas
 // telas ganhem a mesma capacidade, sem duplicar lógica.
 //
-// ✅ **"Resumo executivo" reformulado (2026-07-14)** — 2 problemas reais
-// relatados pelo usuário na versão original (contagens por severidade/tipo
-// + top 5 eventos, 100% derivado dos `highlights` de 72h já buscados por
-// `useRecentHighlights`): (1) "não está aparecendo o texto do resumo
-// executivo" — a versão original nunca tinha um texto de verdade, só
-// números/cards; (2) "ao alternar entre mensal/diário/semanal, o resumo
-// permanece considerando os últimos 3 dias" — porque a fonte
-// (`useRecentHighlights`) é a janela FIXA de 72h do Radar por desenho
-// (`event-radar/frontend-highlights-feed.md`), nunca o período selecionado
-// no header. Trocado por `narrative_text` (ai-synthesis.md, já
-// período-escopado por construção) — agora recebido via prop
-// (`narrativeText`/`page`/`onGenerated`, o que a página hospedeira já tem
-// do próprio envelope), renderizado com o mesmo `NarrativeTextPanel` usado
-// em "O que os gráficos mostram?"/"Insights" nas outras páginas.
-// `blankOnCustom` faz esta instância específica ficar em branco (só o
-// botão "Analisar período com IA") em período personalizado, em vez do
-// template Camada 0 que todo outro uso de `NarrativeTextPanel` mostra —
-// pedido explícito do usuário só pra este toggle. A visualização "Lista"
-// continua inalterada (fixed-72h, seu propósito original).
+// ✅ **"Resumo executivo" reescrito de novo (2026-07-16)** — ver o
+// blockquote de topo do arquivo: agora recebe `radarSummaryText`
+// (`ui_meta.radar_summary_text`, seção Camada 2 própria com janela fixa de
+// 72h), não mais `narrative_text` da página hospedeira. A visualização
+// "Lista" continua inalterada (fixed-72h, seu propósito original).
 type RecentEventsView = "list" | "summary";
 
 const VIEW_OPTIONS: { view: RecentEventsView; label: string }[] = [
@@ -116,14 +118,10 @@ const VIEW_OPTIONS: { view: RecentEventsView; label: string }[] = [
 ];
 
 export function RecentEventsPanel({
-  narrativeText,
-  page,
-  onGenerated,
+  radarSummaryText,
   defaultView = "list",
 }: {
-  narrativeText: string | null;
-  page: PageKey;
-  onGenerated?: () => void;
+  radarSummaryText: string | null;
   // ✅ 2026-07-14, pedido do usuário: /overview deve abrir o widget já no
   // "Resumo executivo" — /radar continua abrindo em "Lista" (default),
   // já que lá o feed completo de 72h é o próprio propósito da página.
@@ -185,7 +183,11 @@ export function RecentEventsPanel({
               <SummaryStat key={severity} label={SEVERITY_LABEL[severity]} value={bySeverity[severity]} />
             ))}
           </div>
-          <NarrativeTextPanel text={narrativeText} page={page} onGenerated={onGenerated} blankOnCustom />
+          {radarSummaryText ? (
+            <ExpandableText text={radarSummaryText} maxLines={6} />
+          ) : (
+            <p className="text-sm text-text-tertiary">Síntese automática indisponível no momento.</p>
+          )}
         </div>
       )}
     </div>

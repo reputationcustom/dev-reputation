@@ -611,6 +611,26 @@ discreto do radar. Ver `intelligence-center/narratives-exploration.md` pro detal
 e a distinção com o "Resumo executivo da página" (Camada 0/1, seção `'main'`) já existente no fim
 da mesma página.
 
+✅ **`overview:radar_summary` adicionada (2026-07-16)** — "Resumo executivo" do widget "Radar de
+Eventos" (`event-radar/frontend-highlights-feed.md`), a primeira seção Camada 2 com 2
+características fora do padrão das 4 anteriores: (1) **janela fixa de 72h, independente do
+período do header** — usa um `PageContext` próprio (`radarSummaryPeriodContext`), cuja chave de
+`page_narrative_synthesis` usa o dia UTC corrente como "balde", nunca `ctx.period` da página que
+chamou `assemblePageResponse`; (2) **também reage a evento novo do radar** (`anyCreatedAtNewerThan`,
+mesmo princípio de `highlightsNewerThan` da Camada 1), não só ao gatilho de tempo — as outras 4
+seções Camada 2 não têm essa noção porque não dependem de `highlights`; esta depende (é
+literalmente sobre eles). Payload (`buildRadarExecutiveSummaryPayload`) combina `get_recent_highlights`
+(até 30 eventos das últimas 72h) com um snapshot de todas as Narrativas-folha via
+`get_narratives_table` pras últimas 72h **e** pras 72h imediatamente anteriores (mesmo padrão de
+período-comparação de `themes:period_comparison`) — o delta entre as 2 janelas é o que permite
+identificar "quais Narrativas melhoraram/pioraram de sentimento" de verdade, não só o valor do
+momento — mais `get_platform_breakdown`/`get_authors_ranking`. Justificativa: nem "todo evento do
+radar publicado nas últimas 72h" nem "o snapshot das Narrativas monitoradas" isoladamente é um
+evento discreto — é uma leitura composta das duas fontes juntas, pedida explicitamente pelo
+usuário ("o resumo... deve resumir tudo que aconteceu... seja o que apareceu no radar, seja o que
+ocorreu e estão aparecendo nas categorias"). Ver `event-radar/frontend-highlights-feed.md` pro
+detalhamento completo.
+
 ## Fluxo principal
 
 1. A Edge Function da página já retornou `highlights` (leitura de `feed_events`, ver
@@ -691,7 +711,7 @@ da mesma página.
 | `id`               | `uuid`         | sim | PK |
 | `organization_id`  | `uuid`         | sim | FK → `organizations(id)` ON DELETE CASCADE |
 | `page`             | `text`         | sim | mesmo slug de `envelope.page` (`overview`, `narratives`, `narrative_detail` etc.) |
-| `section`          | `text`         | sim | ✅ **2026-07-14** (migration `20260809050000`) — `'main'` é o `narrative_text` genérico de sempre (Camada 0/1); outros valores (`'featured_content'`, `'period_comparison'`, `'overview'`) são seções Camada 2 específicas de uma página só. Default `'main'`, mas todo código precisa gravar/filtrar explicitamente — nunca confiar no default (ver blockquote de topo). |
+| `section`          | `text`         | sim | ✅ **2026-07-14** (migration `20260809050000`) — `'main'` é o `narrative_text` genérico de sempre (Camada 0/1); outros valores (`'featured_content'`, `'period_comparison'`, `'overview'`, `'radar_summary'` — ✅ 2026-07-16) são seções Camada 2 específicas de uma página só (`radar_summary` é `page = 'overview'`, mas com uma chave de período fixa, não a do header — ver blockquote de topo). Default `'main'`, mas todo código precisa gravar/filtrar explicitamente — nunca confiar no default (ver blockquote de topo). |
 | `period_start`     | `date`         | sim | |
 | `period_end`       | `date`         | sim | |
 | `filters_hash`     | `text`         | sim | hash determinístico de `filters_applied` (evita a tabela crescer sem limite com toda combinação de filtro já vista — mesmas combinações reusam a mesma linha) |
