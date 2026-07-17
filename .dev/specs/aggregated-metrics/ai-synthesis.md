@@ -631,6 +631,17 @@ usuário ("o resumo... deve resumir tudo que aconteceu... seja o que apareceu no
 ocorreu e estão aparecendo nas categorias"). Ver `event-radar/frontend-highlights-feed.md` pro
 detalhamento completo.
 
+📝 **`reports:executive_summary` planejada (2026-07-17, spec do módulo `executive-reports`, ainda
+não implementada)** — resumo executivo de verdade para o Relatório Executivo (`/reports/executive`),
+teto de tamanho maior que as 5 seções acima (`max_tokens: 1200`,
+`truncateAtSentence(text, 2500)` — pensada para um documento PDF, não um widget de dashboard).
+Payload combina `metrics`/`breakdowns`/top Narrativas/top autores/`term_signals`/`highlights` do
+período **escolhido pelo usuário** (`period_start..period_end` do relatório, não uma janela fixa
+como `overview:radar_summary`) — mesmo espírito de "combinar radar + snapshot agregado" já usado
+ali, generalizado para um período arbitrário. Reaproveitada também pelo Relatório Personalizado
+(`/reports/custom`), como seção opt-in — ver
+[executive-reports/data-model.md](../executive-reports/data-model.md).
+
 ## Fluxo principal
 
 1. A Edge Function da página já retornou `highlights` (leitura de `feed_events`, ver

@@ -84,8 +84,12 @@ prompt da IA. É um único contrato (`envelope`), reaproveitado nos dois consumo
 - **Módulos que dependem deste**: `intelligence-center` (todas as suas páginas, incl.
   `executive-overview.md`/`authors-and-influencers.md`, passam a ler o envelope em vez de montar a
   consulta inline — ver nota de rotas abaixo), `event-radar` (página Alertas — leitura, não
-  escrita, ainda sem spec própria) e `executive-reports` (página Relatórios, Sprint 4, ainda sem
-  spec própria, reaproveita o mesmo envelope agregado por período maior).
+  escrita, ainda sem spec própria) e `executive-reports` (Relatório Executivo/Relatório
+  Personalizado — ✅ spec completa 2026-07-17, ver
+  [../executive-reports/overview.md](../executive-reports/overview.md) — reaproveita o mesmo
+  envelope, com 3 extensões pontuais: `get_volume_trend.p_grain_mode`, `PAGE_BLOCKS.reports`/novo
+  page key `reports_custom`, Camada 2 `reports:executive_summary`, ver `sql-aggregation.md`/
+  `ai-synthesis.md`).
 
 ## Rotas/Páginas
 
@@ -100,9 +104,9 @@ prompt da IA. É um único contrato (`envelope`), reaproveitado nos dois consumo
 > (mesmo critério aplicado a `/authors` abaixo — a página em si é sempre
 > `intelligence-center`, mesmo quando o **dado** que ela mostra vem
 > enriquecido por outro módulo). ✅ **`/authors` implementada (2026-07-25)**
-> — ver `intelligence-center/authors-and-influencers.md`; `/alerts`/
-> `/reports` continuam sem spec de página própria (dependem de
-> `event-radar`/`executive-reports`, Sprint 3-4).
+> — ver `intelligence-center/authors-and-influencers.md`; `/alerts` continua sem spec de página
+> própria (depende de `event-radar`). ✅ **`/reports` ganhou spec completa (2026-07-17)** —
+> virou 2 rotas (`/reports/executive`/`/reports/custom`), ver `executive-reports/overview.md`.
 
 | Rota                 | Edge Function            | Página                              | Módulo dono da página |
 |-----------------------|---------------------------|--------------------------------------|--------------------------|
@@ -114,10 +118,11 @@ prompt da IA. É um único contrato (`envelope`), reaproveitado nos dois consumo
 | `/themes`             | `get-page-themes`         | Pautas Eleitorais                    | `intelligence-center` |
 | `/authors`            | `get-page-authors`        | Autores e Influenciadores            | `intelligence-center` (implementada — ver `authors-and-influencers.md`; classificação por `entities` ainda não ligada, gap conhecido) |
 | `/alerts`             | `get-page-alerts`         | Alertas                              | `event-radar` |
-| `/reports`            | `get-page-reports`        | Relatórios                           | `executive-reports` (sem spec própria ainda) |
+| `/reports/executive`  | `get-page-reports`        | Relatório Executivo                  | `executive-reports` (spec pronta, não implementado — ver `executive-reports/overview.md`) |
+| `/reports/custom`     | `get-page-reports-custom` | Relatório Personalizado              | `executive-reports` (spec pronta, não implementado) |
 
-9 Edge Functions de página no total (8 páginas de menu — Narrativas conta como uma só, com
-lista+detalhe).
+10 Edge Functions de página no total (9 páginas de menu — Narrativas conta como uma só, com
+lista+detalhe; Relatórios conta como duas, Executivo e Personalizado).
 
 ## Dados gerenciados
 

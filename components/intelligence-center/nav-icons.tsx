@@ -179,7 +179,11 @@ const NAV_ICON_BY_HREF: Record<string, (props: SVGProps<SVGSVGElement>) => React
   "/authors": AuthorsIcon,
   "/alerts": AlertsIcon,
   "/communications": CommunicationsIcon,
-  "/reports": ReportsIcon,
+  // 2 páginas desde 2026-07-17 (Relatório Executivo/Personalizado, ver
+  // .dev/specs/executive-reports/overview.md) — mesmo ícone pras duas,
+  // mesmo critério já usado por "Administração" (1 ícone pra várias guias).
+  "/reports/executive": ReportsIcon,
+  "/reports/custom": ReportsIcon,
   "/admin/users": AdminIcon,
   "/help": HelpIcon,
   "/perfil": ProfileIcon,

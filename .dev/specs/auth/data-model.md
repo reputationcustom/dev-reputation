@@ -2,7 +2,7 @@
 tipo: data-model
 módulo: auth
 status: implementado
-atualizado: 2026-07-22
+atualizado: 2026-08-09
 ---
 
 # Modelo de Dados — Autenticação e Administração de Usuários
@@ -16,6 +16,24 @@ atualizado: 2026-07-22
 > para qualquer caminho de criação de conta, mais um backfill único para
 > contas já existentes. Ver `CLAUDE.md`, "`user_profiles` 406 on `/perfil`
 > — root cause and fix" para o detalhe completo.
+
+> ✅ **Implementado (2026-08-09)** — redesenho de `/perfil` (pedido do
+> usuário: "organize a página para ficar no padrão utilizando toda a tela
+> de forma responsiva... inclua opção para avatar, editar nome e telefone
+> e uma aba de configurações"). Migration
+> `20260809200000_user_profiles_phone_avatar.sql`: `phone`/`avatar_url`
+> (ambas nullable, ver tabela abaixo) + o bucket de Storage `avatars`
+> (primeiro Storage bucket do projeto — CLAUDE.md, "Database security
+> (Security Advisor)", regra 4). Sexta escrita self-service em
+> `user_profiles` (depois de `timezone`/`default_organization_id`/
+> `show_ai_refresh_button` — nome/telefone/avatar_url são gravados juntos
+> pela mesma Edge Function, `update-my-profile`, então contam como uma
+> única escrita nova, não três). `/perfil` ganhou 2 guias — "Perfil"
+> (avatar/nome/telefone/e-mail somente-leitura) e "Configurações" (fuso
+> horário + o toggle admin-only já existente) — a segunda existe
+> deliberadamente como o lugar onde qualquer preferência nova por usuário
+> deve entrar dali em diante, em vez de crescer a página "Perfil" com
+> conteúdo que não é sobre identidade do usuário.
 
 ## Entidades
 
@@ -40,6 +58,8 @@ esta tabela, não `auth.users` direto.
 | `timezone`    | `text`         | sim         | ✅ **Adicionado 2026-07-13** (migration `20260713060000`, regra global "Fuso horário do usuário" em CLAUDE.md). Nome IANA, default `America/Sao_Paulo`. Só controla exibição no frontend — nenhuma data é armazenada em fuso local em nenhuma tabela do produto. Editável pelo próprio usuário em `/perfil`, via a Edge Function `update-my-timezone` (segunda escrita self-service em `user_profiles`, ver `default_organization_id` abaixo — todas as outras são administrativas, ver `user-management.md`) |
 | `default_organization_id` | `uuid` | não | ✅ **Adicionado 2026-07-22** (migration `20260722000000`, pedido do usuário: "Permitir o usuário a escolher qual organização é a default"). FK `references organizations(id) on delete set null` — `null` até o usuário escolher explicitamente (o frontend cai de volta pra primeira organização do usuário enquanto for `null`). Editável pelo próprio usuário no seletor de organização do header (`components/intelligence-center/page-header-bar.tsx`), via a Edge Function `update-my-default-organization` (terceira escrita self-service em `user_profiles`) — valida server-side que o usuário é de fato membro da organização enviada (`organization_members`) antes de gravar, nunca confia na lista já filtrada por RLS que o cliente devolve (Princípio técnico 2) |
 | `show_ai_refresh_button` | `boolean` | sim | ✅ **Adicionado 2026-07-14** (migration `20260809110000`, pedido do usuário: esconder o botão "Atualizar resumo executivo" — `NarrativeTextPanel`, `aggregated-metrics/ai-synthesis.md` Camada 2 — fora do período personalizado em apresentações do produto, mas poder ligá-lo de volta em desenvolvimento/testes). Default `false`. Só tem efeito visível pra `is_admin = true` (única audiência que já via o botão). Editável em `/perfil` (checkbox, toggle imediato), via a Edge Function `update-my-refresh-button-preference` (quarta escrita self-service em `user_profiles`) — restrita a `is_admin` server-side, mesmo gate que já controla a visibilidade do próprio botão |
+| `phone`       | `text`         | não         | ✅ **Adicionado 2026-08-09** (migration `20260809200000`, redesenho de `/perfil`). `null` até o usuário preencher; validação frouxa (dígitos/espaço/`+()-`, 8-20 caracteres) só na Edge Function, nenhum formato regional específico é exigido. Editável em `/perfil`, aba "Perfil" |
+| `avatar_url`  | `text`         | não         | ✅ **Adicionado 2026-08-09** (migration `20260809200000`). URL pública do arquivo já enviado ao bucket de Storage `avatars` (abaixo) — nunca o binário em si. `null` até o usuário enviar uma foto. Editável em `/perfil`, aba "Perfil" — o upload em si vai direto do client pro bucket via `supabase-js` (Storage policies fazem o controle de acesso, não uma Edge Function — mesmo papel que RLS cumpre pras tabelas), e só a URL resultante é persistida aqui via `update-my-profile` |
 | `created_at`  | `timestamptz`  | sim         | `now()`                                                            |
 | `updated_at`  | `timestamptz`  | sim         | Atualizado via trigger `set_updated_at` (já definida em `foundation`) |
 
@@ -124,7 +144,7 @@ $$;
 | SELECT    | o próprio usuário                    | `id = auth.uid()`                                       |
 | SELECT    | qualquer admin                       | `is_current_user_admin()` — necessário pra popular a tabela de `/admin/users` |
 | INSERT    | ninguém via client                   | sem policy — só a Edge Function `admin-invite-user` (via `SUPABASE_SECRET_KEY`, bypassa RLS) cria linhas |
-| UPDATE    | ninguém via client                   | sem policy — só Edge Functions escrevem (via `SUPABASE_SECRET_KEY`, bypassa RLS), sempre passando pelo trigger `protect_principal_account_trigger`: `admin-set-user-role` (administrativa, qualquer linha), ✅ `update-my-timezone` (adicionada 2026-07-13, self-service — só a própria linha, `id = auth.getUser(token).id`, nunca um `user_id` recebido no body), ✅ `update-my-default-organization` (adicionada 2026-07-22, mesmo padrão self-service, mais uma validação extra de pertencimento a `organization_members` antes de gravar) e ✅ `update-my-refresh-button-preference` (adicionada 2026-07-14, mesmo padrão self-service, mais uma validação extra de `is_admin` antes de gravar) |
+| UPDATE    | ninguém via client                   | sem policy — só Edge Functions escrevem (via `SUPABASE_SECRET_KEY`, bypassa RLS), sempre passando pelo trigger `protect_principal_account_trigger`: `admin-set-user-role` (administrativa, qualquer linha), ✅ `update-my-timezone` (adicionada 2026-07-13, self-service — só a própria linha, `id = auth.getUser(token).id`, nunca um `user_id` recebido no body), ✅ `update-my-default-organization` (adicionada 2026-07-22, mesmo padrão self-service, mais uma validação extra de pertencimento a `organization_members` antes de gravar), ✅ `update-my-refresh-button-preference` (adicionada 2026-07-14, mesmo padrão self-service, mais uma validação extra de `is_admin` antes de gravar) e ✅ `update-my-profile` (adicionada 2026-08-09, mesmo padrão self-service — `full_name`/`phone`/`avatar_url`, cada campo opcional e independente no body) |
 | DELETE    | ninguém via client                   | sem policy — exclusão de usuário é uma operação de Admin API (`auth.admin.deleteUser`), nunca um `DELETE` direto na tabela |
 
 > Nenhuma policy de INSERT/UPDATE/DELETE para o client é proposital, não
@@ -134,6 +154,30 @@ $$;
 > própria linha (`update-my-timezone`). Um usuário comum só lê a própria
 > linha diretamente (ex: pra saber seu `full_name`/`is_admin` e decidir se
 > mostra o item de menu "Administração").
+
+### Storage bucket `avatars`
+
+✅ **Adicionado 2026-08-09** (migration `20260809200000`) — primeiro
+Storage bucket deste projeto. Público (`public = true`), serve o avatar
+por URL direta via `getPublicUrl()`, sem nenhuma policy de `SELECT` em
+`storage.objects` (CLAUDE.md, "Database security (Security Advisor)",
+regra 4 — uma policy de `SELECT` ampla só habilitaria listagem via API,
+que ninguém precisa aqui). Um arquivo por usuário, path fixo
+`avatars/<user_id>/avatar` (sem extensão — o content-type real é gravado
+como metadata no upload, então o navegador renderiza certo mesmo assim; o
+mesmo path é reaproveitado a cada troca de foto via `upsert: true`, nunca
+acumula versões antigas).
+
+| Operação | Quem pode | Condição |
+|----------|-----------|----------|
+| INSERT/UPDATE/DELETE | o próprio usuário, autenticado | `bucket_id = 'avatars' and (storage.foldername(name))[1] = auth.uid()::text` — só a própria pasta |
+
+O upload em si (`supabase.storage.from('avatars').upload(...)`) acontece
+direto do client `/perfil` → Supabase Storage, sem passar por nenhuma
+Edge Function — as 3 policies acima já são o controle de acesso completo
+(mesmo papel que RLS cumpre pras tabelas comuns, Princípio técnico 2).
+Só a URL pública resultante é persistida em `user_profiles.avatar_url`,
+via `update-my-profile`.
 
 ## Relacionamentos
 

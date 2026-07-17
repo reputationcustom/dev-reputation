@@ -12,10 +12,14 @@ atualizado: 2026-07-14
 > precisa (`get-page-{overview,narratives,sentiment,platforms,themes}`,
 > `get-narrative-detail`) estão em produção, seguindo exatamente o padrão
 > de autenticação descrito abaixo (client com a chave publicável + JWT
-> repassado, nunca `SUPABASE_SECRET_KEY`). `get-page-authors`/
-> `get-page-alerts`/`get-page-reports` continuam não implementadas —
-> dependem de `entities`/`event-radar`/`executive-reports` (Sprint 3-4,
-> ainda `rascunho`), por desenho (ver `overview.md`).
+> repassado, nunca `SUPABASE_SECRET_KEY`). `get-page-authors` foi
+> implementada em 2026-07-25 (ver `authors-and-influencers.md`).
+> `get-page-alerts` continua não implementada, depende de `event-radar`
+> (página Alertas, sem spec própria ainda). `get-page-reports`/
+> `get-page-reports-custom` (Relatório Executivo/Personalizado) têm spec
+> completa desde 2026-07-17 (`executive-reports/overview.md`) mas também
+> não implementadas ainda — mesmo padrão de auth deste arquivo se aplica
+> às duas quando forem construídas.
 >
 > ✅ **Cache de página implementado (2026-07-25, gap #21)** — tabela
 > `page_cache` (migration `20260725040000`) + `getPageEnvelopeWithCache()`
