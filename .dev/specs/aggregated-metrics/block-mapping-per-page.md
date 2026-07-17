@@ -34,6 +34,18 @@ atualizado: 2026-07-18
 > tópico↔Narrativa por polaridade", pro campo correspondente por
 > Narrativa (`narratives[].positive_topics`/`negative_topics`).
 
+> 📝 **Extensão planejada para `reports` + novo page key `reports_custom`
+> (2026-07-17, spec do módulo `executive-reports`, ainda não
+> implementada)** — a coluna "Relatórios (`reports`)" abaixo ganha
+> `authors`/`term_signals` (além dos 6 blocos já marcados), e
+> `PAGE_BREAKDOWN_TYPES.reports` ganha `platform`/`theme` (além de
+> `sentiment`). Um segundo page key, `reports_custom` (Relatório
+> Personalizado, `/reports/custom`), busca **todo** bloco relevante do
+> envelope de uma vez (mesma lista, mais `x_insights`, menos `graph`) —
+> não uma nova coluna nesta tabela ainda, ver
+> [executive-reports/data-model.md](../executive-reports/data-model.md)
+> para a lista completa e a justificativa de buscar tudo de uma vez.
+
 ## Objetivo
 
 Definir exatamente quais blocos do [standard-json-envelope.md](standard-json-envelope.md) cada

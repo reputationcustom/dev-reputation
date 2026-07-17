@@ -273,7 +273,7 @@ deve ser conferido contra esta lista antes de ser considerado pronto.
 | ~~`intelligent-feed`~~  | Feed de eventos do sistema — **absorvido por `event-radar`** (grava em `feed_events`, mesma tabela já reservada em `_glossary.md`) | absorvido    | 3      | — |
 | `propagation-graph`     | Grafo de propagação de narrativas com rollup materializado (histórico completo) — versão simplificada já cobrida via `mentions.reply_to`/`retweet_of`/`insights_mentioned` em `intelligence-center/narratives-exploration.md` e reaproveitada por `aggregated-metrics` (`get_dissemination_graph`); este módulo é só o rollup materializado completo, não um novo cálculo | rascunho   | 3      | — |
 | `decision-center`       | AI Advisors — perguntas livres/interativas sobre mentions/narrativas, respeitando data-restrictions. **Não** se sobrepõe a `event-radar`: aquele gera cards automáticos por evento detectado (push), este responde perguntas ad-hoc do analista (pull) | rascunho     | 3      | — |
-| `executive-reports`     | Geração de relatórios periódicos (`reports_generated`: diário/semanal/mensal/executivo/crise) — reaproveita o envelope de `aggregated-metrics` (página "Relatórios") em vez de agregação própria | rascunho | 4 | — |
+| `executive-reports`     | Relatório Executivo (panorama fixo, granularidade automática hora/dia/mês, IA sempre presente) + Relatório Personalizado (construtor: usuário escolhe blocos/IA opt-in/notas livres) — 2 páginas em `/reports/executive`/`/reports/custom`, reaproveitando o envelope de `aggregated-metrics`, exportáveis em PDF (`reports_generated` + bucket `reports`) | **pronto — não implementado** (2026-07-17, 4 specs completas; só o menu + as 2 telas "em desenvolvimento" foram implementados a pedido explícito do usuário — ver `CLAUDE.md`) | 4 | [executive-reports/overview.md](executive-reports/overview.md) |
 | `finops`                | Painel de custo de IA (uso real via `ai_usage_log`, nunca estimativa) + custos extras cadastráveis (`manual_costs`, pontual/mensal/anual) + previsão de fim de mês. Admin-only, escopo é a plataforma inteira, não uma organização | **implementado** (2026-08-05, migration `20260805000000` + 4 Edge Functions + `/admin/finops` — ver `CLAUDE.md`, "Módulo `finops`") | — | [finops/overview.md](finops/overview.md) |
 | `sync-console`           | Observabilidade (fase atual/última sincronização/próxima prevista/lock/rate limit por par Projeto-Query) + histórico completo paginado de execuções (registros sincronizados por etapa) + execução manual de 1 fase específica do pipeline `bw-sync`, sob demanda. Admin-only, escopo é a plataforma inteira, não uma organização — camada fina em cima de `foundation`, nunca duplica a lógica de sincronização | **implementado** (2026-07-15, migration `20260809140000` + 3 Edge Functions + 4ª aba de "Administração", `/admin/sync-console` — ver `CLAUDE.md`, "Módulo `sync-console`") | — | [sync-console/overview.md](sync-console/overview.md) |
 
@@ -285,6 +285,32 @@ deve ser conferido contra esta lista antes de ser considerado pronto.
 > mesmo padrão de `finops` (nó verde em `_architecture.md`, escopo
 > plataforma inteira). Ver [sync-console/overview.md](sync-console/overview.md)
 > e `CLAUDE.md`, "Módulo `sync-console`", para o detalhe completo.
+
+> 📝 **`executive-reports` spec criada (2026-07-17)**, a pedido do
+> usuário — "1) Mover o item relatórios... para o Menu principal, abaixo
+> de ações. Seção Relatórios com duas páginas... 2) Relatório Executivo...
+> 3) Relatório customizado. Sugira algo..." As 4 specs do módulo
+> (`overview.md`/`data-model.md`/`executive-report.md`/`custom-report.md`)
+> estão completas e `status: pronto` — nenhuma migration/Edge
+> Function/frontend foi implementada ainda. Fecha o plano original de
+> Sprint 4 já reservado neste arquivo (`page: 'reports'`,
+> `reports_generated` já citados desde antes desta sessão) e adiciona o
+> que faltava: a segunda página (Relatório Personalizado), a regra de
+> granularidade hora/dia/mês específica deste relatório, a seção de IA
+> dedicada (`reports:executive_summary`), e a exportação em PDF — a
+> primeira funcionalidade de export de arquivo do produto
+> (`@react-pdf/renderer`, ver `executive-reports/data-model.md`). Ver
+> [executive-reports/overview.md](executive-reports/overview.md).
+>
+> ✅ **Só o menu implementado, mesmo dia** — pedido explícito do usuário
+> na sessão seguinte: "Altere apenas o menu do frontend e coloque a
+> página está em construção. Não iremos desenvolver agora. Deixe como
+> módulo pendente desenvolvimento nas nossas documentações de controle."
+> `sidebar.tsx` ganhou a seção "Relatórios" (abaixo de "Ações"), `/reports`
+> virou um redirect de servidor pra `/reports/executive`, e as 2 rotas
+> novas renderizam `ComingSoonPage` — nenhuma migration/Edge
+> Function/backend real foi tocada. Ver `_pending.md` gap #38 e
+> `_architecture.md` para o registro completo desta pendência.
 
 > ✅ **Módulo `command-center` removido (2026-07-13)**, a pedido do
 > usuário: nunca chegou a ganhar spec própria além de um único requisito

@@ -5,7 +5,10 @@ import { createClient } from "@/lib/supabase/client";
 import { DEFAULT_TIMEZONE } from "@/lib/date/format";
 
 export interface UserProfile {
+  email: string | null;
   fullName: string | null;
+  phone: string | null;
+  avatarUrl: string | null;
   isAdmin: boolean;
   isPrincipal: boolean;
   timezone: string;
@@ -16,7 +19,10 @@ export interface UserProfile {
 type LoadState = "loading" | "error" | "loaded";
 
 const FALLBACK_PROFILE: UserProfile = {
+  email: null,
   fullName: null,
+  phone: null,
+  avatarUrl: null,
   isAdmin: false,
   isPrincipal: false,
   timezone: DEFAULT_TIMEZONE,
@@ -67,7 +73,9 @@ export function useUserProfile() {
 
       const { data, error } = await supabase
         .from("user_profiles")
-        .select("full_name, is_admin, is_principal, timezone, default_organization_id, show_ai_refresh_button")
+        .select(
+          "full_name, phone, avatar_url, is_admin, is_principal, timezone, default_organization_id, show_ai_refresh_button",
+        )
         .eq("id", user.id)
         .maybeSingle();
 
@@ -81,7 +89,10 @@ export function useUserProfile() {
       setState({
         status: "loaded",
         profile: {
+          email: user.email ?? null,
           fullName: data.full_name,
+          phone: data.phone,
+          avatarUrl: data.avatar_url,
           isAdmin: data.is_admin,
           isPrincipal: data.is_principal,
           timezone: data.timezone ?? DEFAULT_TIMEZONE,

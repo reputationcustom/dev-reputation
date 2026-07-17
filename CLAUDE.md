@@ -10038,6 +10038,225 @@ parágrafo que cita Narrativas pelo nome, associa assuntos quentes a
 mudanças de sentimento, e menciona Momentum/Tendência/Risco — não mais
 uma reescrita genérica dos próprios `feed_events`.
 
+## Módulo `executive-reports` — spec criada, só o menu implementado (2026-07-17)
+
+Duas mensagens na mesma sessão. **Primeira**: usuário pediu a spec do
+módulo de Relatórios — 3 partes: (1) mover "Relatórios" do menu de
+Configurações pro Menu principal, abaixo de "Ações", como uma seção
+própria com 2 páginas (Relatório Executivo e Relatório Personalizado);
+(2) Relatório Executivo com panorama geral de um período personalizado,
+granularidade automática (mensal se >1 mês, diário se <1 mês, por hora se
+exatamente 1 dia), explicações geradas por IA, exportação em PDF; (3)
+Relatório Personalizado, desenho em aberto ("Sugira algo que dê liberdade
+para o usuário extrair informações em texto e em gráficos"), também
+exportável em PDF. Escrita a spec completa em `.dev/specs/executive-reports/`
+(`overview.md`/`data-model.md`/`executive-report.md`/`custom-report.md`,
+todos `status: pronto`) — nenhuma linha de código nesta primeira parte.
+Fecha um plano já reservado desde Sprint 4 (`page: 'reports'`,
+`reports_generated` já citados em vários arquivos antes desta sessão) e
+decide, sem deixar como pendência de produto (o usuário delegou o desenho
+explicitamente): reaproveitar `page: 'reports'`/`get-page-reports` já
+reservados para o Executivo, um novo page key `reports_custom` para o
+Personalizado, uma nova seção Camada 2 (`reports:executive_summary`, teto
+maior que as demais — pensada para um documento, não um widget), um novo
+parâmetro `p_grain_mode` em `get_volume_trend` (regra hora/dia/mês sem
+grão semanal, distinta da regra genérica dos dashboards), `reports_generated`
++ um bucket de Storage privado `reports` (primeiro bucket do projeto), e
+geração de PDF 100% client-side via `@react-pdf/renderer` (Hostinger não
+roda Chromium ao lado do `next start`, Edge Functions são Deno sem
+Chromium — nenhuma das duas plataformas deste projeto suporta um headless
+browser server-side).
+
+**Segunda mensagem, pedido explícito de escopo reduzido**: "Altere apenas
+o menu do frontend e coloque a página está em construção. Não iremos
+desenvolver agora. Deixe como módulo pendente desenvolvimento nas nossas
+documentações de controle." Implementado só isso:
+
+- `components/intelligence-center/sidebar.tsx` — nova seção "Relatórios"
+  (`REPORTS_ITEMS`), posicionada logo abaixo de "Ações" e acima de
+  "Configurações", 2 itens: "Relatório Executivo" (`/reports/executive`)
+  e "Relatório Personalizado" (`/reports/custom`). `SETTINGS_ITEMS`
+  (antes só `[{ href: "/reports", label: "Relatórios" }]`) virou array
+  vazio — a seção "Configurações" continua existindo (Administração/
+  Ajuda/Perfil), só sem itens de `SETTINGS_ITEMS` acima deles.
+- `components/intelligence-center/nav-icons.tsx` — `NAV_ICON_BY_HREF`
+  troca a entrada `/reports` (removida) por `/reports/executive`/
+  `/reports/custom`, as duas apontando pro mesmo `ReportsIcon` já
+  existente (mesmo critério já usado por "Administração", 1 ícone pra
+  várias rotas/guias da mesma seção).
+- `app/(intelligence-center)/reports/page.tsx` — deixou de ser um
+  `ComingSoonPage` e virou um redirect de servidor
+  (`redirect("/reports/executive")`) — preserva qualquer link/bookmark
+  antigo. Não é a rota `/` em si, então a regra "nunca redirecionar na
+  raiz" (CLAUDE.md, "Deploy (Hostinger)") não se aplica.
+- `app/(intelligence-center)/reports/executive/page.tsx` e
+  `app/(intelligence-center)/reports/custom/page.tsx` — novas, ambas só
+  `<ComingSoonPage title="..." description="..." />`, mesmo componente/
+  padrão já usado por `/alerts`/`/help`.
+
+**Nada mais foi tocado** — nenhuma migration, nenhuma Edge Function,
+nenhum componente de gráfico/tabela novo, nenhuma extensão de
+`aggregated-metrics`. O módulo está formalmente registrado como "pronto —
+não implementado" em `_index.md`/`_architecture.md` (nó amarelo, não
+verde) e como gap técnico #38 em `_pending.md` — a spec continua valendo
+integralmente para quando o usuário pedir para desenvolver de verdade.
+
+**Verificação**: `npx tsc --noEmit` limpo. `npm run build` (com `rm -rf
+.next` antes) limpo — 27 rotas (`/reports` continua existindo, agora como
+redirect, mais as 2 novas `/reports/executive`/`/reports/custom`), as 3
+com 146 B de First Load JS (mesmo tamanho de outras rotas
+`ComingSoonPage`/redirect simples do produto, ex: `/alerts`/`/help`). Sem
+automação de browser disponível neste ambiente — a navegação real
+(destaque do item ativo, ícone no rail colapsado, redirect de `/reports`)
+não foi confirmada visualmente num navegador real, mesma limitação já
+registrada em toda sessão anterior de `intelligence-center` neste
+arquivo.
+
+### `/perfil` redesenhada — layout responsivo full-width, avatar, telefone, aba de Configurações (2026-08-09)
+
+User request: "No perfil do usuário, organize a página para ficar no
+padrão utilizando toda a tela de forma responsiva como todo o restante do
+sistema. Inclua opção para avatar, editar nome e telefone e uma aba de
+configurações, pois evoluiremos com algumas configurações personalizadas
+por usuário." A página antiga (`app/(intelligence-center)/perfil/page.tsx`)
+era um único cartão centralizado (`mx-auto max-w-lg`) com só o campo de
+fuso horário + o toggle admin-only do botão de IA — exatamente o padrão
+estreito que já tinha sido removido de `/admin` em 2026-07-16 pelo mesmo
+motivo ("localizado em admin está utilizando menos espaço em tela do que
+o restante da aplicação").
+
+- **Layout**: reescrita para o mesmo padrão de toda página do produto —
+  título solto acima do conteúdo (`text-2xl md:text-3xl font-bold`,
+  Cross-cutting UX rule 7), sem nenhum `max-w-*` na página em si (mesma
+  decisão já tomada pra `AdminLayout`), conteúdo em `p-8` com grids
+  responsivos (`grid-cols-1 lg:grid-cols-[280px_1fr]` na aba Perfil,
+  `grid-cols-1 md:grid-cols-2` na aba Configurações) em vez de um cartão
+  único. 2 guias locais (`TabButton`, mesmo estilo visual de
+  `components/intelligence-center/admin-tabs.tsx` — borda inferior
+  `accent-blue` no item ativo — mas como estado local `useState`, não
+  rotas próprias, já que o conteúdo de cada guia é simples o bastante
+  pra não justificar 2 URLs/layout aninhado).
+- **Aba "Perfil"**: cartão de avatar (`components/ui/avatar.tsx`, novo
+  primitivo compartilhado — circular, mostra a imagem quando
+  `avatarUrl` existe, senão iniciais do nome sobre `accent-blue-bg`,
+  4 tamanhos) + upload/remoção de foto, e um cartão com
+  E-mail (somente leitura, de `auth.users`, nunca editável aqui)/Nome
+  completo/Telefone + botão "Salvar dados" (desabilitado até algo mudar).
+- **Aba "Configurações"**: o campo de fuso horário (já existente, sem
+  mudança de comportamento) + o toggle admin-only do botão de IA (já
+  existente) — agora em cards separados lado a lado, não mais um único
+  card com os dois empilhados. Deliberadamente o lugar onde toda
+  preferência nova por usuário deve entrar dali em diante (pedido
+  explícito do usuário — "evoluiremos com algumas configurações
+  personalizadas por usuário"), não uma aba de esboço com placeholder
+  vazio (nenhum conteúdo especulativo foi adicionado além do que já
+  existe hoje).
+- **Avatar — primeiro Storage bucket do projeto** (migration
+  `20260809200000_user_profiles_phone_avatar.sql`): bucket `avatars`,
+  público, sem policy de `SELECT` em `storage.objects` (regra 4 de
+  "Database security" — um bucket público já serve por
+  `getPublicUrl()` sem depender de RLS; uma policy de `SELECT` ampla só
+  habilitaria listagem via API). 3 policies (`insert`/`update`/`delete`)
+  restringem cada usuário à própria pasta
+  (`(storage.foldername(name))[1] = auth.uid()::text`). O upload em si
+  acontece direto do client pro bucket via `supabase-js`
+  (`supabase.storage.from('avatars').upload(...)`), sem passar por
+  nenhuma Edge Function — as 3 policies já são o controle de acesso
+  completo, mesmo papel que RLS cumpre pras tabelas comuns (Princípio
+  técnico 2); só a URL pública resultante (com um parâmetro
+  `?v=<timestamp>` de cache-busting, já que o path do arquivo é fixo e
+  reaproveitado a cada troca) é persistida em `user_profiles.avatar_url`.
+  Path fixo `avatars/<user_id>/avatar` (sem extensão — o content-type
+  real vem do `contentType` passado no upload, então o navegador
+  renderiza certo mesmo sem extensão na URL) evita acumular arquivos
+  órfãos a cada nova foto.
+- **`user_profiles` ganhou `phone`/`avatar_url`** (ambas nullable, mesma
+  migration) — sexta escrita self-service na tabela, nova Edge Function
+  **`update-my-profile`** (mesmo padrão de auth de
+  `update-my-timezone`/`update-my-default-organization`: Bearer token →
+  `supabaseAdmin.auth.getUser(token)` → grava só a própria linha). Os 3
+  campos (`full_name`/`phone`/`avatar_url`) são opcionais e
+  independentes no corpo da requisição — só validado/gravado o que está
+  presente, permitindo salvar nome+telefone numa chamada e avatar em
+  outra sem sobrescrever o que não foi enviado. Telefone usa validação
+  frouxa (`/^[0-9+()\-\s]{8,20}$/`, replicada no frontend como checagem
+  antes do submit, servidor continua autoritativo) — nenhum formato
+  regional específico é exigido, já que o produto atende campanhas em
+  todo o Brasil.
+- **`hooks/use-user-profile.ts`** ganhou `email` (de
+  `supabase.auth.getUser()`, já buscado pelo hook — nenhuma chamada
+  nova), `phone`, `avatarUrl` — mudança aditiva, todo consumidor
+  existente do hook (sidebar, header, `communications`, `sync-console`,
+  etc.) continua funcionando sem alteração.
+
+**Verificação**: `npx tsc --noEmit` e `npm run build` (com `rm -rf .next`
+antes) passam limpos — 26 rotas, mesma contagem de antes (`/perfil`
+cresceu de ~1kB pra 4.7kB de First Load JS, consistente com o recurso
+novo, nenhuma rota criada/removida). Migration `20260809200000` revisada
+manualmente, não executada contra um banco real nesta sessão (mesma
+limitação recorrente de toda sessão sem credenciais de deploy neste
+ambiente) — `git push` para `develop` é o próximo passo, e o sinal a
+acompanhar depois do deploy é o upload de uma foto em `/perfil` realmente
+aparecendo no avatar circular após a chamada a `update-my-profile`, e o
+bucket `avatars` aparecendo em Dashboard → Storage. Sem automação de
+browser disponível neste ambiente — o novo layout responsivo (grids nos
+2 breakpoints, avatar circular, guias) não foi confirmado visualmente num
+navegador real, mesma limitação já registrada em toda sessão anterior de
+`intelligence-center` neste arquivo.
+
+### Upload de avatar em `/perfil` falhando com RLS — migration de reparo idempotente (2026-08-09)
+
+User report, direto do console do navegador em produção: upload de avatar
+falhando com `400`/`403` — `"new row violates row-level security
+policy"` — ao chamar `supabase.storage.from('avatars').upload(...)`,
+mesmo autenticado e enviando exatamente pro path esperado
+(`<user_id>/avatar`).
+
+**Descartado o lado do client, por leitura direta do código-fonte** de
+`@supabase/supabase-js`/`@supabase/storage-js` (`node_modules`, não só
+documentação): `fetchWithAuth()` (o wrapper de `fetch` compartilhado por
+`.from()`/`.rpc()`/`.storage`/`.functions`) só define
+`Authorization: Bearer <accessToken>` quando o header ainda não existe
+(`if (!headers.has("Authorization")) ...`) — e nem `SupabaseClient`
+(`this.headers = settings.global.headers ?? {}`, sem nada setado por
+`lib/supabase/client.ts`) nem `StorageBucketApi`/`DEFAULT_HEADERS`
+(só `X-Client-Info`) pré-definem esse header antes da chamada. Ou seja: o
+SDK realmente busca e anexa o token da sessão atual (via
+`auth.getSession()`) em toda chamada de Storage, exatamente como em
+qualquer outra chamada — não há nenhum caminho no client que explicasse a
+requisição chegando como `anon` em vez do usuário autenticado.
+
+**Causa real**: o bucket existe (senão o erro seria `404 Bucket not
+found`, não uma violação de RLS) mas nenhuma policy de `INSERT` casava
+pro usuário — consistente com um destes dois cenários (indistinguíveis
+sem acesso ao banco real): a migration `20260809200000` (bucket +
+policies, ver "`/perfil` redesenhada" acima) não terminou de aplicar no
+projeto Supabase real ainda, ou o bucket foi criado por fora (ex:
+manualmente pelo Dashboard, testando antes do deploy terminar) sem as
+policies correspondentes.
+
+**Fix**: nova migration, `20260809210000_avatars_storage_policies_idempotent_fix.sql`
+— mesmo bucket/policies de antes, mas idempotente (`on conflict do
+update` no bucket, `drop policy if exists` antes de cada `create
+policy`) — deixa o estado final correto independente de qual dos 2
+cenários acima é o real, sem editar a migration já potencialmente
+aplicada (CLAUDE.md, "Migration hygiene"). Também endurecido
+`app/(intelligence-center)/perfil/page.tsx`: o erro de upload agora nunca
+repassa a mensagem técnica bruta do Storage pro toast (mesmo princípio
+de "Edge Function error handling", aplicado aqui porque este upload fala
+direto com o Supabase Storage, sem Edge Function no meio) — loga o erro
+completo no console e mostra `BACKEND_ERROR_MESSAGE`; `handleRemoveAvatar`
+também passou a checar o `error` de `storage.remove()` (antes ignorado
+silenciosamente) e logar, sem bloquear a limpeza de `avatar_url`.
+
+**Verificação**: `npx tsc --noEmit` limpo. Migration revisada
+manualmente, não executada contra um banco real nesta sessão (mesma
+limitação recorrente de toda sessão sem credenciais de deploy neste
+ambiente) — `git push` para `develop` é o próximo passo; o sinal a
+acompanhar depois do deploy é Dashboard → Storage → `avatars` → Policies
+mostrando as 3 policies (insert/update/delete), e o upload de uma foto em
+`/perfil` completando sem erro.
+
 ## Directory structure
 
 ```

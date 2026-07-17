@@ -35,13 +35,24 @@ const ACTIONS_ITEMS = [
   { href: "/communications", label: "Comunicação" },
 ];
 
+// "Relatórios" — movido de CONFIGURAÇÕES pra cá, abaixo de "Ações" (pedido
+// do usuário, 2026-07-17): 2 páginas, Relatório Executivo e Relatório
+// Personalizado (.dev/specs/executive-reports/overview.md — spec pronta,
+// **não implementada ainda**, ambas abrem uma tela "em desenvolvimento"
+// por enquanto, mesmo componente ComingSoonPage de sempre).
+const REPORTS_ITEMS = [
+  { href: "/reports/executive", label: "Relatório Executivo" },
+  { href: "/reports/custom", label: "Relatório Personalizado" },
+];
+
 // Mesmos rótulos da seção "CONFIGURAÇÕES" do protótipo
 // (Comunicacao Inteligente.dc.html — `navSettings`). No protótipo esses
 // itens ficam sempre desabilitados/estáticos; aqui são links reais —
-// Relatórios/Ajuda abrem uma tela "em desenvolvimento"
+// Ajuda abre uma tela "em desenvolvimento"
 // (components/intelligence-center/coming-soon.tsx), Administração é a
 // única já implementada de verdade (gated por isAdmin, ver abaixo).
-const SETTINGS_ITEMS = [{ href: "/reports", label: "Relatórios" }];
+// "Relatórios" saiu daqui em 2026-07-17, ver REPORTS_ITEMS acima.
+const SETTINGS_ITEMS: { href: string; label: string }[] = [];
 
 function NavLink({
   href,
@@ -206,6 +217,19 @@ export function Sidebar({
         )}
         <nav className="mt-2 flex flex-col gap-1">
           {ACTIONS_ITEMS.map((item) => (
+            <NavLink key={item.href} collapsed={collapsed} onNavigate={onNavigate} {...item} />
+          ))}
+        </nav>
+      </div>
+
+      <div className="mt-6">
+        {!collapsed && (
+          <p className="px-3 text-xs font-semibold uppercase tracking-wide text-text-sidebar-section-label">
+            Relatórios
+          </p>
+        )}
+        <nav className="mt-2 flex flex-col gap-1">
+          {REPORTS_ITEMS.map((item) => (
             <NavLink key={item.href} collapsed={collapsed} onNavigate={onNavigate} {...item} />
           ))}
         </nav>

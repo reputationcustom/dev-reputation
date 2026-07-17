@@ -41,7 +41,7 @@ graph TD
     end
 
     subgraph SPRINT4["Sprint 4"]
-        REPORTS["executive-reports<br/>relatórios periódicos"]
+        REPORTS["executive-reports<br/>Relatório Executivo + Personalizado"]
     end
 
     subgraph TRANSVERSAL["Transversal — admin, sem Sprint própria"]
@@ -85,7 +85,7 @@ graph TD
     style EVENTRADAR fill:#c3e6cb,stroke:#2e7d32
     style PROPGRAPH fill:#e2e3e5,stroke:#6c757d
     style DECISIONCENTER fill:#e2e3e5,stroke:#6c757d
-    style REPORTS fill:#e2e3e5,stroke:#6c757d
+    style REPORTS fill:#fff3cd,stroke:#856404
     style FINOPS fill:#c3e6cb,stroke:#2e7d32
     style SYNCCONSOLE fill:#c3e6cb,stroke:#2e7d32
 ```
@@ -93,6 +93,21 @@ graph TD
 **Como ler**: seta cheia (`-->`) = dependência forte, o módulo de origem bloqueia o de destino.
 Seta pontilhada (`-.->`) = dependência fraca/opcional — o destino funciona sem a origem (com
 fallback), mas fica mais completo com ela.
+
+> 📝 **`executive-reports` passou de cinza (rascunho) para amarelo
+> (2026-07-17)** — as 4 specs do módulo (`overview.md`/`data-model.md`/
+> `executive-report.md`/`custom-report.md`) foram escritas e estão
+> `status: pronto` (pedido do usuário, ver `_index.md`). ✅ **Menu
+> implementado no mesmo dia** (pedido explícito: "Altere apenas o menu...
+> Não iremos desenvolver agora... Deixe como módulo pendente desenvolvimento") —
+> `sidebar.tsx` ganhou a seção "Relatórios"/2 rotas novas
+> (`/reports/executive`/`/reports/custom`), ambas só `ComingSoonPage` por
+> enquanto. **Nó permanece amarelo, não verde** — nenhuma
+> migration/Edge Function/dado real foi implementada, só navegação. Volta
+> a verde quando as 3 novas Edge Functions (`get-page-reports`,
+> `get-page-reports-custom`, `export-report`/`list-generated-reports`) e a
+> extensão de `aggregated-metrics` (`p_grain_mode`, `PAGE_BLOCKS.reports_custom`,
+> Camada 2 `reports:executive_summary`) existirem de verdade.
 
 > ✅ **`sync-console` adicionado e implementado (2026-07-15)**,
 > transversal/admin-only — depende de `foundation` (lê/estende
@@ -225,7 +240,7 @@ de `intelligence-center`, ver `_index.md`, "Módulo `command-center` removido".
 | `event-radar` | Detecção estatística de picos/quedas/mudanças + 1 card de IA por evento — absorve `threshold-engine`/`intelligent-feed` | implementado (2026-08-02) — 8/8 funcionalidades, incl. widget "Radar de Eventos" na Visão Geral | [event-radar/overview.md](event-radar/overview.md) |
 | `propagation-graph` | Grafo de propagação com rollup materializado completo (versão simplificada já em `intelligence-center/narratives-exploration.md`) | rascunho | — |
 | `decision-center` | AI Advisors — perguntas livres/interativas do analista sobre mentions/narrativas | rascunho | — |
-| `executive-reports` | Relatórios periódicos (diário/semanal/mensal/executivo/crise) | rascunho | — |
+| `executive-reports` | Relatório Executivo (panorama fixo, granularidade hora/dia/mês, IA sempre presente) + Relatório Personalizado (construtor, IA opt-in) — export em PDF | **pronto — não implementado** (2026-07-17) | [executive-reports/overview.md](executive-reports/overview.md) |
 | `finops` | Painel de custo de IA (uso real, `ai_usage_log`) + custos extras cadastráveis (`manual_costs`) + previsão de fim de mês — admin-only, transversal, sem Sprint própria | implementado (2026-08-05) | [finops/overview.md](finops/overview.md) |
 | `sync-console` | Observabilidade do pipeline `bw-sync` (fase atual/última+próxima sincronização/lock/rate limit por par) + histórico completo paginado de execuções + execução manual de 1 fase específica sob demanda — admin-only, transversal, sem Sprint própria | **implementado** (2026-07-15) | [sync-console/overview.md](sync-console/overview.md) |
 

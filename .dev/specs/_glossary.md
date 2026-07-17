@@ -239,10 +239,18 @@ exatos em variáveis, componentes, tabelas e comentários.
 - **Spec de dados**: [event-radar/overview.md](event-radar/overview.md)
 
 ### Generated Report
-- **Definição**: Relatório executivo gerado periodicamente (diário, semanal,
-  mensal, executivo, crise), com arquivo armazenado no Supabase Storage.
-- **Tabela no banco**: `reports_generated` (`type`, `period_start`,
-  `period_end`, `storage_path`, `generated_by`, `generated_at`)
+- **Definição**: Um relatório exportado em PDF — Relatório Executivo
+  (`type = 'executive'`, período personalizado, granularidade automática
+  hora/dia/mês, IA sempre presente) ou Relatório Personalizado
+  (`type = 'custom'`, construtor com blocos escolhidos pelo usuário + IA
+  opt-in + notas em texto livre) — com o arquivo armazenado no bucket
+  privado `reports` do Supabase Storage. `'crisis'` continua reservado no
+  vocabulário de `type` desde o schema anexo do Dia 1, sem uso até ser
+  pedido. ✅ Spec completa em 2026-07-17, ver
+  [executive-reports/overview.md](executive-reports/overview.md).
+- **Tabela no banco**: `reports_generated` (`organization_id`, `type`,
+  `title`, `period_start`, `period_end`, `params` — jsonb, só para
+  `type = 'custom'` —, `storage_path`, `generated_by`, `generated_at`)
 - **Spec de dados**: [executive-reports/data-model.md](executive-reports/data-model.md)
 
 ### Sinal de Narrativa (Narrative Signal)

@@ -94,7 +94,10 @@ exibidos na UI ficam em português:
 
 `page` usa os mesmos slugs de rota definidos em `overview.md` ("Rotas/Páginas"): `overview`,
 `narratives`, `narrative_detail`, `sentiment`, `platforms`, `themes`, `authors`, `alerts`,
-`reports`.
+`reports`. 📝 **`reports_custom` planejado (2026-07-17, spec do módulo `executive-reports`, ainda
+não implementado)** — segundo page key desta página, para `/reports/custom` (Relatório
+Personalizado); `reports` continua sendo `/reports/executive` (Relatório Executivo) — ver
+[executive-reports/overview.md](../executive-reports/overview.md).
 
 ## Descrição de cada bloco
 
