@@ -10204,6 +10204,59 @@ browser disponível neste ambiente — o novo layout responsivo (grids nos
 navegador real, mesma limitação já registrada em toda sessão anterior de
 `intelligence-center` neste arquivo.
 
+### Upload de avatar em `/perfil` falhando com RLS — migration de reparo idempotente (2026-08-09)
+
+User report, direto do console do navegador em produção: upload de avatar
+falhando com `400`/`403` — `"new row violates row-level security
+policy"` — ao chamar `supabase.storage.from('avatars').upload(...)`,
+mesmo autenticado e enviando exatamente pro path esperado
+(`<user_id>/avatar`).
+
+**Descartado o lado do client, por leitura direta do código-fonte** de
+`@supabase/supabase-js`/`@supabase/storage-js` (`node_modules`, não só
+documentação): `fetchWithAuth()` (o wrapper de `fetch` compartilhado por
+`.from()`/`.rpc()`/`.storage`/`.functions`) só define
+`Authorization: Bearer <accessToken>` quando o header ainda não existe
+(`if (!headers.has("Authorization")) ...`) — e nem `SupabaseClient`
+(`this.headers = settings.global.headers ?? {}`, sem nada setado por
+`lib/supabase/client.ts`) nem `StorageBucketApi`/`DEFAULT_HEADERS`
+(só `X-Client-Info`) pré-definem esse header antes da chamada. Ou seja: o
+SDK realmente busca e anexa o token da sessão atual (via
+`auth.getSession()`) em toda chamada de Storage, exatamente como em
+qualquer outra chamada — não há nenhum caminho no client que explicasse a
+requisição chegando como `anon` em vez do usuário autenticado.
+
+**Causa real**: o bucket existe (senão o erro seria `404 Bucket not
+found`, não uma violação de RLS) mas nenhuma policy de `INSERT` casava
+pro usuário — consistente com um destes dois cenários (indistinguíveis
+sem acesso ao banco real): a migration `20260809200000` (bucket +
+policies, ver "`/perfil` redesenhada" acima) não terminou de aplicar no
+projeto Supabase real ainda, ou o bucket foi criado por fora (ex:
+manualmente pelo Dashboard, testando antes do deploy terminar) sem as
+policies correspondentes.
+
+**Fix**: nova migration, `20260809210000_avatars_storage_policies_idempotent_fix.sql`
+— mesmo bucket/policies de antes, mas idempotente (`on conflict do
+update` no bucket, `drop policy if exists` antes de cada `create
+policy`) — deixa o estado final correto independente de qual dos 2
+cenários acima é o real, sem editar a migration já potencialmente
+aplicada (CLAUDE.md, "Migration hygiene"). Também endurecido
+`app/(intelligence-center)/perfil/page.tsx`: o erro de upload agora nunca
+repassa a mensagem técnica bruta do Storage pro toast (mesmo princípio
+de "Edge Function error handling", aplicado aqui porque este upload fala
+direto com o Supabase Storage, sem Edge Function no meio) — loga o erro
+completo no console e mostra `BACKEND_ERROR_MESSAGE`; `handleRemoveAvatar`
+também passou a checar o `error` de `storage.remove()` (antes ignorado
+silenciosamente) e logar, sem bloquear a limpeza de `avatar_url`.
+
+**Verificação**: `npx tsc --noEmit` limpo. Migration revisada
+manualmente, não executada contra um banco real nesta sessão (mesma
+limitação recorrente de toda sessão sem credenciais de deploy neste
+ambiente) — `git push` para `develop` é o próximo passo; o sinal a
+acompanhar depois do deploy é Dashboard → Storage → `avatars` → Policies
+mostrando as 3 policies (insert/update/delete), e o upload de uma foto em
+`/perfil` completando sem erro.
+
 ## Directory structure
 
 ```

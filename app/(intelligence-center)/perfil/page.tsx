@@ -136,7 +136,15 @@ export default function PerfilPage() {
       const { error: uploadError } = await supabase.storage
         .from("avatars")
         .upload(path, file, { upsert: true, contentType: file.type });
-      if (uploadError) throw uploadError;
+      if (uploadError) {
+        // Nunca repassar a mensagem técnica bruta do Storage pro usuário
+        // (mesmo princípio de "Edge Function error handling" em
+        // CLAUDE.md, aplicado aqui porque este upload fala direto com o
+        // Supabase Storage, sem passar por uma Edge Function) — o log
+        // completo fica só no console pra debug.
+        console.error("[perfil] avatar upload failed", uploadError);
+        throw new Error(BACKEND_ERROR_MESSAGE);
+      }
 
       const { data: publicUrlData } = supabase.storage.from("avatars").getPublicUrl(path);
       // Cache-busting — o mesmo path é reaproveitado a cada troca de foto,
@@ -162,7 +170,13 @@ export default function PerfilPage() {
         data: { user },
       } = await supabase.auth.getUser();
       if (user) {
-        await supabase.storage.from("avatars").remove([`${user.id}/avatar`]);
+        const { error: removeError } = await supabase.storage
+          .from("avatars")
+          .remove([`${user.id}/avatar`]);
+        // Não bloqueia a remoção da URL em user_profiles por causa disso
+        // (o arquivo órfão no bucket não é visível em lugar nenhum do
+        // produto sem a `avatar_url` que apontava pra ele) — só loga.
+        if (removeError) console.error("[perfil] avatar remove failed", removeError);
       }
       await callFunction("update-my-profile", { avatar_url: "" });
       setToast({ type: "success", message: "Avatar removido." });
